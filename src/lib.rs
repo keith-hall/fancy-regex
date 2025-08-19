@@ -207,7 +207,7 @@ mod parse;
 mod replacer;
 mod vm;
 
-use crate::analyze::analyze;
+use crate::analyze::{analyze, resolve_named_references};
 use crate::analyze::can_compile_as_anchored;
 use crate::compile::compile;
 use crate::flags::*;
@@ -734,6 +734,9 @@ impl Regex {
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
         let mut tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
+
+        // Resolve named references before analysis
+        resolve_named_references(&mut tree.expr, &tree.named_groups)?;
 
         // try to optimize the expression tree
         let requires_capture_group_fixup = optimize(&mut tree);

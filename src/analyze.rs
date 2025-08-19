@@ -245,7 +245,7 @@ fn literal_const_size(_: &str, _: bool) -> bool {
 }
 
 /// Resolve named backrefs and named subroutine calls in the expression tree.
-fn resolve_named_references(expr: &mut Expr, named_groups: &NamedGroups) -> Result<()> {
+pub fn resolve_named_references(expr: &mut Expr, named_groups: &NamedGroups) -> Result<()> {
     match expr {
         Expr::NamedBackref { name, casei } => {
             if let Some(groups) = named_groups.get(name) {

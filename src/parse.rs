@@ -942,6 +942,21 @@ impl<'a> Parser<'a> {
             if let Expr::Backref { group, .. } = condition {
                 let after = self.check_for_close_paren(end)?;
                 return Ok((after, Expr::BackrefExistsCondition(group)));
+            } else if let Expr::NamedBackref { name, .. } = condition {
+                // For named backrefs, try to resolve to group number
+                if let Some(groups) = self.named_groups.get(&name) {
+                    if let Some(&group) = groups.last() {
+                        let after = self.check_for_close_paren(end)?;
+                        return Ok((after, Expr::BackrefExistsCondition(group)));
+                    }
+                }
+                // If we can't resolve the named group, return an error
+                return Err(Error::ParseError(
+                    end,
+                    ParseError::GeneralParseError(
+                        format!("unknown group name '{}' in conditional", name)
+                    )
+                ));
             } else {
                 return Err(Error::ParseError(
                     end,
@@ -1989,11 +2004,74 @@ mod tests {
     }
 
     #[test]
+    fn forward_named_backref() {
+        // Forward references to named groups should now work with the new analysis-based resolution
+        let mut tree = Expr::parse_tree("\\k<id>(?<id>.)").unwrap();
+        
+        // Should parse successfully with a NamedBackref
+        match &tree.expr {
+            Expr::Concat(children) => {
+                match &children[0] {
+                    Expr::NamedBackref { name, .. } => {
+                        assert_eq!(name, "id");
+                    }
+                    _ => panic!("Expected NamedBackref, got {:?}", children[0]),
+                }
+            }
+            _ => panic!("Expected Concat, got {:?}", tree.expr),
+        }
+        
+        // Should resolve successfully during analysis
+        let result = super::super::analyze::analyze_with_resolution(&mut tree, 0);
+        assert!(result.is_ok(), "Expected successful resolution, got: {:?}", result);
+        
+        // After resolution, should have regular Backref
+        match &tree.expr {
+            Expr::Concat(children) => {
+                match &children[0] {
+                    Expr::Backref { group, .. } => {
+                        assert_eq!(*group, 1);
+                    }
+                    _ => panic!("Expected Backref after resolution, got {:?}", children[0]),
+                }
+            }
+            _ => panic!("Expected Concat, got {:?}", tree.expr),
+        }
+    }
+
+    #[test]
     fn invalid_group_name_backref() {
-        assert_error(
-            "\\k<id>(?<id>.)",
-            "Parsing error at position 2: Invalid group name in back reference: id",
-        );
+        // Backref to a group that doesn't exist should fail at analysis time
+        let mut tree = Expr::parse_tree("\\k<nonexistent>(?<id>.)").unwrap();
+        
+        let result = super::super::analyze::analyze_with_resolution(&mut tree, 0);
+        assert!(result.is_err(), "Expected resolution error for nonexistent group");
+    }
+
+    #[test]
+    fn multiple_groups_same_name() {
+        // Test multiple groups with the same name
+        let mut tree = Expr::parse_tree(r"(?<name>a)(?<name>b)\k<name>").unwrap();
+        
+        // Named groups should contain both group numbers
+        assert_eq!(tree.named_groups.get("name"), Some(&vec![1, 2]));
+        
+        // Resolution should use the last group (Oniguruma behavior)
+        let result = super::super::analyze::analyze_with_resolution(&mut tree, 0);
+        assert!(result.is_ok(), "Expected successful resolution, got: {:?}", result);
+        
+        // After resolution, should have Backref to group 2 (the last one)
+        match &tree.expr {
+            Expr::Concat(children) => {
+                match &children[2] {
+                    Expr::Backref { group, .. } => {
+                        assert_eq!(*group, 2);
+                    }
+                    _ => panic!("Expected Backref after resolution, got {:?}", children[2]),
+                }
+            }
+            _ => panic!("Expected Concat, got {:?}", tree.expr),
+        }
     }
 
     #[test]
