@@ -1846,6 +1846,39 @@ impl Expr {
                     buf.push_str(")");
                 }
             }
+            Expr::Backref { group, casei } => {
+                if casei {
+                    buf.push_str("(?i:");
+                }
+                buf.push('\\');
+                push_usize(buf, group);
+                if casei {
+                    buf.push(')');
+                }
+            }
+            Expr::BackrefWithRelativeRecursionLevel { group, relative_level, casei } => {
+                if casei {
+                    buf.push_str("(?i:");
+                }
+                buf.push_str("\\g<");
+                push_usize(buf, group);
+                if relative_level > 0 {
+                    buf.push('+');
+                    push_usize(buf, relative_level as usize);
+                } else if relative_level < 0 {
+                    buf.push('-');
+                    push_usize(buf, (-relative_level) as usize);
+                }
+                buf.push('>');
+                if casei {
+                    buf.push(')');
+                }
+            }
+            Expr::BackrefExistsCondition(group) => {
+                buf.push_str("(?(");
+                push_usize(buf, group);
+                buf.push_str("))");
+            }
             _ => panic!("attempting to format hard expr {:?}", self),
         }
     }

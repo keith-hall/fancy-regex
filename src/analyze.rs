@@ -62,6 +62,22 @@ impl<'a> Info<'a> {
             _ => panic!("push_literal called on non-literal"),
         }
     }
+
+    pub(crate) fn contains_backrefs(&self) -> bool {
+        match *self.expr {
+            Expr::Backref { .. } | Expr::BackrefWithRelativeRecursionLevel { .. } | Expr::BackrefExistsCondition(_) => true,
+            Expr::Concat(_) | Expr::Alt(_) | Expr::Group(_) | Expr::LookAround(_, _) => {
+                self.children.iter().any(|child| child.contains_backrefs())
+            }
+            Expr::Repeat { .. } | Expr::AtomicGroup(_) => {
+                self.children.len() > 0 && self.children[0].contains_backrefs()
+            }
+            Expr::Conditional { .. } => {
+                self.children.iter().any(|child| child.contains_backrefs())
+            }
+            _ => false,
+        }
+    }
 }
 
 struct Analyzer<'a> {

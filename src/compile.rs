@@ -107,8 +107,8 @@ impl Compiler {
     }
 
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
-        if !hard && !info.hard {
-            // easy case, delegate entire subexpr
+        if !hard && !info.hard && !info.contains_backrefs() {
+            // easy case, delegate entire subexpr (but only if it doesn't contain backreferences)
             return self.compile_delegate(info);
         }
         match *info.expr {
@@ -445,12 +445,13 @@ impl Compiler {
 
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
-            if inner.const_size {
+            if inner.const_size || inner.contains_backrefs() {
                 // Use the existing GoBack approach for constant-size lookbehinds
+                // or for lookbehinds that contain backreferences (which can't be delegated)
                 self.b.add(Insn::GoBack(inner.min_size));
                 self.visit(inner, false)
             } else {
-                // Use reverse matching for variable-sized lookbehinds
+                // Use reverse matching for variable-sized lookbehinds without backreferences
                 let delegate = self.compile_reverse_lookbehind_delegate(inner)?;
                 self.b.add(Insn::ReverseLookbehind(delegate));
                 Ok(())
