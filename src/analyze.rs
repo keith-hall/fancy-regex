@@ -529,8 +529,8 @@ mod tests {
 
     #[test]
     fn subroutine_call_undefined() {
-        let tree = &Expr::parse_tree(r"\g<wrong_name>(?<different_name>a)").unwrap();
-        let result = analyze(tree, 1);
+        let mut tree = Expr::parse_tree(r"\g<wrong_name>(?<different_name>a)").unwrap();
+        let result = super::analyze_with_resolution(&mut tree, 1);
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
