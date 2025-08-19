@@ -184,6 +184,8 @@ impl Compiler {
             }
             Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
+            Expr::NamedBackref { .. } => unreachable!(),
+            Expr::NamedSubroutineCall { .. } => unreachable!(),
         }
         Ok(())
     }
