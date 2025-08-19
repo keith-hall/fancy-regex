@@ -221,6 +221,8 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    /// Reverse lookbehind using regex-automata for variable-sized patterns
+    ReverseLookbehind(Delegate),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -774,6 +776,32 @@ pub(crate) fn run(
                 }
                 Insn::ContinueFromPreviousMatchEnd => {
                     if ix > pos || option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {
+                        break 'fail;
+                    }
+                }
+                Insn::ReverseLookbehind(Delegate {
+                    ref inner,
+                    pattern: _,
+                    start_group: _,
+                    end_group: _,
+                }) => {
+                    // For reverse lookbehind, we need to find if there's a match that ends at ix
+                    // We search in the text up to ix and check if any match ends exactly at ix
+                    let mut found_match_at_ix = false;
+                    
+                    // Create a string slice for searching up to current position
+                    let search_text = &s[0..ix];
+                    let search_iter = inner.find_iter(search_text);
+                    
+                    // Check all matches to see if any end at ix
+                    for match_result in search_iter {
+                        if match_result.end() == ix {
+                            found_match_at_ix = true;
+                            break;
+                        }
+                    }
+                    
+                    if !found_match_at_ix {
                         break 'fail;
                     }
                 }
