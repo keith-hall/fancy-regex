@@ -56,8 +56,25 @@ fn lookbehind_variable_sized_alt() {
     assert_eq!(find(r"(?<=a|bc)", "xxb"), None);
     assert_eq!(find(r"(?<=a|bc)", "xxc"), None);
 
-    assert!(Regex::new(r"(?<=a(?:b|cd))").is_err());
-    assert!(Regex::new(r"(?<=a+b+))").is_err());
+    assert!(Regex::new(r"(?<=a(?:b|cd))").is_ok());
+    assert!(Regex::new(r"(?<=a+b+)").is_ok());
+}
+
+#[test]
+fn lookbehind_variable_sized_functionality() {
+    // Test (?<=a(?:b|cd)) pattern
+    assert_eq!(find(r"(?<=a(?:b|cd))x", "abx"), Some((2, 3)));
+    assert_eq!(find(r"(?<=a(?:b|cd))x", "acdx"), Some((3, 4)));
+    assert_eq!(find(r"(?<=a(?:b|cd))x", "ax"), None);
+    assert_eq!(find(r"(?<=a(?:b|cd))x", "bcx"), None);
+    
+    // Test (?<=a+b+) pattern  
+    assert_eq!(find(r"(?<=a+b+)x", "abx"), Some((2, 3)));
+    assert_eq!(find(r"(?<=a+b+)x", "aabbx"), Some((4, 5)));
+    assert_eq!(find(r"(?<=a+b+)x", "aaabbbx"), Some((6, 7)));
+    assert_eq!(find(r"(?<=a+b+)x", "ax"), None);
+    assert_eq!(find(r"(?<=a+b+)x", "bx"), None);
+    assert_eq!(find(r"(?<=a+b+)x", "abcx"), None);
 }
 
 #[test]
@@ -70,8 +87,27 @@ fn negative_lookbehind_variable_sized_alt() {
     assert_eq!(find(r"(?<!a|bc)x", "ax"), None);
     assert_eq!(find(r"(?<!a|bc)x", "bcx"), None);
 
-    assert!(Regex::new(r"(?<!a(?:b|cd))").is_err());
-    assert!(Regex::new(r"(?<!a+b+)").is_err());
+    assert!(Regex::new(r"(?<!a(?:b|cd))").is_ok());
+    assert!(Regex::new(r"(?<!a+b+)").is_ok());
+}
+
+#[test]
+fn negative_lookbehind_variable_sized_functionality() {
+    // Test (?<!a(?:b|cd)) pattern
+    assert_eq!(find(r"(?<!a(?:b|cd))x", "abx"), None);
+    assert_eq!(find(r"(?<!a(?:b|cd))x", "acdx"), None);
+    assert_eq!(find(r"(?<!a(?:b|cd))x", "ax"), Some((1, 2)));
+    assert_eq!(find(r"(?<!a(?:b|cd))x", "bcx"), Some((2, 3)));
+    assert_eq!(find(r"(?<!a(?:b|cd))x", "dx"), Some((1, 2)));
+    
+    // Test (?<!a+b+) pattern  
+    assert_eq!(find(r"(?<!a+b+)x", "abx"), None);
+    assert_eq!(find(r"(?<!a+b+)x", "aabbx"), None);
+    assert_eq!(find(r"(?<!a+b+)x", "aaabbbx"), None);
+    assert_eq!(find(r"(?<!a+b+)x", "ax"), Some((1, 2)));
+    assert_eq!(find(r"(?<!a+b+)x", "bx"), Some((1, 2)));
+    assert_eq!(find(r"(?<!a+b+)x", "cx"), Some((1, 2)));
+    assert_eq!(find(r"(?<!a+b+)x", "abcx"), Some((3, 4)));
 }
 
 #[test]

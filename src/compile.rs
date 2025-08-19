@@ -445,12 +445,19 @@ impl Compiler {
 
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
-            if !inner.const_size {
-                return Err(Error::CompileError(CompileError::LookBehindNotConst));
+            if inner.const_size {
+                // Use the existing GoBack approach for constant-size lookbehinds
+                self.b.add(Insn::GoBack(inner.min_size));
+                self.visit(inner, false)
+            } else {
+                // Use reverse matching for variable-sized lookbehinds
+                let delegate = self.compile_reverse_lookbehind_delegate(inner)?;
+                self.b.add(Insn::ReverseLookbehind(delegate));
+                Ok(())
             }
-            self.b.add(Insn::GoBack(inner.min_size));
+        } else {
+            self.visit(inner, false)
         }
-        self.visit(inner, false)
     }
 
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {
@@ -488,6 +495,16 @@ impl Compiler {
         };
         self.b.add(insn);
         Ok(())
+    }
+
+    fn compile_reverse_lookbehind_delegate(&mut self, info: &Info) -> Result<Delegate> {
+        let mut delegate_builder = DelegateBuilder::new();
+        delegate_builder.push(info);
+        
+        match delegate_builder.build(&self.options)? {
+            Insn::Delegate(delegate) => Ok(delegate),
+            _ => unreachable!("DelegateBuilder should always return a Delegate instruction"),
+        }
     }
 }
 
