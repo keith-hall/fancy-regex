@@ -35,6 +35,8 @@ jobs:
           cd playground
           wasm-pack build --target web --out-dir pkg --release
           cp -r pkg web/
+          touch web/.nojekyll
+          ls -al web/
           
       - name: Deploy to gh-pages
         uses: JamesIves/github-pages-deploy-action@v4.6.9
