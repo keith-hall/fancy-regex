@@ -219,9 +219,6 @@ pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 
-// Re-export the allocation optimization types
-pub use MatchContext;
-
 /// A context for reusable allocations across multiple regex operations to improve performance.
 /// This context can be reused to avoid memory allocations when performing multiple regex 
 /// operations in sequence, particularly for "fancy" regex features that use the VM.
