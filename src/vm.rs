@@ -486,18 +486,41 @@ fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool 
     re.find(&s[ix..end]).is_some()
 }
 
+/// Run context that holds reusable buffers to avoid allocations.
+#[derive(Debug)]
+pub struct RunContext {
+    /// Reusable buffer for delegate capture slots
+    inner_slots: Vec<Option<NonMaxUsize>>,
+}
+
+impl RunContext {
+    /// Create a new run context with preallocated buffers.
+    pub fn new() -> Self {
+        Self {
+            inner_slots: Vec::new(),
+        }
+    }
+}
+
+impl Default for RunContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, OPTION_TRACE, &RegexOptions::default())
+    let mut ctx = RunContext::new();
+    run_with_context(prog, s, pos, OPTION_TRACE, &RegexOptions::default(), &mut ctx)
 }
 
 /// Run the program with default options.
 pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, 0, &RegexOptions::default())
+    let mut ctx = RunContext::new();
+    run_with_context(prog, s, pos, 0, &RegexOptions::default(), &mut ctx)
 }
 
 /// Run the program with options.
-#[allow(clippy::cognitive_complexity)]
 pub(crate) fn run(
     prog: &Prog,
     s: &str,
@@ -505,8 +528,21 @@ pub(crate) fn run(
     option_flags: u32,
     options: &RegexOptions,
 ) -> Result<Option<Vec<usize>>> {
+    let mut ctx = RunContext::new();
+    run_with_context(prog, s, pos, option_flags, options, &mut ctx)
+}
+
+/// Run the program with options using a reusable context to avoid allocations.
+#[allow(clippy::cognitive_complexity)]
+pub(crate) fn run_with_context(
+    prog: &Prog,
+    s: &str,
+    pos: usize,
+    option_flags: u32,
+    options: &RegexOptions,
+    ctx: &mut RunContext,
+) -> Result<Option<Vec<usize>>> {
     let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
-    let mut inner_slots: Vec<Option<NonMaxUsize>> = Vec::new();
     let look_matcher = LookMatcher::new();
     #[cfg(feature = "std")]
     if option_flags & OPTION_TRACE != 0 {
@@ -755,12 +791,12 @@ pub(crate) fn run(
                             _ => break 'fail,
                         }
                     } else {
-                        inner_slots.resize((end_group - start_group + 1) * 2, None);
-                        if inner.search_slots(&input, &mut inner_slots).is_some() {
+                        ctx.inner_slots.resize((end_group - start_group + 1) * 2, None);
+                        if inner.search_slots(&input, &mut ctx.inner_slots).is_some() {
                             for i in 0..(end_group - start_group) {
                                 let slot = (start_group + i) * 2;
-                                if let Some(start) = inner_slots[(i + 1) * 2] {
-                                    let end = inner_slots[(i + 1) * 2 + 1].unwrap();
+                                if let Some(start) = ctx.inner_slots[(i + 1) * 2] {
+                                    let end = ctx.inner_slots[(i + 1) * 2 + 1].unwrap();
                                     state.save(slot, start.get());
                                     state.save(slot + 1, end.get());
                                 } else {
@@ -768,7 +804,7 @@ pub(crate) fn run(
                                     state.save(slot + 1, usize::MAX);
                                 }
                             }
-                            ix = inner_slots[1].unwrap().get();
+                            ix = ctx.inner_slots[1].unwrap().get();
                         } else {
                             break 'fail;
                         }

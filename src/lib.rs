@@ -213,11 +213,38 @@ use crate::compile::compile;
 use crate::flags::*;
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
-use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
+use crate::vm::{Prog, RunContext as VmRunContext, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
+
+// Re-export the allocation optimization types
+pub use MatchContext;
+
+/// A context for reusable allocations across multiple regex operations to improve performance.
+/// This context can be reused to avoid memory allocations when performing multiple regex 
+/// operations in sequence, particularly for "fancy" regex features that use the VM.
+#[derive(Debug)]
+pub struct MatchContext {
+    /// VM execution context for fancy regex features
+    vm_ctx: VmRunContext,
+}
+
+impl MatchContext {
+    /// Create a new match context with preallocated buffers.
+    pub fn new() -> Self {
+        Self {
+            vm_ctx: VmRunContext::new(),
+        }
+    }
+}
+
+impl Default for MatchContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 const MAX_RECURSION: usize = 64;
 
@@ -995,6 +1022,22 @@ impl Regex {
     /// of the string slice.
     ///
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
+        let mut ctx = MatchContext::new();
+        self.captures_from_pos_with_context(text, pos, &mut ctx)
+    }
+
+    /// Find matches at the given position using a reusable context to avoid allocations.
+    ///
+    /// This is similar to [`Regex::captures_from_pos`] but reuses the provided context
+    /// to avoid memory allocations, which can improve performance when called repeatedly.
+    ///
+    /// See the documentation for [`Regex::captures_from_pos`] for more details.
+    pub fn captures_from_pos_with_context<'t>(
+        &self,
+        text: &'t str,
+        pos: usize,
+        ctx: &mut MatchContext,
+    ) -> Result<Option<Captures<'t>>> {
         let named_groups = self.named_groups.clone();
         match &self.inner {
             RegexImpl::Wrap {
@@ -1002,6 +1045,9 @@ impl Regex {
                 explicit_capture_group_0,
                 ..
             } => {
+                // Note: For now, we still create new captures for regex-automata delegated expressions
+                // because CapturesImpl::Wrap takes ownership of the locations.
+                // A future optimization could modify the Captures structure to allow borrowing.
                 let mut locations = inner.create_captures();
                 inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
                 Ok(locations.is_match().then(|| Captures {
@@ -1019,7 +1065,7 @@ impl Regex {
                 options,
                 ..
             } => {
-                let result = vm::run(prog, text, pos, 0, options)?;
+                let result = vm::run_with_context(prog, text, pos, 0, options, &mut ctx.vm_ctx)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures {
