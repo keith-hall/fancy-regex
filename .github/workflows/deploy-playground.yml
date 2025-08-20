@@ -1,6 +1,4 @@
 name: Deploy Playground to GitHub Pages
-permissions:
-  contents: write
 on:
   push:
     branches: [ main ]
@@ -8,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
