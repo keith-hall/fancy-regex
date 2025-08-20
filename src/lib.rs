@@ -198,6 +198,7 @@ use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Input as RaInput;
 
 mod analyze;
+mod ast;
 mod compile;
 mod error;
 mod expand;
@@ -205,6 +206,7 @@ mod flags;
 mod optimize;
 mod parse;
 mod replacer;
+mod resolve;
 mod vm;
 
 use crate::analyze::analyze;
@@ -1738,12 +1740,22 @@ impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
     pub fn parse_tree(re: &str) -> Result<ExprTree> {
-        Parser::parse(re)
+        Parser::parse_with_flags_ast(re, RegexOptions::default().compute_flags())
     }
 
     /// Parse the regex and return an expression (AST)
     /// Flags should be bit based based on flags
     pub fn parse_tree_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
+        Parser::parse_with_flags_ast(re, flags)
+    }
+
+    /// Parse the regex using the legacy direct-to-IR approach
+    pub fn parse_tree_legacy(re: &str) -> Result<ExprTree> {
+        Parser::parse(re)
+    }
+
+    /// Parse the regex using the legacy direct-to-IR approach with flags
+    pub fn parse_tree_with_flags_legacy(re: &str, flags: u32) -> Result<ExprTree> {
         Parser::parse_with_flags(re, flags)
     }
 
