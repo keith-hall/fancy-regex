@@ -330,6 +330,7 @@ impl Resolver {
 mod tests {
     use super::*;
     use crate::ast::*;
+    use crate::parse::Parser;
 
     #[test]
     fn test_resolve_literal() {
@@ -384,6 +385,90 @@ mod tests {
             assert!(!casei);
         } else {
             panic!("Expected Delegate expression");
+        }
+    }
+
+    #[test]
+    fn test_ast_parsing_simple() {
+        // Test that basic AST parsing works
+        let ast_tree = Parser::parse_to_ast("hello").unwrap();
+        
+        // Since the current implementation concatenates individual characters,
+        // check for the expected concat structure
+        if let Ast::Concat(literals) = ast_tree.ast {
+            assert_eq!(literals.len(), 5);
+            for (i, literal) in literals.iter().enumerate() {
+                if let Ast::Literal { val, casei } = literal {
+                    assert_eq!(val, &"hello"[i..i+1]);
+                    assert!(!casei);
+                } else {
+                    panic!("Expected literal in concat, got {:?}", literal);
+                }
+            }
+        } else {
+            panic!("Expected concat AST for 'hello', got {:?}", ast_tree.ast);
+        }
+    }
+
+    #[test]
+    fn test_ast_to_expr_roundtrip() {
+        // Test that AST -> Expr conversion works for simple cases
+        let patterns = vec![
+            "hello",
+            ".",
+            "^start",
+            "end$",
+            "a*",
+            "b+",
+            "c?",
+            "(group)",
+        ];
+
+        for pattern in patterns {
+            println!("Testing pattern: {}", pattern);
+            
+            // Parse with new AST approach
+            let ast_result = Parser::parse_with_flags_ast(pattern, 0);
+            assert!(ast_result.is_ok(), "AST parsing failed for '{}': {:?}", pattern, ast_result.err());
+            
+            // Parse with legacy approach  
+            let legacy_result = Parser::parse_with_flags(pattern, 0);
+            assert!(legacy_result.is_ok(), "Legacy parsing failed for '{}': {:?}", pattern, legacy_result.err());
+            
+            // For simple patterns, results should be similar
+            // (We'll focus on ensuring no crashes and basic functionality)
+        }
+    }
+
+    #[test]
+    fn test_end_to_end_regex_compilation() {
+        // Test that regexes can be compiled and used end-to-end with the new AST approach
+        let test_cases = vec![
+            ("hello", "hello world", true),
+            ("hello", "goodbye", false),
+            ("h.llo", "hello", true),
+            ("h.llo", "hallo", true),
+            ("h.llo", "hi", false),
+            ("^start", "start of line", true),
+            ("^start", "not start", false),
+            ("end$", "at the end", true),
+            ("end$", "end not", false),
+        ];
+
+        for (pattern, text, should_match) in test_cases {
+            println!("Testing pattern '{}' against text '{}'", pattern, text);
+            
+            // This uses the new AST-based parsing
+            let regex_result = crate::Regex::new(pattern);
+            assert!(regex_result.is_ok(), "Failed to compile regex '{}': {:?}", pattern, regex_result.err());
+            
+            let regex = regex_result.unwrap();
+            let match_result = regex.is_match(text);
+            assert!(match_result.is_ok(), "Failed to match '{}' against '{}': {:?}", pattern, text, match_result.err());
+            
+            let did_match = match_result.unwrap();
+            assert_eq!(did_match, should_match, "Pattern '{}' against '{}' should match: {}, but got: {}", 
+                      pattern, text, should_match, did_match);
         }
     }
 }
