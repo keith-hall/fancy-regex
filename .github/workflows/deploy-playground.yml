@@ -34,7 +34,7 @@ jobs:
         run: |
           cd playground
           wasm-pack build --target web --out-dir pkg --release
-          cp -r pkg/ web/
+          cp pkg/* web/
           touch web/.nojekyll
           ls -al web/
           
