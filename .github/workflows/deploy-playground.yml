@@ -41,6 +41,6 @@ jobs:
         uses: JamesIves/github-pages-deploy-action@v4.6.9
         with:
           branch: gh-pages
-          folder: web
+          folder: playground/web
           clean: true
   
