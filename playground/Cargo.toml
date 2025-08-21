@@ -10,7 +10,7 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = true
+wasm-opt = false
 
 [dependencies]
 fancy-regex = { path = ".." }
@@ -25,6 +25,10 @@ version = "0.3"
 features = [
   "console",
 ]
+
+# Test dependencies
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
 
 [profile.release]
 opt-level = "s"
