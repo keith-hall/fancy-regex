@@ -36,6 +36,7 @@ jobs:
           wasm-pack build --target web --out-dir pkg --release
           cp pkg/* web/
           touch web/.nojekyll
+          rm web/pkg/.gitignore
           ls -al web/*
           
       - name: Deploy to gh-pages
@@ -43,13 +44,4 @@ jobs:
         with:
           branch: gh-pages
           folder: playground/web
-          clean: true
-          clean-exclude: pkg
-
-      - name: Deploy to gh-pages
-        uses: JamesIves/github-pages-deploy-action@v4.6.9
-        with:
-          branch: gh-pages
-          folder: playground/web/pkg
-          target-folder: pkg
           clean: true
