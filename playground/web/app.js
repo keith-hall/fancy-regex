@@ -1,4 +1,5 @@
 import init, {
+    find_matches,
     find_captures,
     parse_regex,
     analyze_regex,
