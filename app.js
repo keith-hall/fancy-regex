@@ -3,7 +3,7 @@ import init, {
     find_captures,
     parse_regex,
     analyze_regex,
-} from './pkg/fancy_regex_playground.js';
+} from './fancy_regex_playground.js';
 
 class FancyRegexPlayground {
     constructor() {
