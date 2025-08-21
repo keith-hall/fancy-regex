@@ -10,7 +10,7 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = true
+wasm-opt = false
 
 [dependencies]
 fancy-regex = { path = ".." }
