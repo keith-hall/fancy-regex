@@ -29,7 +29,7 @@ wasm-pack build --target web --out-dir pkg --release
 
 # Copy WASM files to web directory
 echo "📦 Copying WASM files to web directory..."
-cp pkg/* web/
+cp -r pkg web/
 
 echo "✅ Build complete!"
 echo ""
