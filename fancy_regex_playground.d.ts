@@ -1,6 +1,5 @@
 /* tslint:disable */
 /* eslint-disable */
-export function find_matches(pattern: string, text: string, flags: any): any;
 export function find_captures(pattern: string, text: string, flags: any): any;
 export function parse_regex(pattern: string, flags: any): string;
 export function analyze_regex(pattern: string, flags: any): string;
@@ -11,7 +10,6 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
-  readonly find_matches: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
   readonly find_captures: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
   readonly parse_regex: (a: number, b: number, c: any) => [number, number, number, number];
   readonly analyze_regex: (a: number, b: number, c: any) => [number, number, number, number];

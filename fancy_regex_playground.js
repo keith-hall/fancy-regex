@@ -163,24 +163,6 @@ function takeFromExternrefTable0(idx) {
  * @param {any} flags
  * @returns {any}
  */
-export function find_matches(pattern, text, flags) {
-    const ptr0 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.find_matches(ptr0, len0, ptr1, len1, flags);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
-}
-
-/**
- * @param {string} pattern
- * @param {string} text
- * @param {any} flags
- * @returns {any}
- */
 export function find_captures(pattern, text, flags) {
     const ptr0 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
