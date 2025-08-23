@@ -46,6 +46,34 @@ pub struct RegexFlags {
     pub unicode: bool,
 }
 
+/// Serializable representation of position information
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SerializableSpan {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Serializable representation of an expression node for the parse tree
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SerializableExpr {
+    pub node_type: String,
+    pub span: Option<SerializableSpan>,
+    pub children: Vec<SerializableExpr>,
+    pub details: serde_json::Value,
+}
+
+/// Serializable representation of analysis information
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SerializableAnalysisInfo {
+    pub node_type: String,
+    pub span: Option<SerializableSpan>,
+    pub is_hard: bool,
+    pub min_size: usize,
+    pub const_size: bool,
+    pub children: Vec<SerializableAnalysisInfo>,
+    pub details: serde_json::Value,
+}
+
 impl Default for RegexFlags {
     fn default() -> Self {
         Self {
@@ -102,6 +130,129 @@ fn compute_regex_flags(flags: &RegexFlags) -> u32 {
         result |= FLAG_UNICODE;
     }
     result
+}
+
+/// Convert an Expr to a serializable format with position tracking
+fn expr_to_serializable(expr: &fancy_regex::Expr, start_pos: usize, pattern: &str) -> SerializableExpr {
+    use fancy_regex::Expr;
+    
+    // Calculate approximate span (this is simplified - ideally we'd track positions during parsing)
+    let span = Some(SerializableSpan {
+        start: start_pos,
+        end: (start_pos + 1).min(pattern.len()), // Simplified - in real implementation would be precise
+    });
+
+    let (node_type, children, details) = match expr {
+        Expr::Empty => ("Empty".to_string(), vec![], serde_json::Value::Null),
+        Expr::Any { newline } => ("Any".to_string(), vec![], serde_json::json!({ "newline": newline })),
+        Expr::Assertion(assertion) => ("Assertion".to_string(), vec![], serde_json::json!({ "assertion": format!("{:?}", assertion) })),
+        Expr::Literal { val, casei } => ("Literal".to_string(), vec![], serde_json::json!({ "value": val, "case_insensitive": casei })),
+        Expr::Concat(exprs) => {
+            let children: Vec<SerializableExpr> = exprs.iter().enumerate()
+                .map(|(i, e)| expr_to_serializable(e, start_pos + i, pattern))
+                .collect();
+            ("Concat".to_string(), children, serde_json::Value::Null)
+        },
+        Expr::Alt(exprs) => {
+            let children: Vec<SerializableExpr> = exprs.iter().enumerate()
+                .map(|(i, e)| expr_to_serializable(e, start_pos + i, pattern))
+                .collect();
+            ("Alt".to_string(), children, serde_json::Value::Null)
+        },
+        Expr::Group(expr) => {
+            let child = expr_to_serializable(expr, start_pos + 1, pattern);
+            ("Group".to_string(), vec![child], serde_json::Value::Null)
+        },
+        Expr::LookAround(expr, la) => {
+            let child = expr_to_serializable(expr, start_pos + 2, pattern); // Account for (?
+            ("LookAround".to_string(), vec![child], serde_json::json!({ "look_around": format!("{:?}", la) }))
+        },
+        Expr::Repeat { child, lo, hi, greedy } => {
+            let child_expr = expr_to_serializable(child, start_pos, pattern);
+            ("Repeat".to_string(), vec![child_expr], serde_json::json!({ "lo": lo, "hi": hi, "greedy": greedy }))
+        },
+        Expr::Delegate { inner, size, casei } => {
+            ("Delegate".to_string(), vec![], serde_json::json!({ "inner": inner, "size": size, "case_insensitive": casei }))
+        },
+        Expr::Backref { group, casei } => {
+            ("Backref".to_string(), vec![], serde_json::json!({ "group": group, "case_insensitive": casei }))
+        },
+        Expr::BackrefWithRelativeRecursionLevel { group, relative_level, casei } => {
+            ("BackrefWithRelativeRecursionLevel".to_string(), vec![], serde_json::json!({ "group": group, "relative_level": relative_level, "case_insensitive": casei }))
+        },
+        Expr::AtomicGroup(expr) => {
+            let child = expr_to_serializable(expr, start_pos + 3, pattern); // Account for (?>
+            ("AtomicGroup".to_string(), vec![child], serde_json::Value::Null)
+        },
+        Expr::KeepOut => ("KeepOut".to_string(), vec![], serde_json::Value::Null),
+        Expr::ContinueFromPreviousMatchEnd => ("ContinueFromPreviousMatchEnd".to_string(), vec![], serde_json::Value::Null),
+        Expr::BackrefExistsCondition(group) => ("BackrefExistsCondition".to_string(), vec![], serde_json::json!({ "group": group })),
+        Expr::Conditional { condition, true_branch, false_branch } => {
+            let cond_child = expr_to_serializable(condition, start_pos + 2, pattern);
+            let true_child = expr_to_serializable(true_branch, start_pos + 3, pattern);
+            let false_child = expr_to_serializable(false_branch, start_pos + 4, pattern);
+            ("Conditional".to_string(), vec![cond_child, true_child, false_child], serde_json::Value::Null)
+        },
+        Expr::SubroutineCall(group) => ("SubroutineCall".to_string(), vec![], serde_json::json!({ "group": group })),
+        Expr::UnresolvedNamedSubroutineCall { name, ix } => {
+            ("UnresolvedNamedSubroutineCall".to_string(), vec![], serde_json::json!({ "name": name, "position": ix }))
+        },
+    };
+
+    SerializableExpr {
+        node_type,
+        span,
+        children,
+        details,
+    }
+}
+
+/// Convert analysis Info to serializable format  
+fn analysis_to_serializable(info: &fancy_regex::internal::Info, pattern: &str) -> SerializableAnalysisInfo {
+    // Extract the necessary information from the Info struct
+    let span = Some(SerializableSpan {
+        start: 0, // Simplified - would need to track actual positions
+        end: 1,
+    });
+
+    let node_type = match info.expr {
+        fancy_regex::Expr::Empty => "Empty",
+        fancy_regex::Expr::Any { .. } => "Any",
+        fancy_regex::Expr::Assertion(_) => "Assertion",
+        fancy_regex::Expr::Literal { .. } => "Literal",
+        fancy_regex::Expr::Concat(_) => "Concat",
+        fancy_regex::Expr::Alt(_) => "Alt",
+        fancy_regex::Expr::Group(_) => "Group",
+        fancy_regex::Expr::LookAround(_, _) => "LookAround",
+        fancy_regex::Expr::Repeat { .. } => "Repeat",
+        fancy_regex::Expr::Delegate { .. } => "Delegate",
+        fancy_regex::Expr::Backref { .. } => "Backref",
+        fancy_regex::Expr::BackrefWithRelativeRecursionLevel { .. } => "BackrefWithRelativeRecursionLevel",
+        fancy_regex::Expr::AtomicGroup(_) => "AtomicGroup",
+        fancy_regex::Expr::KeepOut => "KeepOut",
+        fancy_regex::Expr::ContinueFromPreviousMatchEnd => "ContinueFromPreviousMatchEnd",
+        fancy_regex::Expr::BackrefExistsCondition(_) => "BackrefExistsCondition",
+        fancy_regex::Expr::Conditional { .. } => "Conditional",
+        fancy_regex::Expr::SubroutineCall(_) => "SubroutineCall",
+        fancy_regex::Expr::UnresolvedNamedSubroutineCall { .. } => "UnresolvedNamedSubroutineCall",
+    };
+
+    let children: Vec<SerializableAnalysisInfo> = info.children.iter()
+        .map(|child| analysis_to_serializable(child, pattern))
+        .collect();
+
+    SerializableAnalysisInfo {
+        node_type: node_type.to_string(),
+        span,
+        is_hard: info.hard,
+        min_size: info.min_size,
+        const_size: info.const_size,
+        children,
+        details: serde_json::json!({
+            "start_group": info.start_group,
+            "end_group": info.end_group
+        }),
+    }
 }
 
 
@@ -163,18 +314,22 @@ pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValu
 }
 
 #[wasm_bindgen]
-pub fn parse_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
+pub fn parse_regex(pattern: &str, flags: JsValue) -> Result<JsValue, JsValue> {
     let flags = get_flags(flags)?;
     let regex_flags = compute_regex_flags(&flags);
 
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
-        Ok(tree) => Ok(format!("{:#?}", tree)),
+        Ok(tree) => {
+            let serializable = expr_to_serializable(&tree.expr, 0, pattern);
+            serde_wasm_bindgen::to_value(&serializable)
+                .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+        },
         Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
     }
 }
 
 #[wasm_bindgen]
-pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
+pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<JsValue, JsValue> {
     let flags = get_flags(flags)?;
     let regex_flags = compute_regex_flags(&flags);
 
@@ -184,7 +339,11 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
         Ok(mut tree) => {
             optimize(&mut tree);
             match analyze(&tree, 1) {
-                Ok(info) => Ok(format!("{:#?}", info)),
+                Ok(info) => {
+                    let serializable = analysis_to_serializable(&info, pattern);
+                    serde_wasm_bindgen::to_value(&serializable)
+                        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+                },
                 Err(e) => Err(JsValue::from_str(&format!("Analysis error: {}", e))),
             }
         }

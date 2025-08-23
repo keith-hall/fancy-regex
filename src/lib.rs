@@ -1620,6 +1620,24 @@ pub enum Expr {
     },
 }
 
+/// Position information for an expression in the original regex pattern
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Span {
+    /// Start byte position in the original pattern
+    pub start: usize,
+    /// End byte position in the original pattern  
+    pub end: usize,
+}
+
+/// An expression with optional position information for interactive display
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct ExprWithSpan {
+    /// The expression
+    pub expr: Expr,
+    /// Optional position in the original pattern
+    pub span: Option<Span>,
+}
+
 /// Type of look-around assertion as used for a look-around expression.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum LookAround {
@@ -1919,7 +1937,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 /// experimenting.
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::analyze::{analyze, can_compile_as_anchored};
+    pub use crate::analyze::{analyze, can_compile_as_anchored, Info};
     pub use crate::compile::compile;
     pub use crate::flags::{FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_UNICODE};
     pub use crate::optimize::optimize;

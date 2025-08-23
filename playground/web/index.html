@@ -272,6 +272,95 @@
         #highlighted-text {
             white-space: pre-line;
         }
+
+        /* Interactive Tree Styles */
+        .tree-node {
+            margin: 2px 0;
+            font-family: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .tree-toggle {
+            cursor: pointer;
+            user-select: none;
+            display: inline-block;
+            width: 12px;
+            margin-right: 4px;
+            color: #666;
+            font-size: 10px;
+        }
+
+        .tree-toggle:hover {
+            color: #333;
+        }
+
+        .tree-toggle-spacer {
+            display: inline-block;
+            width: 12px;
+            margin-right: 4px;
+        }
+
+        .tree-label {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        .tree-details {
+            color: #666;
+            font-style: italic;
+            font-size: 12px;
+        }
+
+        .tree-children {
+            margin-left: 16px;
+            padding-left: 8px;
+            border-left: 1px dashed #ddd;
+        }
+
+        /* Analysis Tree Specific Styles */
+        .analysis-tree.hard-node .tree-label {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+
+        .analysis-tree.easy-node .tree-label {
+            color: #27ae60;
+        }
+
+        .analysis-info {
+            color: #7f8c8d;
+            font-size: 11px;
+            margin-left: 8px;
+        }
+
+        /* Highlighting for linked nodes */
+        .tree-node.highlighted {
+            background-color: #fff3cd;
+            border-radius: 3px;
+            padding: 1px 3px;
+            margin: 1px -3px;
+        }
+
+        /* Parse Tree Specific Styles */
+        .parse-tree .tree-label {
+            color: #3498db;
+        }
+
+        /* Error and Info Messages */
+        .error {
+            color: #e74c3c;
+            background: #fdf2f2;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #f5c6cb;
+        }
+
+        .info {
+            color: #6c757d;
+            font-style: italic;
+            padding: 8px;
+        }
     </style>
 </head>
 <body>
