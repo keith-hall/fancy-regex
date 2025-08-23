@@ -32,6 +32,7 @@ use crate::analyze::Info;
 use crate::vm::{Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
+use crate::{ExprWithPos, Position};
 
 // I'm thinking it probably doesn't make a lot of sense having this split
 // out from Compiler.
@@ -655,6 +656,23 @@ mod tests {
             named_groups: Default::default(),
             contains_subroutines: false,
             self_recursive: false,
+            expr_with_pos: ExprWithPos::new(
+                Expr::Alt(vec![
+                    Expr::Literal {
+                        val: "a".into(),
+                        casei: false,
+                    },
+                    Expr::Literal {
+                        val: "b".into(),
+                        casei: false,
+                    },
+                    Expr::Literal {
+                        val: "c".into(),
+                        casei: false,
+                    },
+                ]),
+                Position::new(0, 0), // dummy position for test
+            ),
         };
         let info = analyze(&tree, 1).unwrap();
 

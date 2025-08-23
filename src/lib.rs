@@ -217,6 +217,7 @@ use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
+pub use crate::parse::{ExprWithPos, Position};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 
 const MAX_RECURSION: usize = 64;
