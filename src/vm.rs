@@ -766,6 +766,7 @@ pub(crate) fn run(
                     }
                 }
                 Insn::BackrefExistsCondition(group) => {
+                    // TODO: handle multiple groups with the same name
                     let lo = state.get(group * 2);
                     if lo == usize::MAX {
                         // Referenced group hasn't matched, so the backref doesn't match either

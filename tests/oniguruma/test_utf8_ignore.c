@@ -106,17 +106,14 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\A(?<n>(a\\g<n>)|)\\z", "aaaa", 0, 4);
 
+  // No match found
+  x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "bce", 0, 3);
+
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x2("(?<n>|\\g<m>\\g<n>)\\z|\\zEND (?<m>a|(b)\\g<m>)", "bbbbabba", 0, 8);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x3("(z)()()(?<_9>a)\\g<_9>", "zaa", 2, 3, 1);
-
-  // No match found
-  x2("(?:(?<x>)|(?<x>efg))\\k<x>", "", 0, 0);
-
-  // No match found
-  x2("(?:(?<n1>.)|(?<n1>..)|(?<n1>...)|(?<n1>....)|(?<n1>.....)|(?<n1>......)|(?<n1>.......)|(?<n1>........)|(?<n1>.........)|(?<n1>..........)|(?<n1>...........)|(?<n1>............)|(?<n1>.............)|(?<n1>..............))\\k<n1>$", "a-pyumpyum", 2, 10);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<foo>a|\\(\\g<foo>\\))", "a", 0, 1);
@@ -213,9 +210,6 @@
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("((?<x>abc){0}a\\g<x>d)+", "aabcd", 0, 5);
-
-  // Match found at start 0 and end 3 (expected 0 and 6)
-  x2("(?<x>a)(?<x>b)(\\k<x>)+", "abbaab", 0, 6);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<x>$|b\\g<x>)", "bbb", 0, 3);
