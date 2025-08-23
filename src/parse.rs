@@ -39,6 +39,64 @@ pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
 #[cfg(feature = "std")]
 pub(crate) type NamedGroups = std::collections::HashMap<String, usize>;
 
+/// Represents the byte position range (start, end) of an expression in the original pattern string
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position {
+    /// Start byte offset in the original pattern string
+    pub start: usize,
+    /// End byte offset in the original pattern string (exclusive)
+    pub end: usize,
+}
+
+impl Position {
+    /// Create a new Position with start and end byte offsets
+    pub fn new(start: usize, end: usize) -> Self {
+        Position { start, end }
+    }
+}
+
+/// An expression node with position information
+#[derive(Debug, Clone)]
+pub struct ExprWithPos {
+    /// The parsed expression
+    pub expr: Expr,
+    /// The position of this expression in the original pattern string
+    pub pos: Position,
+}
+
+impl ExprWithPos {
+    /// Create a new ExprWithPos with the given expression and position
+    pub fn new(expr: Expr, pos: Position) -> Self {
+        ExprWithPos { expr, pos }
+    }
+
+    /// Recursively extract the underlying Expr, discarding position information
+    pub fn into_expr(self) -> Expr {
+        fn strip_positions(expr: Expr) -> Expr {
+            match expr {
+                Expr::Concat(exprs) => Expr::Concat(exprs.into_iter().map(strip_positions).collect()),
+                Expr::Alt(exprs) => Expr::Alt(exprs.into_iter().map(strip_positions).collect()),
+                Expr::Group(expr) => Expr::Group(Box::new(strip_positions(*expr))),
+                Expr::LookAround(expr, lookaround) => Expr::LookAround(Box::new(strip_positions(*expr)), lookaround),
+                Expr::Repeat { child, lo, hi, greedy } => Expr::Repeat {
+                    child: Box::new(strip_positions(*child)),
+                    lo,
+                    hi,
+                    greedy,
+                },
+                Expr::AtomicGroup(expr) => Expr::AtomicGroup(Box::new(strip_positions(*expr))),
+                Expr::Conditional { condition, true_branch, false_branch } => Expr::Conditional {
+                    condition: Box::new(strip_positions(*condition)),
+                    true_branch: Box::new(strip_positions(*true_branch)),
+                    false_branch: Box::new(strip_positions(*false_branch)),
+                },
+                other => other,
+            }
+        }
+        strip_positions(self.expr)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ExprTree {
     pub expr: Expr,
@@ -46,6 +104,8 @@ pub struct ExprTree {
     pub named_groups: NamedGroups,
     pub(crate) contains_subroutines: bool,
     pub(crate) self_recursive: bool,
+    /// The parsed expression tree with position information
+    pub expr_with_pos: ExprWithPos,
 }
 
 #[derive(Debug)]
@@ -71,7 +131,7 @@ struct NamedBackrefOrSubroutine<'a> {
 impl<'a> Parser<'a> {
     pub(crate) fn parse_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
         let mut p = Parser::new(re, flags);
-        let (ix, mut expr) = p.parse_re(0, 0)?;
+        let (ix, mut expr_with_pos) = p.parse_re_with_pos(0, 0)?;
         if ix < re.len() {
             return Err(Error::ParseError(
                 ix,
@@ -81,8 +141,10 @@ impl<'a> Parser<'a> {
 
         if p.has_unresolved_subroutines {
             p.has_unresolved_subroutines = false;
-            p.resolve_named_subroutine_calls(&mut expr);
+            p.resolve_named_subroutine_calls_with_pos(&mut expr_with_pos);
         }
+
+        let expr = expr_with_pos.clone().into_expr();
 
         Ok(ExprTree {
             expr,
@@ -90,6 +152,7 @@ impl<'a> Parser<'a> {
             named_groups: p.named_groups,
             contains_subroutines: p.contains_subroutines,
             self_recursive: p.self_recursive,
+            expr_with_pos,
         })
     }
 
@@ -113,6 +176,28 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_re_with_pos(&mut self, ix: usize, depth: usize) -> Result<(usize, ExprWithPos)> {
+        let start_pos = ix;
+        let (ix, child) = self.parse_branch_with_pos(ix, depth)?;
+        let mut ix = self.optional_whitespace(ix)?;
+        if self.re[ix..].starts_with('|') {
+            let mut children = vec![child];
+            while self.re[ix..].starts_with('|') {
+                ix += 1;
+                let (next, child) = self.parse_branch_with_pos(ix, depth)?;
+                children.push(child);
+                ix = self.optional_whitespace(next)?;
+            }
+            let expr = Expr::Alt(children.into_iter().map(|e| e.into_expr()).collect());
+            return Ok((ix, ExprWithPos::new(expr, Position::new(start_pos, ix))));
+        }
+        // can't have numeric backrefs and named backrefs
+        if self.numeric_backrefs && !self.named_groups.is_empty() {
+            return Err(Error::CompileError(CompileError::NamedBackrefOnly));
+        }
+        Ok((ix, child))
+    }
+
     fn parse_re(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
         let (ix, child) = self.parse_branch(ix, depth)?;
         let mut ix = self.optional_whitespace(ix)?;
@@ -133,6 +218,31 @@ impl<'a> Parser<'a> {
         Ok((ix, child))
     }
 
+    fn parse_branch_with_pos(&mut self, ix: usize, depth: usize) -> Result<(usize, ExprWithPos)> {
+        let start_pos = ix;
+        let mut children = Vec::new();
+        let mut ix = ix;
+        while ix < self.re.len() {
+            let (next, child) = self.parse_piece_with_pos(ix, depth)?;
+            if next == ix {
+                break;
+            }
+            if child.expr != Expr::Empty {
+                children.push(child);
+            }
+            ix = next;
+        }
+        let end_pos = ix;
+        match children.len() {
+            0 => Ok((ix, ExprWithPos::new(Expr::Empty, Position::new(start_pos, end_pos)))),
+            1 => Ok((ix, children.pop().unwrap())),
+            _ => {
+                let expr = Expr::Concat(children.into_iter().map(|e| e.into_expr()).collect());
+                Ok((ix, ExprWithPos::new(expr, Position::new(start_pos, end_pos))))
+            }
+        }
+    }
+
     fn parse_branch(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
         let mut children = Vec::new();
         let mut ix = ix;
@@ -151,6 +261,56 @@ impl<'a> Parser<'a> {
             1 => Ok((ix, children.pop().unwrap())),
             _ => Ok((ix, Expr::Concat(children))),
         }
+    }
+
+    fn parse_piece_with_pos(&mut self, ix: usize, depth: usize) -> Result<(usize, ExprWithPos)> {
+        let start_pos = ix;
+        let (ix, child) = self.parse_atom_with_pos(ix, depth)?;
+        let mut ix = self.optional_whitespace(ix)?;
+        if ix < self.re.len() {
+            // fail when child is empty?
+            let (lo, hi) = match self.re.as_bytes()[ix] {
+                b'?' => (0, 1),
+                b'*' => (0, usize::MAX),
+                b'+' => (1, usize::MAX),
+                b'{' => {
+                    match self.parse_repeat(ix) {
+                        Ok((next, lo, hi)) => {
+                            ix = next - 1;
+                            (lo, hi)
+                        }
+                        Err(_) => {
+                            // Invalid repeat syntax, which results in `{` being treated as a literal
+                            return Ok((ix, child));
+                        }
+                    }
+                }
+                _ => return Ok((ix, child)),
+            };
+            if !self.is_repeatable(&child.expr) {
+                return Err(Error::ParseError(ix, ParseError::TargetNotRepeatable));
+            }
+            ix += 1;
+            ix = self.optional_whitespace(ix)?;
+            let mut greedy = true;
+            if ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
+                greedy = false;
+                ix += 1;
+            }
+            greedy ^= self.flag(FLAG_SWAP_GREED);
+            let mut node = Expr::Repeat {
+                child: Box::new(child.into_expr()),
+                lo,
+                hi,
+                greedy,
+            };
+            if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
+                ix += 1;
+                node = Expr::AtomicGroup(Box::new(node));
+            }
+            return Ok((ix, ExprWithPos::new(node, Position::new(start_pos, ix))));
+        }
+        Ok((ix, child))
     }
 
     fn parse_piece(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
@@ -253,6 +413,76 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         }
         Ok((ix + 1, lo, hi))
+    }
+
+    fn parse_atom_with_pos(&mut self, ix: usize, depth: usize) -> Result<(usize, ExprWithPos)> {
+        let start_ix = ix;
+        let ix = self.optional_whitespace(ix)?;
+        if ix == self.re.len() {
+            return Ok((ix, ExprWithPos::new(Expr::Empty, Position::new(start_ix, ix))));
+        }
+        match self.re.as_bytes()[ix] {
+            b'.' => {
+                let next_ix = ix + 1;
+                Ok((
+                    next_ix,
+                    ExprWithPos::new(
+                        Expr::Any {
+                            newline: self.flag(FLAG_DOTNL),
+                        },
+                        Position::new(ix, next_ix)
+                    ),
+                ))
+            },
+            b'^' => {
+                let next_ix = ix + 1;
+                Ok((
+                    next_ix,
+                    ExprWithPos::new(
+                        if self.flag(FLAG_MULTI) {
+                            // TODO: support crlf flag
+                            Expr::Assertion(Assertion::StartLine { crlf: false })
+                        } else {
+                            Expr::Assertion(Assertion::StartText)
+                        },
+                        Position::new(ix, next_ix)
+                    ),
+                ))
+            },
+            b'$' => {
+                let next_ix = ix + 1;
+                Ok((
+                    next_ix,
+                    ExprWithPos::new(
+                        if self.flag(FLAG_MULTI) {
+                            // TODO: support crlf flag
+                            Expr::Assertion(Assertion::EndLine { crlf: false })
+                        } else {
+                            Expr::Assertion(Assertion::EndText)
+                        },
+                        Position::new(ix, next_ix)
+                    ),
+                ))
+            },
+            b'(' => self.parse_group_with_pos(ix, depth),
+            b'\\' => self.parse_escape_with_pos(ix, false),
+            b'+' | b'*' | b'?' | b'|' | b')' => Ok((ix, ExprWithPos::new(Expr::Empty, Position::new(ix, ix)))),
+            b'[' => self.parse_class_with_pos(ix),
+            b => {
+                // TODO: maybe want to match multiple codepoints?
+                let next = ix + codepoint_len(b);
+                Ok((
+                    next,
+                    ExprWithPos::new(
+                        Expr::Literal {
+                            val: String::from(&self.re[ix..next]),
+                            casei: self.flag(FLAG_CASEI),
+                        },
+                        Position::new(ix, next)
+                    ),
+                ))
+            }
+        }
     }
 
     fn parse_atom(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
@@ -749,6 +979,31 @@ impl<'a> Parser<'a> {
         };
         let ix = ix + 1; // skip closing ']'
         Ok((ix, class))
+    }
+
+    fn parse_group_with_pos(&mut self, ix: usize, depth: usize) -> Result<(usize, ExprWithPos)> {
+        let start_pos = ix;
+        let (end_ix, expr) = self.parse_group(ix, depth)?;
+        Ok((end_ix, ExprWithPos::new(expr, Position::new(start_pos, end_ix))))
+    }
+
+    fn parse_escape_with_pos(&mut self, ix: usize, in_class: bool) -> Result<(usize, ExprWithPos)> {
+        let start_pos = ix;
+        let (end_ix, expr) = self.parse_escape(ix, in_class)?;
+        Ok((end_ix, ExprWithPos::new(expr, Position::new(start_pos, end_ix))))
+    }
+
+    fn parse_class_with_pos(&mut self, ix: usize) -> Result<(usize, ExprWithPos)> {
+        let start_pos = ix;
+        let (end_ix, expr) = self.parse_class(ix)?;
+        Ok((end_ix, ExprWithPos::new(expr, Position::new(start_pos, end_ix))))
+    }
+
+    fn resolve_named_subroutine_calls_with_pos(&mut self, expr: &mut ExprWithPos) {
+        // For now, delegate to the non-positioned version
+        let mut temp_expr = expr.clone().into_expr();
+        self.resolve_named_subroutine_calls(&mut temp_expr);
+        expr.expr = temp_expr;
     }
 
     fn parse_group(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
@@ -2726,5 +2981,277 @@ mod tests {
                 Expr::Assertion(Assertion::EndLine { crlf: false })
             ])
         );
+    }
+
+    // Position tracking tests
+    #[test]
+    fn position_tracking_literal() {
+        let tree = Expr::parse_tree("hello").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be a Concat of literals
+        match &expr_with_pos.expr {
+            Expr::Concat(exprs) => {
+                assert_eq!(exprs.len(), 5);
+                for (i, c) in "hello".chars().enumerate() {
+                    if let Expr::Literal { val, .. } = &exprs[i] {
+                        assert_eq!(val, &c.to_string());
+                    } else {
+                        panic!("Expected literal at position {}", i);
+                    }
+                }
+            }
+            _ => panic!("Expected Concat for literal string"),
+        }
+        
+        // Check overall position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 5);
+    }
+
+    #[test]
+    fn position_tracking_single_char() {
+        let tree = Expr::parse_tree("a").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be a single literal
+        match &expr_with_pos.expr {
+            Expr::Literal { val, .. } => {
+                assert_eq!(val, "a");
+            }
+            _ => panic!("Expected single literal"),
+        }
+        
+        // Check position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 1);
+    }
+
+    #[test]
+    fn position_tracking_dot() {
+        let tree = Expr::parse_tree(".").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be Any
+        match &expr_with_pos.expr {
+            Expr::Any { .. } => {}
+            _ => panic!("Expected Any"),
+        }
+        
+        // Check position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 1);
+    }
+
+    #[test]
+    fn position_tracking_anchors() {
+        let tree = Expr::parse_tree("^hello$").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be a Concat with start assertion, literals, and end assertion
+        match &expr_with_pos.expr {
+            Expr::Concat(exprs) => {
+                assert_eq!(exprs.len(), 7); // ^ + h + e + l + l + o + $
+                // First should be StartText assertion
+                match &exprs[0] {
+                    Expr::Assertion(Assertion::StartText) => {}
+                    _ => panic!("Expected StartText assertion"),
+                }
+                // Last should be EndText assertion
+                match &exprs[6] {
+                    Expr::Assertion(Assertion::EndText) => {}
+                    _ => panic!("Expected EndText assertion"),
+                }
+            }
+            _ => panic!("Expected Concat"),
+        }
+        
+        // Check overall position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 7);
+    }
+
+    #[test]
+    fn position_tracking_group() {
+        let tree = Expr::parse_tree("(hello)").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be a Group
+        match &expr_with_pos.expr {
+            Expr::Group(_) => {}
+            _ => panic!("Expected Group"),
+        }
+        
+        // Check position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 7);
+    }
+
+    #[test]
+    fn position_tracking_alternation() {
+        let tree = Expr::parse_tree("hello|world").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be Alt
+        match &expr_with_pos.expr {
+            Expr::Alt(alts) => {
+                assert_eq!(alts.len(), 2);
+            }
+            _ => panic!("Expected Alt"),
+        }
+        
+        // Check position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 11);
+    }
+
+    #[test]
+    fn position_tracking_repeat() {
+        let tree = Expr::parse_tree("a*").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be Repeat
+        match &expr_with_pos.expr {
+            Expr::Repeat { lo, hi, greedy, .. } => {
+                assert_eq!(*lo, 0);
+                assert_eq!(*hi, usize::MAX);
+                assert_eq!(*greedy, true);
+            }
+            _ => panic!("Expected Repeat"),
+        }
+        
+        // Check position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 2);
+    }
+
+    #[test]
+    fn position_tracking_repeat_plus() {
+        let tree = Expr::parse_tree("a+").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be Repeat
+        match &expr_with_pos.expr {
+            Expr::Repeat { lo, hi, greedy, .. } => {
+                assert_eq!(*lo, 1);
+                assert_eq!(*hi, usize::MAX);
+                assert_eq!(*greedy, true);
+            }
+            _ => panic!("Expected Repeat"),
+        }
+        
+        // Check position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 2);
+    }
+
+    #[test]
+    fn position_tracking_repeat_question() {
+        let tree = Expr::parse_tree("a?").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be Repeat
+        match &expr_with_pos.expr {
+            Expr::Repeat { lo, hi, greedy, .. } => {
+                assert_eq!(*lo, 0);
+                assert_eq!(*hi, 1);
+                assert_eq!(*greedy, true);
+            }
+            _ => panic!("Expected Repeat"),
+        }
+        
+        // Check position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 2);
+    }
+
+    #[test]
+    fn position_tracking_repeat_brace() {
+        let tree = Expr::parse_tree("a{2,5}").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be Repeat
+        match &expr_with_pos.expr {
+            Expr::Repeat { lo, hi, greedy, .. } => {
+                assert_eq!(*lo, 2);
+                assert_eq!(*hi, 5);
+                assert_eq!(*greedy, true);
+            }
+            _ => panic!("Expected Repeat"),
+        }
+        
+        // Check position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 6);
+    }
+
+    #[test]
+    fn position_tracking_complex_pattern() {
+        let tree = Expr::parse_tree("(hello|world)+").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be Repeat of Group of Alt
+        match &expr_with_pos.expr {
+            Expr::Repeat { child, lo, hi, greedy } => {
+                assert_eq!(*lo, 1);
+                assert_eq!(*hi, usize::MAX);
+                assert_eq!(*greedy, true);
+                match child.as_ref() {
+                    Expr::Group(group_child) => {
+                        match group_child.as_ref() {
+                            Expr::Alt(alts) => {
+                                assert_eq!(alts.len(), 2);
+                            }
+                            _ => panic!("Expected Alt inside Group"),
+                        }
+                    }
+                    _ => panic!("Expected Group inside Repeat"),
+                }
+            }
+            _ => panic!("Expected Repeat"),
+        }
+        
+        // Check position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 14);
+    }
+
+    #[test]
+    fn position_tracking_empty() {
+        let tree = Expr::parse_tree("").unwrap();
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Should be Empty
+        match &expr_with_pos.expr {
+            Expr::Empty => {}
+            _ => panic!("Expected Empty"),
+        }
+        
+        // Check position
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 0);
+    }
+
+    #[test]
+    fn position_backward_compatibility() {
+        // Test that existing ExprTree.expr field works as before
+        let tree = Expr::parse_tree("hello").unwrap();
+        
+        // The old expr field should work exactly as before
+        match &tree.expr {
+            Expr::Concat(exprs) => {
+                assert_eq!(exprs.len(), 5);
+                for (i, c) in "hello".chars().enumerate() {
+                    if let Expr::Literal { val, .. } = &exprs[i] {
+                        assert_eq!(val, &c.to_string());
+                    }
+                }
+            }
+            _ => panic!("Expected Concat"),
+        }
+        
+        // The new expr_with_pos should contain the same logical expression
+        let stripped = tree.expr_with_pos.clone().into_expr();
+        assert_eq!(tree.expr, stripped);
     }
 }
