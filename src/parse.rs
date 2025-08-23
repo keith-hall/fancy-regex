@@ -1415,7 +1415,7 @@ mod tests {
     use alloc::string::{String, ToString};
     use alloc::{format, vec};
 
-    use crate::parse::{make_literal, make_literal_case_insensitive, parse_id};
+    use crate::parse::{make_literal, make_literal_case_insensitive, parse_id, Position, ExprWithPos};
     use crate::{Assertion, Expr};
     use crate::{LookAround::*, RegexOptions, SyntaxConfig};
 
@@ -3230,6 +3230,69 @@ mod tests {
         // Check position
         assert_eq!(expr_with_pos.pos.start, 0);
         assert_eq!(expr_with_pos.pos.end, 0);
+    }
+
+    #[test]
+    fn position_api_demonstration() {
+        // Parse a regex pattern with position tracking
+        let tree = Expr::parse_tree("(hello|world)+").unwrap();
+        
+        // Access the positioned parse tree
+        let expr_with_pos = &tree.expr_with_pos;
+        
+        // Root expression spans the entire pattern
+        assert_eq!(expr_with_pos.pos.start, 0);
+        assert_eq!(expr_with_pos.pos.end, 14);
+        
+        // The positioned expression contains the same logical structure
+        // as the non-positioned version
+        match &expr_with_pos.expr {
+            Expr::Repeat { child, lo, hi, greedy } => {
+                assert_eq!(*lo, 1);
+                assert_eq!(*hi, usize::MAX);
+                assert_eq!(*greedy, true);
+                match child.as_ref() {
+                    Expr::Group(group_child) => {
+                        match group_child.as_ref() {
+                            Expr::Alt(alternatives) => {
+                                assert_eq!(alternatives.len(), 2);
+                            }
+                            _ => panic!("Expected Alt inside Group"),
+                        }
+                    }
+                    _ => panic!("Expected Group inside Repeat"),
+                }
+            }
+            _ => panic!("Expected Repeat"),
+        }
+        
+        // Backward compatibility: the old expr field still works
+        assert_eq!(tree.expr, expr_with_pos.clone().into_expr());
+        
+        // Test accessing position information
+        let pos = expr_with_pos.pos;
+        assert_eq!(pos.start, 0);
+        assert_eq!(pos.end, 14);
+        
+        // Test Position creation
+        let custom_pos = Position::new(5, 10);
+        assert_eq!(custom_pos.start, 5);
+        assert_eq!(custom_pos.end, 10);
+        
+        // Test ExprWithPos creation
+        let custom_expr = ExprWithPos::new(
+            Expr::Literal { val: "test".to_string(), casei: false },
+            Position::new(0, 4)
+        );
+        assert_eq!(custom_expr.pos.start, 0);
+        assert_eq!(custom_expr.pos.end, 4);
+            match &custom_expr.expr {
+                Expr::Literal { val, casei } => {
+                    assert_eq!(val, "test");
+                    assert_eq!(*casei, false);
+                }
+                _ => panic!("Expected Literal"),
+            }
     }
 
     #[test]
