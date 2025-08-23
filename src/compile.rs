@@ -111,7 +111,7 @@ impl Compiler {
             // easy case, delegate entire subexpr
             return self.compile_delegate(info);
         }
-        match *info.expr {
+        match info.expr {
             Expr::Empty => (),
             Expr::Literal { ref val, casei } => {
                 if !casei {
@@ -140,19 +140,26 @@ impl Compiler {
                 self.b.add(Insn::Save(group * 2 + 1));
             }
             Expr::Repeat { lo, hi, greedy, .. } => {
-                self.compile_repeat(info, lo, hi, greedy, hard)?;
+                self.compile_repeat(info, *lo, *hi, *greedy, hard)?;
             }
             Expr::LookAround(_, la) => {
-                self.compile_lookaround(info, la)?;
+                self.compile_lookaround(info, *la)?;
             }
             Expr::Backref { group, casei } => {
                 self.b.add(Insn::Backref {
                     slot: group * 2,
-                    casei,
+                    casei: *casei,
+                });
+            }
+            Expr::NamedBackref { ref groups, casei } => {
+                let slots = groups.iter().map(|group| group * 2).collect();
+                self.b.add(Insn::NamedBackref {
+                    slots,
+                    casei: *casei,
                 });
             }
             Expr::BackrefExistsCondition(group) => {
-                self.b.add(Insn::BackrefExistsCondition(group));
+                self.b.add(Insn::BackrefExistsCondition(*group));
             }
             Expr::AtomicGroup(_) => {
                 // TODO optimization: atomic insns are not needed if the
@@ -166,7 +173,7 @@ impl Compiler {
                 self.compile_delegate(info)?;
             }
             Expr::Assertion(assertion) => {
-                self.b.add(Insn::Assertion(assertion));
+                self.b.add(Insn::Assertion(*assertion));
             }
             Expr::KeepOut => {
                 self.b.add(Insn::Save(0));

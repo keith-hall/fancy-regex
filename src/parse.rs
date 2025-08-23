@@ -35,9 +35,9 @@ use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RE
 use crate::{Assertion, LookAround::*};
 
 #[cfg(not(feature = "std"))]
-pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
+pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, alloc::vec::Vec<usize>>;
 #[cfg(feature = "std")]
-pub(crate) type NamedGroups = std::collections::HashMap<String, usize>;
+pub(crate) type NamedGroups = std::collections::HashMap<String, alloc::vec::Vec<usize>>;
 
 #[derive(Debug, Clone)]
 pub struct ExprTree {
@@ -64,6 +64,7 @@ pub(crate) struct Parser<'a> {
 struct NamedBackrefOrSubroutine<'a> {
     ix: usize,
     group_ix: Option<usize>,
+    group_ixes: Option<alloc::vec::Vec<usize>>,
     group_name: Option<&'a str>,
     recursion_level: Option<isize>,
 }
@@ -313,6 +314,7 @@ impl<'a> Parser<'a> {
         let NamedBackrefOrSubroutine {
             ix: end,
             group_ix,
+            group_ixes,
             group_name,
             recursion_level,
         } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
@@ -326,7 +328,25 @@ impl<'a> Parser<'a> {
                         relative_level: recursion_level,
                         casei: self.flag(FLAG_CASEI),
                     }
+                } else if let Some(groups) = group_ixes {
+                    // Multiple groups with the same name - use NamedBackref only if there are actually multiple
+                    if groups.len() > 1 {
+                        for &g in &groups {
+                            self.backrefs.insert(g);
+                        }
+                        Expr::NamedBackref {
+                            groups,
+                            casei: self.flag(FLAG_CASEI),
+                        }
+                    } else {
+                        // Only one group with this name - use regular Backref
+                        Expr::Backref {
+                            group,
+                            casei: self.flag(FLAG_CASEI),
+                        }
+                    }
                 } else {
+                    // Single numbered or single named group - use regular Backref
                     Expr::Backref {
                         group,
                         casei: self.flag(FLAG_CASEI),
@@ -354,6 +374,7 @@ impl<'a> Parser<'a> {
         let NamedBackrefOrSubroutine {
             ix: end,
             group_ix,
+            group_ixes: _,
             group_name,
             recursion_level,
         } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
@@ -393,28 +414,31 @@ impl<'a> Parser<'a> {
             skip,
         }) = parse_id(&self.re[ix..], open, close, allow_relative)
         {
-            let group = if let Some(group) = self.named_groups.get(id) {
-                Some(*group)
+            let (group, group_ixes) = if let Some(groups) = self.named_groups.get(id) {
+                // This is a named group, return the most recent group for backward compatibility
+                // and also return all groups for the new NamedBackref logic
+                (groups.last().copied(), Some(groups.clone()))
             } else if let Ok(group) = id.parse::<usize>() {
-                Some(group)
+                (Some(group), None)
             } else if let Some(relative_group) = relative {
                 if id.is_empty() {
                     relative = None;
-                    self.curr_group.checked_add_signed(if relative_group < 0 {
+                    (self.curr_group.checked_add_signed(if relative_group < 0 {
                         relative_group + 1
                     } else {
                         relative_group
-                    })
+                    }), None)
                 } else {
-                    None
+                    (None, None)
                 }
             } else {
-                None
+                (None, None)
             };
             if let Some(group) = group {
                 Ok(NamedBackrefOrSubroutine {
                     ix: ix + skip,
                     group_ix: Some(group),
+                    group_ixes,
                     group_name: None,
                     recursion_level: relative,
                 })
@@ -423,6 +447,7 @@ impl<'a> Parser<'a> {
                 Ok(NamedBackrefOrSubroutine {
                     ix: ix + skip,
                     group_ix: None,
+                    group_ixes: None,
                     group_name: Some(id),
                     recursion_level: relative,
                 })
@@ -779,7 +804,7 @@ impl<'a> Parser<'a> {
                 skip,
             }) = parse_id(&self.re[ix + 1..], open, close, false)
             {
-                self.named_groups.insert(id.to_string(), self.curr_group);
+                self.named_groups.entry(id.to_string()).or_insert(alloc::vec::Vec::new()).push(self.curr_group);
                 (None, skip + 1)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -793,7 +818,7 @@ impl<'a> Parser<'a> {
                 skip,
             }) = parse_id(&self.re[ix + 2..], "<", ">", false)
             {
-                self.named_groups.insert(id.to_string(), self.curr_group);
+                self.named_groups.entry(id.to_string()).or_insert(alloc::vec::Vec::new()).push(self.curr_group);
                 (None, skip + 2)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -1023,8 +1048,10 @@ impl<'a> Parser<'a> {
     fn resolve_named_subroutine_calls(&mut self, expr: &mut Expr) {
         match expr {
             Expr::UnresolvedNamedSubroutineCall { name, .. } => {
-                if let Some(group) = self.named_groups.get(name) {
-                    *expr = Expr::SubroutineCall(*group);
+                if let Some(groups) = self.named_groups.get(name) {
+                    if let Some(&group) = groups.last() {
+                        *expr = Expr::SubroutineCall(group);
+                    }
                 } else {
                     self.has_unresolved_subroutines = true;
                 }

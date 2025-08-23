@@ -211,6 +211,13 @@ pub enum Insn {
         /// Whether the backref should be matched case insensitively
         casei: bool,
     },
+    /// Back reference to a named group that may have multiple capture groups
+    NamedBackref {
+        /// The group slots representing the start of each capture group
+        slots: alloc::vec::Vec<usize>,
+        /// Whether the backref should be matched case insensitively
+        casei: bool,
+    },
     /// Begin of atomic group
     BeginAtomic,
     /// End of atomic group
@@ -725,6 +732,38 @@ pub(crate) fn run(
                         break 'fail;
                     }
                     ix = ix_end;
+                }
+                Insn::NamedBackref { ref slots, casei } => {
+                    // Try groups in reverse order (most recent first) to find one with captured text
+                    let mut matched = false;
+                    for &slot in slots.iter().rev() {
+                        let lo = state.get(slot);
+                        if lo == usize::MAX {
+                            // This group hasn't matched, try the next one
+                            continue;
+                        }
+                        let hi = state.get(slot + 1);
+                        if hi == usize::MAX {
+                            // This group hasn't matched, try the next one
+                            continue;
+                        }
+                        let ref_text = &s[lo..hi];
+                        let ix_end = ix + ref_text.len();
+                        let text_matches = if casei {
+                            matches_literal_casei(s, ix, ix_end, ref_text)
+                        } else {
+                            matches_literal(s, ix, ix_end, ref_text)
+                        };
+                        if text_matches {
+                            ix = ix_end;
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if !matched {
+                        // None of the named groups matched
+                        break 'fail;
+                    }
                 }
                 Insn::BackrefExistsCondition(group) => {
                     let lo = state.get(group * 2);
