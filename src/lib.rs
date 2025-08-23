@@ -207,7 +207,7 @@ mod parse;
 mod replacer;
 mod vm;
 
-use crate::analyze::analyze;
+use crate::analyze::{analyze, resolve_named_references};
 use crate::analyze::can_compile_as_anchored;
 use crate::compile::compile;
 use crate::flags::*;
@@ -735,6 +735,9 @@ impl Regex {
     fn new_options(options: RegexOptions) -> Result<Regex> {
         let mut tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
 
+        // Resolve named references before analysis
+        resolve_named_references(&mut tree.expr, &tree.named_groups)?;
+
         // try to optimize the expression tree
         let requires_capture_group_fixup = optimize(&mut tree);
         let info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
@@ -1047,8 +1050,10 @@ impl Regex {
     pub fn capture_names(&self) -> CaptureNames {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
-        for (name, &i) in self.named_groups.iter() {
-            names[i] = Some(name.as_str());
+        for (name, groups) in self.named_groups.iter() {
+            if let Some(&last_group) = groups.last() {
+                names[last_group] = Some(name.as_str());
+            }
         }
         CaptureNames(names.into_iter())
     }
@@ -1415,7 +1420,9 @@ impl<'t> Captures<'t> {
     /// Returns the match for a named capture group.  Returns `None` the capture
     /// group did not match or if there is no group with the given name.
     pub fn name(&self, name: &str) -> Option<Match<'t>> {
-        self.named_groups.get(name).and_then(|i| self.get(*i))
+        self.named_groups.get(name).and_then(|groups| {
+            groups.last().and_then(|&i| self.get(i))
+        })
     }
 
     /// Expands all instances of `$group` in `replacement` to the corresponding
@@ -1617,6 +1624,18 @@ pub enum Expr {
         name: String,
         /// The position in the original regex pattern where the subroutine call is made
         ix: usize,
+    },
+    /// Unresolved named backref to the specified group name
+    NamedBackref {
+        /// The capture group name
+        name: String,
+        /// Whether the matching is case-insensitive or not
+        casei: bool,
+    },
+    /// Named subroutine call to the specified group name
+    NamedSubroutineCall {
+        /// The capture group name
+        name: String,
     },
 }
 

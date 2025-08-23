@@ -35,9 +35,9 @@ use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RE
 use crate::{Assertion, LookAround::*};
 
 #[cfg(not(feature = "std"))]
-pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
+pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, alloc::vec::Vec<usize>>;
 #[cfg(feature = "std")]
-pub(crate) type NamedGroups = std::collections::HashMap<String, usize>;
+pub(crate) type NamedGroups = std::collections::HashMap<String, alloc::vec::Vec<usize>>;
 
 #[derive(Debug, Clone)]
 pub struct ExprTree {
@@ -316,31 +316,45 @@ impl<'a> Parser<'a> {
             group_name,
             recursion_level,
         } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
+        
+        // Handle relative recursion level backrefs which are numeric
         if let Some(group) = group_ix {
-            self.backrefs.insert(group);
-            return Ok((
-                end,
-                if let Some(recursion_level) = recursion_level {
+            if recursion_level.is_some() {
+                self.backrefs.insert(group);
+                return Ok((
+                    end,
                     Expr::BackrefWithRelativeRecursionLevel {
                         group,
-                        relative_level: recursion_level,
+                        relative_level: recursion_level.unwrap(),
                         casei: self.flag(FLAG_CASEI),
                     }
-                } else {
-                    Expr::Backref {
-                        group,
-                        casei: self.flag(FLAG_CASEI),
-                    }
+                ));
+            }
+        }
+        
+        if let Some(group_name) = group_name {
+            // Always create a named backref, regardless of whether the name is found
+            return Ok((
+                end,
+                Expr::NamedBackref {
+                    name: group_name.to_string(),
+                    casei: self.flag(FLAG_CASEI),
                 },
             ));
         }
-        if let Some(group_name) = group_name {
-            // here the name was parsed but doesn't match a capture group we have already parsed
-            return Err(Error::ParseError(
-                ix,
-                ParseError::InvalidGroupNameBackref(group_name.to_string()),
+        
+        if let Some(group) = group_ix {
+            // This is a numeric backref, not a named one
+            self.backrefs.insert(group);
+            return Ok((
+                end,
+                Expr::Backref {
+                    group,
+                    casei: self.flag(FLAG_CASEI),
+                }
             ));
         }
+        
         unreachable!()
     }
 
@@ -368,12 +382,10 @@ impl<'a> Parser<'a> {
             return Ok((end, Expr::SubroutineCall(group)));
         }
         if let Some(group_name) = group_name {
-            // here the name was parsed but doesn't match a capture group we have already parsed
-            let expr = Expr::UnresolvedNamedSubroutineCall {
+            // Create a named subroutine call instead of unresolved
+            let expr = Expr::NamedSubroutineCall {
                 name: group_name.to_string(),
-                ix,
             };
-            self.has_unresolved_subroutines = true;
             self.contains_subroutines = true;
             return Ok((end, expr));
         }
@@ -393,33 +405,37 @@ impl<'a> Parser<'a> {
             skip,
         }) = parse_id(&self.re[ix..], open, close, allow_relative)
         {
-            let group = if let Some(group) = self.named_groups.get(id) {
-                Some(*group)
-            } else if let Ok(group) = id.parse::<usize>() {
-                Some(group)
-            } else if let Some(relative_group) = relative {
-                if id.is_empty() {
-                    relative = None;
-                    self.curr_group.checked_add_signed(if relative_group < 0 {
-                        relative_group + 1
-                    } else {
-                        relative_group
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            if let Some(group) = group {
+            // Check if this is a numeric reference first
+            if let Ok(group) = id.parse::<usize>() {
                 Ok(NamedBackrefOrSubroutine {
                     ix: ix + skip,
                     group_ix: Some(group),
                     group_name: None,
                     recursion_level: relative,
                 })
+            } else if let Some(relative_group) = relative {
+                if id.is_empty() {
+                    relative = None;
+                    let group = self.curr_group.checked_add_signed(if relative_group < 0 {
+                        relative_group + 1
+                    } else {
+                        relative_group
+                    });
+                    if let Some(group) = group {
+                        Ok(NamedBackrefOrSubroutine {
+                            ix: ix + skip,
+                            group_ix: Some(group),
+                            group_name: None,
+                            recursion_level: None,
+                        })
+                    } else {
+                        Err(Error::ParseError(ix, ParseError::InvalidGroupName))
+                    }
+                } else {
+                    Err(Error::ParseError(ix, ParseError::InvalidGroupName))
+                }
             } else {
-                // here the name was parsed but doesn't match a capture group we have already parsed
+                // This is a named reference - don't resolve it here
                 Ok(NamedBackrefOrSubroutine {
                     ix: ix + skip,
                     group_ix: None,
@@ -779,7 +795,7 @@ impl<'a> Parser<'a> {
                 skip,
             }) = parse_id(&self.re[ix + 1..], open, close, false)
             {
-                self.named_groups.insert(id.to_string(), self.curr_group);
+                self.named_groups.entry(id.to_string()).or_insert_with(Vec::new).push(self.curr_group);
                 (None, skip + 1)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -793,7 +809,7 @@ impl<'a> Parser<'a> {
                 skip,
             }) = parse_id(&self.re[ix + 2..], "<", ">", false)
             {
-                self.named_groups.insert(id.to_string(), self.curr_group);
+                self.named_groups.entry(id.to_string()).or_insert_with(Vec::new).push(self.curr_group);
                 (None, skip + 2)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -926,6 +942,21 @@ impl<'a> Parser<'a> {
             if let Expr::Backref { group, .. } = condition {
                 let after = self.check_for_close_paren(end)?;
                 return Ok((after, Expr::BackrefExistsCondition(group)));
+            } else if let Expr::NamedBackref { name, .. } = condition {
+                // For named backrefs, try to resolve to group number
+                if let Some(groups) = self.named_groups.get(&name) {
+                    if let Some(&group) = groups.last() {
+                        let after = self.check_for_close_paren(end)?;
+                        return Ok((after, Expr::BackrefExistsCondition(group)));
+                    }
+                }
+                // If we can't resolve the named group, return an error
+                return Err(Error::ParseError(
+                    end,
+                    ParseError::GeneralParseError(
+                        format!("unknown group name '{}' in conditional", name)
+                    )
+                ));
             } else {
                 return Err(Error::ParseError(
                     end,
@@ -1023,8 +1054,19 @@ impl<'a> Parser<'a> {
     fn resolve_named_subroutine_calls(&mut self, expr: &mut Expr) {
         match expr {
             Expr::UnresolvedNamedSubroutineCall { name, .. } => {
-                if let Some(group) = self.named_groups.get(name) {
-                    *expr = Expr::SubroutineCall(*group);
+                if let Some(groups) = self.named_groups.get(name) {
+                    if let Some(&last_group) = groups.last() {
+                        *expr = Expr::SubroutineCall(last_group);
+                    }
+                } else {
+                    self.has_unresolved_subroutines = true;
+                }
+            }
+            Expr::NamedSubroutineCall { name } => {
+                if let Some(groups) = self.named_groups.get(name) {
+                    if let Some(&last_group) = groups.last() {
+                        *expr = Expr::SubroutineCall(last_group);
+                    }
                 } else {
                     self.has_unresolved_subroutines = true;
                 }
@@ -1619,8 +1661,8 @@ mod tests {
             p("(?<i>.)\\k<i>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Any { newline: false })),
-                Expr::Backref {
-                    group: 1,
+                Expr::NamedBackref {
+                    name: "i".to_string(),
                     casei: false,
                 },
             ])
@@ -1962,11 +2004,74 @@ mod tests {
     }
 
     #[test]
+    fn forward_named_backref() {
+        // Forward references to named groups should now work with the new analysis-based resolution
+        let mut tree = Expr::parse_tree("\\k<id>(?<id>.)").unwrap();
+        
+        // Should parse successfully with a NamedBackref
+        match &tree.expr {
+            Expr::Concat(children) => {
+                match &children[0] {
+                    Expr::NamedBackref { name, .. } => {
+                        assert_eq!(name, "id");
+                    }
+                    _ => panic!("Expected NamedBackref, got {:?}", children[0]),
+                }
+            }
+            _ => panic!("Expected Concat, got {:?}", tree.expr),
+        }
+        
+        // Should resolve successfully during analysis
+        let result = super::super::analyze::analyze_with_resolution(&mut tree, 0);
+        assert!(result.is_ok(), "Expected successful resolution, got: {:?}", result);
+        
+        // After resolution, should have regular Backref
+        match &tree.expr {
+            Expr::Concat(children) => {
+                match &children[0] {
+                    Expr::Backref { group, .. } => {
+                        assert_eq!(*group, 1);
+                    }
+                    _ => panic!("Expected Backref after resolution, got {:?}", children[0]),
+                }
+            }
+            _ => panic!("Expected Concat, got {:?}", tree.expr),
+        }
+    }
+
+    #[test]
     fn invalid_group_name_backref() {
-        assert_error(
-            "\\k<id>(?<id>.)",
-            "Parsing error at position 2: Invalid group name in back reference: id",
-        );
+        // Backref to a group that doesn't exist should fail at analysis time
+        let mut tree = Expr::parse_tree("\\k<nonexistent>(?<id>.)").unwrap();
+        
+        let result = super::super::analyze::analyze_with_resolution(&mut tree, 0);
+        assert!(result.is_err(), "Expected resolution error for nonexistent group");
+    }
+
+    #[test]
+    fn multiple_groups_same_name() {
+        // Test multiple groups with the same name
+        let mut tree = Expr::parse_tree(r"(?<name>a)(?<name>b)\k<name>").unwrap();
+        
+        // Named groups should contain both group numbers
+        assert_eq!(tree.named_groups.get("name"), Some(&vec![1, 2]));
+        
+        // Resolution should use the last group (Oniguruma behavior)
+        let result = super::super::analyze::analyze_with_resolution(&mut tree, 0);
+        assert!(result.is_ok(), "Expected successful resolution, got: {:?}", result);
+        
+        // After resolution, should have Backref to group 2 (the last one)
+        match &tree.expr {
+            Expr::Concat(children) => {
+                match &children[2] {
+                    Expr::Backref { group, .. } => {
+                        assert_eq!(*group, 2);
+                    }
+                    _ => panic!("Expected Backref after resolution, got {:?}", children[2]),
+                }
+            }
+            _ => panic!("Expected Concat, got {:?}", tree.expr),
+        }
     }
 
     #[test]

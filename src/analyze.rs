@@ -27,7 +27,7 @@ use core::cmp::min;
 use bit_set::BitSet;
 
 use crate::alloc::string::ToString;
-use crate::parse::ExprTree;
+use crate::parse::{ExprTree, NamedGroups};
 use crate::{CompileError, Error, Expr, Result};
 
 #[cfg(not(feature = "std"))]
@@ -231,6 +231,16 @@ impl<'a> Analyzer<'a> {
                     "Backref at recursion level".to_string(),
                 )));
             }
+            Expr::NamedBackref { .. } => {
+                return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
+                    "Unresolved named backref - should be resolved in analysis step".to_string(),
+                )));
+            }
+            Expr::NamedSubroutineCall { .. } => {
+                return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
+                    "Unresolved named subroutine call - should be resolved in analysis step".to_string(),
+                )));
+            }
         };
 
         Ok(Info {
@@ -250,6 +260,77 @@ fn literal_const_size(_: &str, _: bool) -> bool {
     // test below will fail when that changes, then we need to
     // do something fancier here.
     true
+}
+
+/// Resolve named backrefs and named subroutine calls in the expression tree.
+pub fn resolve_named_references(expr: &mut Expr, named_groups: &NamedGroups) -> Result<()> {
+    match expr {
+        Expr::NamedBackref { name, casei } => {
+            if let Some(groups) = named_groups.get(name) {
+                if groups.is_empty() {
+                    return Err(Error::CompileError(CompileError::InvalidGroupNameBackref(name.clone())));
+                }
+                // Oniguruma behavior: try groups from last to first
+                // For now, we'll resolve to the last group and let the VM handle the lookup order
+                let last_group = *groups.last().unwrap();
+                *expr = Expr::Backref {
+                    group: last_group,
+                    casei: *casei,
+                };
+            } else {
+                return Err(Error::CompileError(CompileError::InvalidGroupNameBackref(name.clone())));
+            }
+        }
+        Expr::NamedSubroutineCall { name } => {
+            if let Some(groups) = named_groups.get(name) {
+                if groups.is_empty() {
+                    return Err(Error::CompileError(CompileError::SubroutineCallTargetNotFound(name.clone(), 0)));
+                }
+                if groups.len() > 1 {
+                    return Err(Error::CompileError(CompileError::SubroutineCallTargetNotFound(
+                        format!("Ambiguous subroutine call - multiple groups named '{}'", name), 0)));
+                }
+                let group = groups[0];
+                *expr = Expr::SubroutineCall(group);
+            } else {
+                return Err(Error::CompileError(CompileError::SubroutineCallTargetNotFound(name.clone(), 0)));
+            }
+        }
+        // Recursively resolve in inner expressions
+        Expr::Group(inner) | Expr::LookAround(inner, _) | Expr::AtomicGroup(inner) => {
+            resolve_named_references(inner, named_groups)?;
+        }
+        Expr::Concat(children) | Expr::Alt(children) => {
+            for child in children {
+                resolve_named_references(child, named_groups)?;
+            }
+        }
+        Expr::Repeat { child, .. } => {
+            resolve_named_references(child, named_groups)?;
+        }
+        Expr::Conditional {
+            condition,
+            true_branch,
+            false_branch,
+        } => {
+            resolve_named_references(condition, named_groups)?;
+            resolve_named_references(true_branch, named_groups)?;
+            resolve_named_references(false_branch, named_groups)?;
+        }
+        _ => {
+            // No resolution needed for other expression types
+        }
+    }
+    Ok(())
+}
+
+/// Resolve named references and analyze the parsed expression to determine whether it requires fancy features.
+pub fn analyze_with_resolution(tree: &mut ExprTree, start_group: usize) -> Result<Info> {
+    // First resolve named references
+    resolve_named_references(&mut tree.expr, &tree.named_groups)?;
+    
+    // Then perform the analysis
+    analyze(tree, start_group)
 }
 
 /// Analyze the parsed expression to determine whether it requires fancy features.
@@ -467,8 +548,8 @@ mod tests {
 
     #[test]
     fn subroutine_call_undefined() {
-        let tree = &Expr::parse_tree(r"\g<wrong_name>(?<different_name>a)").unwrap();
-        let result = analyze(tree, 1);
+        let mut tree = Expr::parse_tree(r"\g<wrong_name>(?<different_name>a)").unwrap();
+        let result = super::analyze_with_resolution(&mut tree, 1);
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
@@ -550,5 +631,39 @@ mod tests {
     fn not_anchored_for_startline_assertions() {
         let tree = Expr::parse_tree(r"(?m)^(\w+)\1").unwrap();
         assert_eq!(can_compile_as_anchored(&tree.expr), false);
+    }
+
+    #[test]
+    fn named_backref_resolution() {
+        let mut tree = Expr::parse_tree(r"(?<name>a)\k<name>").unwrap();
+        
+        // Before resolution, should have NamedBackref
+        match &tree.expr {
+            Expr::Concat(children) => {
+                match &children[1] {
+                    Expr::NamedBackref { name, .. } => {
+                        assert_eq!(name, "name");
+                    }
+                    _ => panic!("Expected NamedBackref, got {:?}", children[1]),
+                }
+            }
+            _ => panic!("Expected Concat, got {:?}", tree.expr),
+        }
+        
+        let result = super::analyze_with_resolution(&mut tree, 0);
+        assert!(result.is_ok());
+        
+        // After resolution, should have regular Backref
+        match &tree.expr {
+            Expr::Concat(children) => {
+                match &children[1] {
+                    Expr::Backref { group, .. } => {
+                        assert_eq!(*group, 1);
+                    }
+                    _ => panic!("Expected Backref after resolution, got {:?}", children[1]),
+                }
+            }
+            _ => panic!("Expected Concat, got {:?}", tree.expr),
+        }
     }
 }
