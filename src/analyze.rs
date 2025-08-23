@@ -35,15 +35,26 @@ use alloc::collections::BTreeMap as Map;
 #[cfg(feature = "std")]
 use std::collections::HashMap as Map;
 
+/// Analysis information for a regex expression node.
+/// 
+/// This struct contains metadata about how a regex expression should be compiled and executed,
+/// including whether it requires "fancy" features like backtracking.
 #[derive(Debug)]
 pub struct Info<'a> {
-    pub(crate) start_group: usize,
-    pub(crate) end_group: usize,
-    pub(crate) min_size: usize,
-    pub(crate) const_size: bool,
-    pub(crate) hard: bool,
-    pub(crate) expr: &'a Expr,
-    pub(crate) children: Vec<Info<'a>>,
+    /// The starting group number for this expression
+    pub start_group: usize,
+    /// The ending group number for this expression  
+    pub end_group: usize,
+    /// The minimum size in characters this expression can match
+    pub min_size: usize,
+    /// Whether this expression has a constant size
+    pub const_size: bool,
+    /// Whether this expression requires "hard" features like backtracking
+    pub hard: bool,
+    /// Reference to the expression being analyzed
+    pub expr: &'a Expr,
+    /// Analysis information for child expressions
+    pub children: Vec<Info<'a>>,
 }
 
 impl<'a> Info<'a> {

@@ -243,15 +243,15 @@ class FancyRegexPlayground {
         }
 
         if (!pattern) {
-            this.elements.parseTreeDisplay.textContent = 'Enter a regex pattern to see its parse tree';
+            this.elements.parseTreeDisplay.innerHTML = '<div class="info">Enter a regex pattern to see its parse tree</div>';
             return;
         }
 
         try {
-            const parseTree = parse_regex(pattern, flags);
-            this.elements.parseTreeDisplay.textContent = parseTree;
+            const parseTreeData = parse_regex(pattern, flags);
+            this.renderParseTree(parseTreeData);
         } catch (error) {
-            this.elements.parseTreeDisplay.textContent = `Parse error: ${error.toString()}`;
+            this.elements.parseTreeDisplay.innerHTML = `<div class="error">Parse error: ${this.escapeHtml(error.toString())}</div>`;
         }
     }
 
@@ -264,15 +264,15 @@ class FancyRegexPlayground {
         }
 
         if (!pattern) {
-            this.elements.analysisDisplay.textContent = 'Enter a regex pattern to see its analysis';
+            this.elements.analysisDisplay.innerHTML = '<div class="info">Enter a regex pattern to see its analysis</div>';
             return;
         }
 
         try {
-            const analysis = analyze_regex(pattern, flags);
-            this.elements.analysisDisplay.textContent = analysis;
+            const analysisData = analyze_regex(pattern, flags);
+            this.renderAnalysis(analysisData);
         } catch (error) {
-            this.elements.analysisDisplay.textContent = `Analysis error: ${error.toString()}`;
+            this.elements.analysisDisplay.innerHTML = `<div class="error">Analysis error: ${this.escapeHtml(error.toString())}</div>`;
         }
     }
 
@@ -299,6 +299,143 @@ class FancyRegexPlayground {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    renderParseTree(data) {
+        this.elements.parseTreeDisplay.innerHTML = this.createTreeHTML(data, 'parse-tree');
+        this.attachTreeEventListeners();
+    }
+
+    renderAnalysis(data) {
+        this.elements.analysisDisplay.innerHTML = this.createAnalysisHTML(data);
+        this.attachTreeEventListeners();
+    }
+
+    createTreeHTML(node, cssClass = '') {
+        const hasChildren = node.children && node.children.length > 0;
+        const nodeId = `node-${Math.random().toString(36).substr(2, 9)}`;
+        
+        let html = `<div class="tree-node ${cssClass}" data-node-id="${nodeId}">`;
+        
+        if (hasChildren) {
+            html += `<span class="tree-toggle">▼</span>`;
+        } else {
+            html += `<span class="tree-toggle-spacer"></span>`;
+        }
+        
+        html += `<span class="tree-label">${this.escapeHtml(node.node_type)}</span>`;
+        
+        // Add details if available
+        if (node.details && typeof node.details === 'object' && Object.keys(node.details).length > 0) {
+            const detailsStr = Object.entries(node.details)
+                .filter(([key, value]) => value !== null && value !== undefined)
+                .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+                .join(', ');
+            if (detailsStr) {
+                html += `<span class="tree-details"> (${this.escapeHtml(detailsStr)})</span>`;
+            }
+        }
+        
+        if (hasChildren) {
+            html += `<div class="tree-children">`;
+            for (const child of node.children) {
+                html += this.createTreeHTML(child, cssClass);
+            }
+            html += `</div>`;
+        }
+        
+        html += `</div>`;
+        return html;
+    }
+
+    createAnalysisHTML(node) {
+        const hasChildren = node.children && node.children.length > 0;
+        const nodeId = `analysis-${Math.random().toString(36).substr(2, 9)}`;
+        const nodeClass = node.is_hard ? 'hard-node' : 'easy-node';
+        
+        let html = `<div class="tree-node analysis-tree ${nodeClass}" data-node-id="${nodeId}">`;
+        
+        if (hasChildren) {
+            html += `<span class="tree-toggle">▼</span>`;
+        } else {
+            html += `<span class="tree-toggle-spacer"></span>`;
+        }
+        
+        html += `<span class="tree-label">${this.escapeHtml(node.node_type)}</span>`;
+        html += `<span class="analysis-info"> [${node.is_hard ? 'Hard' : 'Easy'}${node.min_size > 0 ? `, min: ${node.min_size}` : ''}${node.const_size ? ', const-size' : ''}]</span>`;
+        
+        // Add details if available
+        if (node.details && typeof node.details === 'object' && Object.keys(node.details).length > 0) {
+            const detailsStr = Object.entries(node.details)
+                .filter(([key, value]) => value !== null && value !== undefined)
+                .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+                .join(', ');
+            if (detailsStr) {
+                html += `<span class="tree-details"> (${this.escapeHtml(detailsStr)})</span>`;
+            }
+        }
+        
+        if (hasChildren) {
+            html += `<div class="tree-children">`;
+            for (const child of node.children) {
+                html += this.createAnalysisHTML(child);
+            }
+            html += `</div>`;
+        }
+        
+        html += `</div>`;
+        return html;
+    }
+
+    attachTreeEventListeners() {
+        // Remove existing event listeners to avoid duplicates
+        document.querySelectorAll('.tree-toggle').forEach(toggle => {
+            toggle.replaceWith(toggle.cloneNode(true));
+        });
+        
+        // Add click listeners for collapsible tree nodes
+        document.querySelectorAll('.tree-toggle').forEach(toggle => {
+            toggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const node = e.target.parentElement;
+                const children = node.querySelector('.tree-children');
+                if (children) {
+                    const isVisible = children.style.display !== 'none';
+                    children.style.display = isVisible ? 'none' : 'block';
+                    e.target.textContent = isVisible ? '▶' : '▼';
+                }
+            });
+        });
+
+        // Add hover listeners for linking analysis to parse tree
+        document.querySelectorAll('.analysis-tree .tree-node').forEach(analysisNode => {
+            analysisNode.addEventListener('mouseenter', () => {
+                // Highlight corresponding parse tree nodes (simplified for now)
+                this.highlightCorrespondingParseTreeNode(analysisNode);
+            });
+            
+            analysisNode.addEventListener('mouseleave', () => {
+                this.clearParseTreeHighlights();
+            });
+        });
+    }
+
+    highlightCorrespondingParseTreeNode(analysisNode) {
+        // For now, just highlight all parse tree nodes with the same type
+        // In a more sophisticated implementation, we'd use position information
+        const nodeType = analysisNode.querySelector('.tree-label').textContent;
+        document.querySelectorAll('.parse-tree .tree-node').forEach(parseNode => {
+            const parseLabel = parseNode.querySelector('.tree-label');
+            if (parseLabel && parseLabel.textContent === nodeType) {
+                parseNode.classList.add('highlighted');
+            }
+        });
+    }
+
+    clearParseTreeHighlights() {
+        document.querySelectorAll('.parse-tree .tree-node.highlighted').forEach(node => {
+            node.classList.remove('highlighted');
+        });
     }
 
     loadExampleData() {
