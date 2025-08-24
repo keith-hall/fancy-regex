@@ -97,6 +97,32 @@ fn run_backtrack_limit(c: &mut Criterion) {
     });
 }
 
+fn allocation_optimization(c: &mut Criterion) {
+    use fancy_regex::{MatchContext, Regex};
+    
+    let regex = Regex::new(r"(\w+)\s+\1").unwrap(); // Uses fancy VM features (backreference)
+    let text = "hello hello world test test again foo foo bar";
+    
+    c.bench_function("captures_original", |b| {
+        b.iter(|| {
+            // Original method - creates new allocations each time
+            for _ in 0..10 {
+                let _ = regex.captures_from_pos(&text, 0);
+            }
+        })
+    });
+    
+    c.bench_function("captures_with_context", |b| {
+        b.iter(|| {
+            // Optimized method - reuses allocations
+            let mut ctx = MatchContext::new();
+            for _ in 0..10 {
+                let _ = regex.captures_from_pos_with_context(&text, 0, &mut ctx);
+            }
+        })
+    });
+}
+
 criterion_group!(
     name = benches;
     config = Criterion::default().warm_up_time(Duration::from_secs(10));
@@ -107,6 +133,7 @@ criterion_group!(
     analyze_literal_re,
     run_backtrack,
     run_tricky,
+    allocation_optimization,
 );
 criterion_group!(
     name = slow_benches;
