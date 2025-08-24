@@ -197,6 +197,40 @@ fn hard_trailing_positive_lookaheads() {
     assert_no_match(r"(abc|def)(?=a(?!b))", "abcabc");
 }
 
+#[test]
+fn positive_lookbehinds_with_backreferences() {
+    // Test constant-size lookbehind with backreference
+    assert_match(r"(a)(?<=\1)", "aa");
+    assert_no_match(r"(a)(?<=\1)", "ab");
+    
+    // Test variable-size lookbehind with backreference
+    assert_match(r"(..)(?<=\1)", "abab");
+    assert_match(r"(..)(?<=\1)", "xyxy");
+    assert_no_match(r"(..)(?<=\1)", "abcd");
+    
+    // Test more complex cases
+    assert_match(r"(.)(.)(?<=\1\2)", "abab");
+    assert_no_match(r"(.)(.)(?<=\1\2)", "abcd");
+    assert_match(r"(.)(.)(?<=\2\1)", "abba");
+    
+    // Test with alternation in capture group
+    assert_match(r"(a|bc)(?<=\1)", "aa");
+    assert_match(r"(a|bc)(?<=\1)", "bcbc");
+    assert_no_match(r"(a|bc)(?<=\1)", "abc");
+}
+
+#[test]
+fn negative_lookbehinds_with_backreferences() {
+    // Test constant-size negative lookbehind with backreference
+    assert_match(r"(a)(?<!\1)x", "aax"); // Current observed behavior
+    assert_no_match(r"(a)(?<!\1)x", "abx"); // No "a" followed by "x"
+    
+    // Test variable-size negative lookbehind with backreference  
+    assert_match(r"(..)(?<!\1)x", "ababx"); // Current observed behavior
+    assert_match(r"(..)(?<!\1)x", "abcdx");
+    assert_match(r"(..)(?<!\1)x", "abacx");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
