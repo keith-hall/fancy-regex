@@ -228,6 +228,8 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    /// Continue only if any of the specified named capture groups has already been populated as part of the match
+    NamedBackrefExistsCondition(alloc::vec::Vec<usize>),
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     ReverseLookbehind(Delegate),
 }
@@ -773,6 +775,22 @@ pub(crate) fn run(
                         break 'fail;
                     }
                 }
+                Insn::NamedBackrefExistsCondition(ref slots) => {
+                    // Check if any of the groups with the same name has matched
+                    let mut any_matched = false;
+                    for &slot in slots {
+                        let lo = state.get(slot);
+                        if lo != usize::MAX {
+                            // This group has matched
+                            any_matched = true;
+                            break;
+                        }
+                    }
+                    if !any_matched {
+                        // None of the named groups matched
+                        break 'fail;
+                    }
+                }
                 Insn::BeginAtomic => {
                     let count = state.backtrack_count();
                     state.stack_push(count);
@@ -828,11 +846,11 @@ pub(crate) fn run(
                     // For reverse lookbehind, we need to find if there's a match that ends at ix
                     // We search in the text up to ix and check if any match ends exactly at ix
                     let mut found_match_at_ix = false;
-                    
+
                     // Create a string slice for searching up to current position
                     let search_text = &s[0..ix];
                     let search_iter = inner.find_iter(search_text);
-                    
+
                     // Check all matches to see if any end at ix
                     for match_result in search_iter {
                         if match_result.end() == ix {
@@ -840,7 +858,7 @@ pub(crate) fn run(
                             break;
                         }
                     }
-                    
+
                     if !found_match_at_ix {
                         break 'fail;
                     }

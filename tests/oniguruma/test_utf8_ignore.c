@@ -106,9 +106,6 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\A(?<n>(a\\g<n>)|)\\z", "aaaa", 0, 4);
 
-  // No match found
-  x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "bce", 0, 3);
-
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x2("(?<n>|\\g<m>\\g<n>)\\z|\\zEND (?<m>a|(b)\\g<m>)", "bbbbabba", 0, 8);
 
@@ -180,9 +177,6 @@
 
   // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
-
-  // No match found
-  x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "ace", 0, 3);
 
   // Compile failed: ParseError(0, InvalidEscape("\\R"))
   x2("\\R", "\r\n", 0, 2);

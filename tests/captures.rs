@@ -385,28 +385,28 @@ fn expander_errors() {
 fn test_multiple_named_groups_with_backref() {
     // Test that when multiple groups have the same name, the backref tries
     // groups in reverse order (most recently captured first)
-    
+
     // Case 1: Only second group matches and captures
     let regex = common::regex(r"((?<name>a)|(?<name>b))\k<name>");
-    
+
     // Should match: first alternative fails, second captures "b", backref matches "b"
     let caps = regex.captures("bb").unwrap().unwrap();
     assert_eq!(caps.get(0).unwrap().as_str(), "bb");
     assert_eq!(caps.get(1).unwrap().as_str(), "b");
     assert!(caps.get(2).is_none()); // First alternative didn't match
     assert_eq!(caps.get(3).unwrap().as_str(), "b");
-    
+
     // Case 2: First group captures, backref should use that
     let caps = regex.captures("aa").unwrap().unwrap();
     assert_eq!(caps.get(0).unwrap().as_str(), "aa");
     assert_eq!(caps.get(1).unwrap().as_str(), "a");
     assert_eq!(caps.get(2).unwrap().as_str(), "a");
     assert!(caps.get(3).is_none()); // Second alternative didn't match
-    
+
     // Case 3: Named group access should return the most recent captured group
     let caps = regex.captures("bb").unwrap().unwrap();
     assert_eq!(caps.name("name").unwrap().as_str(), "b"); // Should return group 3, not group 2
-    
+
     let caps = regex.captures("aa").unwrap().unwrap();
     assert_eq!(caps.name("name").unwrap().as_str(), "a"); // Should return group 2, not group 3
 }
@@ -415,12 +415,12 @@ fn test_multiple_named_groups_with_backref() {
 fn test_multiple_named_groups_most_recent_precedence() {
     // Test that when both groups capture, the most recent one takes precedence
     let regex = common::regex(r"(?<name>a)(?<name>b)\k<name>");
-    
+
     let caps = regex.captures("abb").unwrap().unwrap();
     assert_eq!(caps.get(0).unwrap().as_str(), "abb");
     assert_eq!(caps.get(1).unwrap().as_str(), "a");
     assert_eq!(caps.get(2).unwrap().as_str(), "b");
-    
+
     // The named group should return the most recent capture
     assert_eq!(caps.name("name").unwrap().as_str(), "b");
 }
@@ -430,7 +430,7 @@ fn test_multiple_named_groups_capture_names() {
     // Test that capture_names properly lists both groups with the same name
     let regex = common::regex(r"(?<name>a)(?<name>b)");
     let names: Vec<Option<&str>> = regex.capture_names().collect();
-    
+
     assert_eq!(names[0], None); // Group 0 (full match) has no name
     assert_eq!(names[1], Some("name")); // Group 1 has name "name"
     assert_eq!(names[2], Some("name")); // Group 2 also has name "name"

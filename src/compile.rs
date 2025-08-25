@@ -161,6 +161,11 @@ impl Compiler {
             Expr::BackrefExistsCondition(group) => {
                 self.b.add(Insn::BackrefExistsCondition(*group));
             }
+            Expr::NamedBackrefExistsCondition(groups) => {
+                // Convert to group indices (slot numbers are group * 2)
+                let slots: Vec<usize> = groups.iter().map(|&g| g * 2).collect();
+                self.b.add(Insn::NamedBackrefExistsCondition(slots));
+            }
             Expr::AtomicGroup(_) => {
                 // TODO optimization: atomic insns are not needed if the
                 // child doesn't do any backtracking.
@@ -507,7 +512,7 @@ impl Compiler {
     fn compile_reverse_lookbehind_delegate(&mut self, info: &Info) -> Result<Delegate> {
         let mut delegate_builder = DelegateBuilder::new();
         delegate_builder.push(info);
-        
+
         match delegate_builder.build(&self.options)? {
             Insn::Delegate(delegate) => Ok(delegate),
             _ => unreachable!("DelegateBuilder should always return a Delegate instruction"),

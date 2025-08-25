@@ -1617,6 +1617,8 @@ pub enum Expr {
     ContinueFromPreviousMatchEnd,
     /// Conditional expression based on whether the numbered capture group matched or not
     BackrefExistsCondition(usize),
+    /// Conditional expression based on whether any of the named capture groups matched or not
+    NamedBackrefExistsCondition(alloc::vec::Vec<usize>),
     /// If/Then/Else Condition. If there is no Then/Else, these will just be empty expressions.
     Conditional {
         /// The conditional expression to evaluate
@@ -2093,4 +2095,30 @@ mod tests {
         assert_eq!(detect_possible_backref("a0a1a2\\"), false);
     }
     */
+}
+
+#[cfg(test)]
+mod test_named_backref_exists {
+    use crate::Regex;
+
+    #[test]
+    fn test_multiple_named_groups_condition() {
+        // Test the case that was failing - this should be the only test that matters
+        let re = Regex::new(r"(?:(?'name'a)|(?'name'b))(?('name')c|d)e").unwrap();
+
+        // Should match "bce" - second group captures "b", conditional sees group 'name' exists, matches "c"
+        assert!(re.is_match("bce").unwrap());
+
+        // Should match "ace" - first group captures "a", conditional sees group 'name' exists, matches "c"
+        assert!(re.is_match("ace").unwrap());
+
+        // Let's test what happens when no group captures
+        let re2 = Regex::new(r"(?:(?'name'a)|(?'name'b)|x)(?('name')c|d)e").unwrap();
+
+        // Should match "xde" - no group captures, conditional sees no group 'name' exists, matches "d"
+        assert!(re2.is_match("xde").unwrap());
+
+        // Should not match "xce" - no group captures, conditional sees no group 'name' exists, should match "d" not "c"
+        assert!(!re2.is_match("xce").unwrap());
+    }
 }

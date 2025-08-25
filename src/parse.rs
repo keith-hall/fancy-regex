@@ -211,6 +211,7 @@ impl<'a> Parser<'a> {
             Expr::KeepOut => false,
             Expr::ContinueFromPreviousMatchEnd => false,
             Expr::BackrefExistsCondition(_) => false,
+            Expr::NamedBackrefExistsCondition(_) => false,
             _ => true,
         }
     }
@@ -423,11 +424,14 @@ impl<'a> Parser<'a> {
             } else if let Some(relative_group) = relative {
                 if id.is_empty() {
                     relative = None;
-                    (self.curr_group.checked_add_signed(if relative_group < 0 {
-                        relative_group + 1
-                    } else {
-                        relative_group
-                    }), None)
+                    (
+                        self.curr_group.checked_add_signed(if relative_group < 0 {
+                            relative_group + 1
+                        } else {
+                            relative_group
+                        }),
+                        None,
+                    )
                 } else {
                     (None, None)
                 }
@@ -804,7 +808,10 @@ impl<'a> Parser<'a> {
                 skip,
             }) = parse_id(&self.re[ix + 1..], open, close, false)
             {
-                self.named_groups.entry(id.to_string()).or_insert(alloc::vec::Vec::new()).push(self.curr_group);
+                self.named_groups
+                    .entry(id.to_string())
+                    .or_insert(alloc::vec::Vec::new())
+                    .push(self.curr_group);
                 (None, skip + 1)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -818,7 +825,10 @@ impl<'a> Parser<'a> {
                 skip,
             }) = parse_id(&self.re[ix + 2..], "<", ">", false)
             {
-                self.named_groups.entry(id.to_string()).or_insert(alloc::vec::Vec::new()).push(self.curr_group);
+                self.named_groups
+                    .entry(id.to_string())
+                    .or_insert(alloc::vec::Vec::new())
+                    .push(self.curr_group);
                 (None, skip + 2)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -951,6 +961,9 @@ impl<'a> Parser<'a> {
             if let Expr::Backref { group, .. } = condition {
                 let after = self.check_for_close_paren(end)?;
                 return Ok((after, Expr::BackrefExistsCondition(group)));
+            } else if let Expr::NamedBackref { groups, .. } = condition {
+                let after = self.check_for_close_paren(end)?;
+                return Ok((after, Expr::NamedBackrefExistsCondition(groups)));
             } else {
                 return Err(Error::ParseError(
                     end,
@@ -978,6 +991,8 @@ impl<'a> Parser<'a> {
         }
         let inner_condition = if let Expr::Backref { group, .. } = condition {
             Expr::BackrefExistsCondition(group)
+        } else if let Expr::NamedBackref { groups, .. } = condition {
+            Expr::NamedBackrefExistsCondition(groups)
         } else {
             condition
         };

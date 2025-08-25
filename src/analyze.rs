@@ -206,6 +206,10 @@ impl<'a> Analyzer<'a> {
                 hard = true;
                 const_size = true;
             }
+            Expr::NamedBackrefExistsCondition(_) => {
+                hard = true;
+                const_size = true;
+            }
             Expr::Conditional {
                 ref condition,
                 ref true_branch,
@@ -522,7 +526,7 @@ mod tests {
         // The concatenation should have min_size = 3 + 3 = 6 (group + backref)
         assert_eq!(info.min_size, 6);
         assert!(info.const_size);
-        
+
         // Test with a variable-length group
         let tree = Expr::parse_tree(r"(a+)\1").unwrap();
         let info = analyze(&tree, 1).unwrap();
@@ -530,7 +534,7 @@ mod tests {
         // So the total should be min_size = 2, const_size = false
         assert_eq!(info.min_size, 2);
         assert!(!info.const_size);
-        
+
         // Test with optional group
         let tree = Expr::parse_tree(r"(a?)\1").unwrap();
         let info = analyze(&tree, 1).unwrap();
