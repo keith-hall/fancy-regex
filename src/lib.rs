@@ -1047,8 +1047,10 @@ impl Regex {
     pub fn capture_names(&self) -> CaptureNames {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
-        for (name, &i) in self.named_groups.iter() {
-            names[i] = Some(name.as_str());
+        for (name, groups) in self.named_groups.iter() {
+            for &i in groups {
+                names[i] = Some(name.as_str());
+            }
         }
         CaptureNames(names.into_iter())
     }
@@ -1415,7 +1417,15 @@ impl<'t> Captures<'t> {
     /// Returns the match for a named capture group.  Returns `None` the capture
     /// group did not match or if there is no group with the given name.
     pub fn name(&self, name: &str) -> Option<Match<'t>> {
-        self.named_groups.get(name).and_then(|i| self.get(*i))
+        self.named_groups.get(name).and_then(|groups| {
+            // Try groups in reverse order (most recent first) to find one that actually captured
+            for &group_index in groups.iter().rev() {
+                if let Some(m) = self.get(group_index) {
+                    return Some(m);
+                }
+            }
+            None
+        })
     }
 
     /// Expands all instances of `$group` in `replacement` to the corresponding
@@ -1582,6 +1592,13 @@ pub enum Expr {
         /// Whether the matching is case-insensitive or not
         casei: bool,
     },
+    /// Back reference to a named capture group that may have multiple groups with the same name
+    NamedBackref {
+        /// The capture group numbers being referenced
+        groups: alloc::vec::Vec<usize>,
+        /// Whether the matching is case-insensitive or not
+        casei: bool,
+    },
     /// Back reference to a capture group at the given specified relative recursion level.
     BackrefWithRelativeRecursionLevel {
         /// The capture group number being referenced
@@ -1600,6 +1617,8 @@ pub enum Expr {
     ContinueFromPreviousMatchEnd,
     /// Conditional expression based on whether the numbered capture group matched or not
     BackrefExistsCondition(usize),
+    /// Conditional expression based on whether any of the named capture groups matched or not
+    NamedBackrefExistsCondition(alloc::vec::Vec<usize>),
     /// If/Then/Else Condition. If there is no Then/Else, these will just be empty expressions.
     Conditional {
         /// The conditional expression to evaluate
@@ -2076,4 +2095,30 @@ mod tests {
         assert_eq!(detect_possible_backref("a0a1a2\\"), false);
     }
     */
+}
+
+#[cfg(test)]
+mod test_named_backref_exists {
+    use crate::Regex;
+
+    #[test]
+    fn test_multiple_named_groups_condition() {
+        // Test the case that was failing - this should be the only test that matters
+        let re = Regex::new(r"(?:(?'name'a)|(?'name'b))(?('name')c|d)e").unwrap();
+
+        // Should match "bce" - second group captures "b", conditional sees group 'name' exists, matches "c"
+        assert!(re.is_match("bce").unwrap());
+
+        // Should match "ace" - first group captures "a", conditional sees group 'name' exists, matches "c"
+        assert!(re.is_match("ace").unwrap());
+
+        // Let's test what happens when no group captures
+        let re2 = Regex::new(r"(?:(?'name'a)|(?'name'b)|x)(?('name')c|d)e").unwrap();
+
+        // Should match "xde" - no group captures, conditional sees no group 'name' exists, matches "d"
+        assert!(re2.is_match("xde").unwrap());
+
+        // Should not match "xce" - no group captures, conditional sees no group 'name' exists, should match "d" not "c"
+        assert!(!re2.is_match("xce").unwrap());
+    }
 }

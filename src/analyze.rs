@@ -83,7 +83,7 @@ impl<'a> Analyzer<'a> {
         let mut min_size = 0;
         let mut const_size = false;
         let mut hard = false;
-        match *expr {
+        match expr {
             Expr::Assertion(assertion) if assertion.is_hard() => {
                 const_size = true;
                 hard = true;
@@ -98,7 +98,7 @@ impl<'a> Analyzer<'a> {
             Expr::Literal { ref val, casei } => {
                 // right now each character in a literal gets its own node, that might change
                 min_size = 1;
-                const_size = literal_const_size(val, casei);
+                const_size = literal_const_size(val, *casei);
             }
             Expr::Concat(ref v) => {
                 const_size = true;
@@ -156,15 +156,15 @@ impl<'a> Analyzer<'a> {
             }
             Expr::Delegate { size, .. } => {
                 // currently only used for empty and single-char matches
-                min_size = size;
+                min_size = *size;
                 const_size = true;
             }
             Expr::Backref { group, .. } => {
-                if group == 0 {
-                    return Err(Error::CompileError(CompileError::InvalidBackref(group)));
+                if *group == 0 {
+                    return Err(Error::CompileError(CompileError::InvalidBackref(*group)));
                 }
                 // Look up the referenced group's size information
-                if let Some(&(group_min_size, group_const_size)) = self.group_info.get(&group) {
+                if let Some(&(group_min_size, group_const_size)) = self.group_info.get(group) {
                     min_size = group_min_size;
                     const_size = group_const_size;
                 } else {
@@ -173,6 +173,19 @@ impl<'a> Analyzer<'a> {
                     const_size = false;
                 }
                 hard = true;
+            }
+            Expr::NamedBackref { ref groups, .. } => {
+                // For named backrefs with multiple groups, use conservative approach
+                // since we don't know which group will match at runtime
+                min_size = 0;
+                const_size = false;
+                hard = true;
+                // Validate that none of the groups is 0
+                for &group in groups.iter() {
+                    if group == 0 {
+                        return Err(Error::CompileError(CompileError::InvalidBackref(group)));
+                    }
+                }
             }
             Expr::AtomicGroup(ref child) => {
                 let child_info = self.visit(child)?;
@@ -190,6 +203,10 @@ impl<'a> Analyzer<'a> {
                 const_size = true;
             }
             Expr::BackrefExistsCondition(_) => {
+                hard = true;
+                const_size = true;
+            }
+            Expr::NamedBackrefExistsCondition(_) => {
                 hard = true;
                 const_size = true;
             }
@@ -223,7 +240,7 @@ impl<'a> Analyzer<'a> {
             }
             Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
                 return Err(Error::CompileError(
-                    CompileError::SubroutineCallTargetNotFound(name.to_string(), ix),
+                    CompileError::SubroutineCallTargetNotFound(name.to_string(), *ix),
                 ));
             }
             Expr::BackrefWithRelativeRecursionLevel { .. } => {
@@ -509,7 +526,7 @@ mod tests {
         // The concatenation should have min_size = 3 + 3 = 6 (group + backref)
         assert_eq!(info.min_size, 6);
         assert!(info.const_size);
-        
+
         // Test with a variable-length group
         let tree = Expr::parse_tree(r"(a+)\1").unwrap();
         let info = analyze(&tree, 1).unwrap();
@@ -517,7 +534,7 @@ mod tests {
         // So the total should be min_size = 2, const_size = false
         assert_eq!(info.min_size, 2);
         assert!(!info.const_size);
-        
+
         // Test with optional group
         let tree = Expr::parse_tree(r"(a?)\1").unwrap();
         let info = analyze(&tree, 1).unwrap();

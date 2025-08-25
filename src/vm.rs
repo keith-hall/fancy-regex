@@ -211,6 +211,13 @@ pub enum Insn {
         /// Whether the backref should be matched case insensitively
         casei: bool,
     },
+    /// Back reference to a named group that may have multiple capture groups
+    NamedBackref {
+        /// The group slots representing the start of each capture group
+        slots: alloc::vec::Vec<usize>,
+        /// Whether the backref should be matched case insensitively
+        casei: bool,
+    },
     /// Begin of atomic group
     BeginAtomic,
     /// End of atomic group
@@ -221,6 +228,8 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    /// Continue only if any of the specified named capture groups has already been populated as part of the match
+    NamedBackrefExistsCondition(alloc::vec::Vec<usize>),
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     ReverseLookbehind(Delegate),
 }
@@ -726,10 +735,59 @@ pub(crate) fn run(
                     }
                     ix = ix_end;
                 }
+                Insn::NamedBackref { ref slots, casei } => {
+                    // Try groups in reverse order (most recent first) to find one with captured text
+                    let mut matched = false;
+                    for &slot in slots.iter().rev() {
+                        let lo = state.get(slot);
+                        if lo == usize::MAX {
+                            // This group hasn't matched, try the next one
+                            continue;
+                        }
+                        let hi = state.get(slot + 1);
+                        if hi == usize::MAX {
+                            // This group hasn't matched, try the next one
+                            continue;
+                        }
+                        let ref_text = &s[lo..hi];
+                        let ix_end = ix + ref_text.len();
+                        let text_matches = if casei {
+                            matches_literal_casei(s, ix, ix_end, ref_text)
+                        } else {
+                            matches_literal(s, ix, ix_end, ref_text)
+                        };
+                        if text_matches {
+                            ix = ix_end;
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if !matched {
+                        // None of the named groups matched
+                        break 'fail;
+                    }
+                }
                 Insn::BackrefExistsCondition(group) => {
+                    // TODO: handle multiple groups with the same name
                     let lo = state.get(group * 2);
                     if lo == usize::MAX {
                         // Referenced group hasn't matched, so the backref doesn't match either
+                        break 'fail;
+                    }
+                }
+                Insn::NamedBackrefExistsCondition(ref slots) => {
+                    // Check if any of the groups with the same name has matched
+                    let mut any_matched = false;
+                    for &slot in slots {
+                        let lo = state.get(slot);
+                        if lo != usize::MAX {
+                            // This group has matched
+                            any_matched = true;
+                            break;
+                        }
+                    }
+                    if !any_matched {
+                        // None of the named groups matched
                         break 'fail;
                     }
                 }
@@ -788,11 +846,11 @@ pub(crate) fn run(
                     // For reverse lookbehind, we need to find if there's a match that ends at ix
                     // We search in the text up to ix and check if any match ends exactly at ix
                     let mut found_match_at_ix = false;
-                    
+
                     // Create a string slice for searching up to current position
                     let search_text = &s[0..ix];
                     let search_iter = inner.find_iter(search_text);
-                    
+
                     // Check all matches to see if any end at ix
                     for match_result in search_iter {
                         if match_result.end() == ix {
@@ -800,7 +858,7 @@ pub(crate) fn run(
                             break;
                         }
                     }
-                    
+
                     if !found_match_at_ix {
                         break 'fail;
                     }

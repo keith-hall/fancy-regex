@@ -111,7 +111,7 @@ impl Compiler {
             // easy case, delegate entire subexpr
             return self.compile_delegate(info);
         }
-        match *info.expr {
+        match info.expr {
             Expr::Empty => (),
             Expr::Literal { ref val, casei } => {
                 if !casei {
@@ -140,19 +140,31 @@ impl Compiler {
                 self.b.add(Insn::Save(group * 2 + 1));
             }
             Expr::Repeat { lo, hi, greedy, .. } => {
-                self.compile_repeat(info, lo, hi, greedy, hard)?;
+                self.compile_repeat(info, *lo, *hi, *greedy, hard)?;
             }
             Expr::LookAround(_, la) => {
-                self.compile_lookaround(info, la)?;
+                self.compile_lookaround(info, *la)?;
             }
             Expr::Backref { group, casei } => {
                 self.b.add(Insn::Backref {
                     slot: group * 2,
-                    casei,
+                    casei: *casei,
+                });
+            }
+            Expr::NamedBackref { ref groups, casei } => {
+                let slots = groups.iter().map(|group| group * 2).collect();
+                self.b.add(Insn::NamedBackref {
+                    slots,
+                    casei: *casei,
                 });
             }
             Expr::BackrefExistsCondition(group) => {
-                self.b.add(Insn::BackrefExistsCondition(group));
+                self.b.add(Insn::BackrefExistsCondition(*group));
+            }
+            Expr::NamedBackrefExistsCondition(groups) => {
+                // Convert to group indices (slot numbers are group * 2)
+                let slots: Vec<usize> = groups.iter().map(|&g| g * 2).collect();
+                self.b.add(Insn::NamedBackrefExistsCondition(slots));
             }
             Expr::AtomicGroup(_) => {
                 // TODO optimization: atomic insns are not needed if the
@@ -166,7 +178,7 @@ impl Compiler {
                 self.compile_delegate(info)?;
             }
             Expr::Assertion(assertion) => {
-                self.b.add(Insn::Assertion(assertion));
+                self.b.add(Insn::Assertion(*assertion));
             }
             Expr::KeepOut => {
                 self.b.add(Insn::Save(0));
@@ -500,7 +512,7 @@ impl Compiler {
     fn compile_reverse_lookbehind_delegate(&mut self, info: &Info) -> Result<Delegate> {
         let mut delegate_builder = DelegateBuilder::new();
         delegate_builder.push(info);
-        
+
         match delegate_builder.build(&self.options)? {
             Insn::Delegate(delegate) => Ok(delegate),
             _ => unreachable!("DelegateBuilder should always return a Delegate instruction"),
