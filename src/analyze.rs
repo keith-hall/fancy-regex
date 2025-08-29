@@ -30,6 +30,11 @@ use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
 use crate::{CompileError, Error, Expr, Result};
 
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap as Map;
+#[cfg(feature = "std")]
+use std::collections::HashMap as Map;
+
 #[derive(Debug)]
 pub struct Info<'a> {
     pub(crate) start_group: usize,
@@ -65,15 +70,106 @@ impl<'a> Info<'a> {
     }
 }
 
+/// Represents a subroutine call in the call graph
+#[derive(Debug, Clone)]
+struct SubroutineCall {
+    /// The group being called
+    target: usize,
+    /// The minimum position within the calling group where this call occurs
+    min_pos: usize,
+}
+
 struct Analyzer<'a> {
     backrefs: &'a BitSet,
     group_ix: usize,
     inside_groups: BitSet,
-    subroutine_calls: Vec<BitSet>,
-    recursive_subroutines: BitSet,
+    /// Maps group number -> list of subroutine calls made by that group
+    call_graph: Map<usize, Vec<SubroutineCall>>,
+    /// Track whether we encountered any subroutine calls that need to be checked
+    has_subroutine_calls: bool,
 }
 
 impl<'a> Analyzer<'a> {
+    /// Detects left-recursive cycles in the call graph using DFS
+    fn detect_left_recursive_cycles(&self) -> Result<()> {
+        let mut visited = BitSet::new();
+        let mut in_stack = BitSet::new();
+        
+        for group in self.call_graph.keys() {
+            if !visited.contains(*group) {
+                self.dfs_detect_cycle(*group, &mut visited, &mut in_stack, &mut Vec::new())?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// DFS helper for cycle detection
+    fn dfs_detect_cycle(
+        &self,
+        group: usize,
+        visited: &mut BitSet,
+        in_stack: &mut BitSet,
+        path: &mut Vec<(usize, usize)>, // (group, min_pos)
+    ) -> Result<()> {
+        visited.insert(group);
+        in_stack.insert(group);
+        
+        if let Some(calls) = self.call_graph.get(&group) {
+            for call in calls {
+                if in_stack.contains(call.target) {
+                    // Found a cycle, check if it's left-recursive
+                    if self.is_cycle_left_recursive(call, path)? {
+                        // Return the group at the start of the cycle (the target, not current group)
+                        return Err(Error::CompileError(
+                            CompileError::LeftRecursiveSubroutineCall(call.target),
+                        ));
+                    }
+                } else if !visited.contains(call.target) {
+                    path.push((group, call.min_pos));
+                    self.dfs_detect_cycle(call.target, visited, in_stack, path)?;
+                    path.pop();
+                }
+            }
+        }
+        
+        in_stack.remove(group);
+        Ok(())
+    }
+    
+    /// Checks if a cycle is left-recursive by examining call positions
+    fn is_cycle_left_recursive(
+        &self,
+        back_edge: &SubroutineCall,
+        path: &[(usize, usize)],
+    ) -> Result<bool> {
+        // A cycle is left-recursive if any call in the cycle occurs at position 0
+        
+        // Check the back edge
+        if back_edge.min_pos == 0 {
+            return Ok(true);
+        }
+        
+        // Check calls in the path leading to the cycle
+        let mut cycle_start_idx = None;
+        for (i, &(group, _)) in path.iter().enumerate() {
+            if group == back_edge.target {
+                cycle_start_idx = Some(i);
+                break;
+            }
+        }
+        
+        if let Some(start_idx) = cycle_start_idx {
+            for &(_, min_pos) in &path[start_idx..] {
+                if min_pos == 0 {
+                    return Ok(true);
+                }
+            }
+        }
+        
+        Ok(false)
+    }
+
     fn visit(&mut self, expr: &'a Expr, min_pos_in_group: usize) -> Result<Info<'a>> {
         let start_group = self.group_ix;
         let mut children = Vec::new();
@@ -126,7 +222,7 @@ impl<'a> Analyzer<'a> {
             Expr::Group(ref child) => {
                 let group = self.group_ix;
                 self.group_ix += 1;
-                self.subroutine_calls.push(Default::default());
+                self.call_graph.insert(group, Vec::new());
                 self.inside_groups.insert(group);
                 let child_info = self.visit(child, 0)?;
                 self.inside_groups.remove(group);
@@ -148,7 +244,15 @@ impl<'a> Analyzer<'a> {
             Expr::Repeat {
                 ref child, lo, hi, ..
             } => {
-                let child_info = self.visit(child, min_pos_in_group)?;
+                // For repeat expressions with max = 0, the child doesn't actually contribute to min_size
+                // This is important for left recursion detection
+                let child_info = if hi == 0 {
+                    // If max repetitions is 0, this repeat matches nothing, so position doesn't advance
+                    self.visit(child, min_pos_in_group)?
+                } else {
+                    self.visit(child, min_pos_in_group)?
+                };
+                
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
                 hard = child_info.hard;
@@ -208,28 +312,27 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info_false);
             }
             Expr::SubroutineCall(group) => {
-                // make a note that the current group hierarchy calls this subroutine
+                // Record the subroutine call in the call graph
                 for inside_group in self.inside_groups.iter() {
-                    self.subroutine_calls[inside_group].insert(group);
-                }
-                // mark which subroutines are recursive
-                if group < self.subroutine_calls.len() {
-                    if let Some(_) = self.subroutine_calls[group]
-                        .intersection(&self.inside_groups)
-                        .next()
-                    {
-                        self.recursive_subroutines.insert(group);
-                        if min_pos_in_group == 0 && group == self.group_ix - 1 {
-                            return Err(Error::CompileError(
-                                CompileError::LeftRecursiveSubroutineCall(group),
-                            ));
-                        }
+                    if let Some(calls) = self.call_graph.get_mut(&inside_group) {
+                        calls.push(SubroutineCall {
+                            target: group,
+                            min_pos: min_pos_in_group,
+                        });
                     }
                 }
+                
+                self.has_subroutine_calls = true;
 
-                return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
-                    "Subroutine Call".to_string(),
-                )));
+                // Check for direct left recursive calls immediately if we're at position 0
+                if min_pos_in_group == 0 && self.inside_groups.contains(group) {
+                    return Err(Error::CompileError(
+                        CompileError::LeftRecursiveSubroutineCall(group),
+                    ));
+                }
+
+                // Continue analysis - don't return error yet so we can detect all cycles
+                hard = true;
             }
             Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
                 return Err(Error::CompileError(
@@ -268,16 +371,23 @@ pub fn analyze<'a>(tree: &'a ExprTree, start_group: usize) -> Result<Info<'a>> {
     let mut analyzer = Analyzer {
         backrefs: &tree.backrefs,
         group_ix: start_group,
-        subroutine_calls: Default::default(),
+        call_graph: Map::new(),
         inside_groups: BitSet::new(),
-        recursive_subroutines: BitSet::new(),
+        has_subroutine_calls: false,
     };
 
-    for group in 0..start_group {
-        analyzer.subroutine_calls.push(BitSet::new());
+    let analyzed = analyzer.visit(&tree.expr, 0)?;
+    
+    // Perform DFS-based cycle detection for left recursion
+    analyzer.detect_left_recursive_cycles()?;
+    
+    // If we have subroutine calls but no left recursion detected, return not supported error
+    if analyzer.has_subroutine_calls {
+        return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
+            "Subroutine Call".to_string(),
+        )));
     }
-
-    let analyzed = analyzer.visit(&tree.expr, 0);
+    
     if analyzer.backrefs.contains(0) {
         return Err(Error::CompileError(CompileError::InvalidBackref(0)));
     }
@@ -294,7 +404,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, start_group: usize) -> Result<Info<'a>> {
             )));
         }
     }
-    analyzed
+    Ok(analyzed)
 }
 
 /// Determine if the expression will always only ever match at position 0.
@@ -518,6 +628,23 @@ mod tests {
         let tree = Expr::parse_tree(r"(?<a>(?=\g<b>|))(?<b>\g<a>)").unwrap();
         let result = analyze(&tree, 1).err();
         println!("{:?}", result);
+        assert!(matches!(result, Some(Error::CompileError(CompileError::LeftRecursiveSubroutineCall(1)))));
+    }
+
+    #[test]
+    fn repeat_with_max_zero_ignored_for_left_recursion() {
+        // Test that repeat expressions with max=0 don't affect left recursion detection
+        let tree = Expr::parse_tree(r"(?<a>\g<a>{0})").unwrap();
+        let result = analyze(&tree, 1).err();
+        println!("{:?}", result);
+        // Should detect left recursion despite the {0} repeat
+        assert!(matches!(result, Some(Error::CompileError(CompileError::LeftRecursiveSubroutineCall(1)))));
+
+        // Test with a more complex case
+        let tree = Expr::parse_tree(r"(?<a>x{0}\g<a>)").unwrap();
+        let result = analyze(&tree, 1).err();
+        println!("{:?}", result);
+        // Should detect left recursion because x{0} doesn't consume anything
         assert!(matches!(result, Some(Error::CompileError(CompileError::LeftRecursiveSubroutineCall(1)))));
     }
 
