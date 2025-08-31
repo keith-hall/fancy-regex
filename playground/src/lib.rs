@@ -37,7 +37,7 @@ pub struct MatchResult {
     pub captures: Vec<CaptureGroup>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct RegexFlags {
     pub case_insensitive: bool,
     pub multi_line: bool,
