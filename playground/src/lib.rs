@@ -207,3 +207,4 @@ pub fn is_match(pattern: &str, text: &str, flags: JsValue) -> Result<bool, JsVal
 pub fn main() {
     console_log!("fancy-regex WASM playground initialized");
 }
+
