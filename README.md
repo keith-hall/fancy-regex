@@ -95,7 +95,7 @@ This analysis operates in two phases:
 1. *Bottom-Up Analysis*: Each subexpression is labeled as "hard" if it includes constructs such as backreferences or look-around, or if it is referenced elsewhere. Additional analysis determines properties such as minimum match length and whether the matches will be of a constant length.
 2. Top-Down Analysis: The analysis proceeds from the root of the expression, passing a context that indicates whether the current mode is "hard" (i.e., if the match length will affect future backtracking decisions).
   If both the subexpression and the context are "easy" (not requiring backtracking), the VM generates an instruction to delegate matching to the underlying engine. Otherwise, it generates backtracking VM code.
-  Concatenation (sequences of subexpressions) is the most complex case: the algorithm finds prefixes and suffixes of subexpressions that are "easy" and have a constant match length, delegating these to the underlying engine, while handling the remaining "hard" parts recursively.
+  Concatenation (sequences of subexpressions) is the most complex case: the algorithm finds prefixes which are "easy" and have a constant match length, and thus won't affect backtracking, and delegates them to the underlying NFA engine. Then, if the context is easy, it also determines a suffix of easy nodes which can be delegated, while handling the remaining "hard" parts recursively.
 
 In summary, the system efficiently combines backtracking and automaton-based matching by delegating as much work as possible to the underlying high-performance NFA engine, only resorting to backtracking where strictly necessary. This hybrid approach provides both expressive power and performance for advanced regular expression features.
 
