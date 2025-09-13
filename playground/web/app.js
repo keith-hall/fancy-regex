@@ -173,9 +173,13 @@ class FancyRegexPlayground {
         let highlightedText = text;
         
         sortedMatches.forEach((match, index) => {
-            const before = highlightedText.substring(0, match.start);
-            const matchText = highlightedText.substring(match.start, match.end);
-            const after = highlightedText.substring(match.end);
+            // Convert UTF-8 byte offsets to JavaScript string character positions
+            const charStart = this.byteOffsetToCharOffset(text, match.start);
+            const charEnd = this.byteOffsetToCharOffset(text, match.end);
+            
+            const before = highlightedText.substring(0, charStart);
+            const matchText = highlightedText.substring(charStart, charEnd);
+            const after = highlightedText.substring(charEnd);
             
             highlightedText = before + 
                 `<span class="match-highlight" title="Match ${sortedMatches.length - index}: ${match.start}-${match.end}">${this.escapeHtml(matchText)}</span>` + 
@@ -292,6 +296,72 @@ class FancyRegexPlayground {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    // Convert UTF-8 byte offset to JavaScript string UTF-16 code unit position
+    byteOffsetToCharOffset(text, byteOffset) {
+        // Create a TextEncoder to get UTF-8 byte representation
+        const encoder = new TextEncoder();
+        
+        // Convert the entire string to bytes to check bounds
+        const textBytes = encoder.encode(text);
+        
+        // If the byte offset is beyond the text length, return the text length
+        if (byteOffset >= textBytes.length) {
+            return text.length;
+        }
+        
+        // If the byte offset is 0 or negative, return 0
+        if (byteOffset <= 0) {
+            return 0;
+        }
+        
+        // Track both byte offset and UTF-16 code unit offset
+        let currentByteOffset = 0;
+        let codeUnitOffset = 0;
+        
+        // Iterate through UTF-16 code units (not Unicode characters)
+        for (let i = 0; i < text.length; i++) {
+            const codeUnit = text.charCodeAt(i);
+            let char;
+            
+            // Handle surrogate pairs (emojis, etc.)
+            if (codeUnit >= 0xD800 && codeUnit <= 0xDBFF && i + 1 < text.length) {
+                // High surrogate, check for low surrogate
+                const nextCodeUnit = text.charCodeAt(i + 1);
+                if (nextCodeUnit >= 0xDC00 && nextCodeUnit <= 0xDFFF) {
+                    // This is a surrogate pair - represents one Unicode character
+                    char = text.substring(i, i + 2);
+                    i++; // Skip the next code unit since we processed it
+                } else {
+                    // Invalid surrogate pair, treat as single character
+                    char = text.substring(i, i + 1);
+                }
+            } else {
+                // Regular character or low surrogate (invalid alone)
+                char = text.substring(i, i + 1);
+            }
+            
+            const charBytes = encoder.encode(char);
+            
+            // If adding this character would exceed our target byte offset,
+            // then our target position is at the current code unit position
+            if (currentByteOffset + charBytes.length > byteOffset) {
+                return codeUnitOffset;
+            }
+            
+            currentByteOffset += charBytes.length;
+            codeUnitOffset = i + 1;
+            
+            // If we've reached exactly the target byte offset,
+            // return the position after this character
+            if (currentByteOffset === byteOffset) {
+                return codeUnitOffset;
+            }
+        }
+        
+        // If we get here, return the length of the string
+        return text.length;
     }
 
     loadExampleData() {
