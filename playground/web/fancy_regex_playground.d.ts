@@ -1,5 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
+export function get_vm_instructions(pattern: string, flags: any): any;
 export function find_captures(pattern: string, text: string, flags: any): any;
 export function parse_regex(pattern: string, flags: any): any;
 export function analyze_regex(pattern: string, flags: any): any;
@@ -10,6 +11,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
+  readonly get_vm_instructions: (a: number, b: number, c: any) => [number, number, number];
   readonly find_captures: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
   readonly parse_regex: (a: number, b: number, c: any) => [number, number, number];
   readonly analyze_regex: (a: number, b: number, c: any) => [number, number, number];

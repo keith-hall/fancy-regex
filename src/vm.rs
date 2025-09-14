@@ -231,19 +231,85 @@ pub struct Prog {
     /// Instructions of the program
     pub body: Vec<Insn>,
     n_saves: usize,
+    /// Debug information mapping instruction indices to source expression IDs
+    #[cfg(feature = "std")]
+    pub debug_info: Option<DebugInfo>,
+}
+
+/// Debug information for VM instructions
+#[cfg(feature = "std")]
+#[derive(Debug, Clone)]
+pub struct DebugInfo {
+    /// Maps instruction index to expression node ID
+    pub insn_to_expr: std::collections::HashMap<usize, ExprNodeId>,
+    /// Maps expression node ID to information about the expression
+    pub expr_info: std::collections::HashMap<ExprNodeId, ExprNodeInfo>,
+}
+
+/// Unique identifier for an expression node
+#[cfg(feature = "std")]
+pub type ExprNodeId = u32;
+
+/// Information about an expression node for debugging
+#[cfg(feature = "std")]
+#[derive(Debug, Clone)]
+pub struct ExprNodeInfo {
+    /// Type of the expression (e.g., "Literal", "Group", etc.)
+    pub expr_type: String,
+    /// Optional span information in the original pattern
+    pub span: Option<crate::Span>,
 }
 
 impl Prog {
     pub(crate) fn new(body: Vec<Insn>, n_saves: usize) -> Prog {
-        Prog { body, n_saves }
+        Prog { 
+            body, 
+            n_saves,
+            #[cfg(feature = "std")]
+            debug_info: None,
+        }
+    }
+
+    #[cfg(feature = "std")]
+    pub(crate) fn new_with_debug(body: Vec<Insn>, n_saves: usize, debug_info: DebugInfo) -> Prog {
+        Prog { 
+            body, 
+            n_saves,
+            debug_info: Some(debug_info),
+        }
     }
 
     #[doc(hidden)]
     pub(crate) fn debug_print(&self, writer: &mut Formatter<'_>) -> core::fmt::Result {
         for (i, insn) in self.body.iter().enumerate() {
-            write!(writer, "{:3}: {:?}\n", i, insn)?;
+            write!(writer, "{:3}: {:?}", i, insn)?;
+            
+            #[cfg(feature = "std")]
+            if let Some(ref debug_info) = self.debug_info {
+                if let Some(expr_id) = debug_info.insn_to_expr.get(&i) {
+                    if let Some(expr_info) = debug_info.expr_info.get(expr_id) {
+                        write!(writer, " // from {}", expr_info.expr_type)?;
+                    }
+                }
+            }
+            
+            writeln!(writer)?;
         }
         Ok(())
+    }
+
+    /// Get debug info for an instruction (if available)
+    #[cfg(feature = "std")]
+    pub fn get_instruction_debug_info(&self, insn_index: usize) -> Option<&ExprNodeInfo> {
+        let debug_info = self.debug_info.as_ref()?;
+        let expr_id = debug_info.insn_to_expr.get(&insn_index)?;
+        debug_info.expr_info.get(expr_id)
+    }
+
+    /// Get all debug info (if available)
+    #[cfg(feature = "std")]
+    pub fn get_debug_info(&self) -> Option<&DebugInfo> {
+        self.debug_info.as_ref()
     }
 }
 

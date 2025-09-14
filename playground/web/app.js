@@ -2,6 +2,7 @@ import init, {
     find_captures,
     parse_regex,
     analyze_regex,
+    get_vm_instructions,
 } from './fancy_regex_playground.js';
 
 class FancyRegexPlayground {
@@ -27,8 +28,11 @@ class FancyRegexPlayground {
             parseTreeDisplay: document.getElementById('parse-tree-display'),
             analysisSection: document.getElementById('analysis-section'),
             analysisDisplay: document.getElementById('analysis-display'),
+            vmInstructionsSection: document.getElementById('vm-instructions-section'),
+            vmInstructionsDisplay: document.getElementById('vm-instructions-display'),
             showParseTreeBtn: document.getElementById('show-parse-tree'),
             showAnalysisBtn: document.getElementById('show-analysis'),
+            showVmInstructionsBtn: document.getElementById('show-vm-instructions'),
             debounceDelayInput: document.getElementById('debounce-delay'),
             flags: {
                 caseInsensitive: document.getElementById('flag-case-insensitive'),
@@ -62,6 +66,7 @@ class FancyRegexPlayground {
         // Toggle button handlers
         this.elements.showParseTreeBtn.addEventListener('click', () => this.toggleParseTree());
         this.elements.showAnalysisBtn.addEventListener('click', () => this.toggleAnalysis());
+        this.elements.showVmInstructionsBtn.addEventListener('click', () => this.toggleVmInstructions());
     }
 
     debounceUpdate() {
@@ -108,6 +113,7 @@ class FancyRegexPlayground {
             this.displayResults(matches, captures, text);
             this.updateParseTreeIfVisible(pattern, flags);
             this.updateAnalysisIfVisible(pattern, flags);
+            this.updateVmInstructionsIfVisible(pattern, flags);
 
         } catch (error) {
             this.displayError(error.toString());
@@ -222,6 +228,21 @@ class FancyRegexPlayground {
         }
     }
 
+    toggleVmInstructions() {
+        const isVisible = !this.elements.vmInstructionsSection.classList.contains('hidden');
+        
+        if (isVisible) {
+            this.elements.vmInstructionsSection.classList.add('hidden');
+            this.elements.showVmInstructionsBtn.classList.remove('active');
+            this.elements.showVmInstructionsBtn.textContent = 'Show VM Instructions';
+        } else {
+            this.elements.vmInstructionsSection.classList.remove('hidden');
+            this.elements.showVmInstructionsBtn.classList.add('active');
+            this.elements.showVmInstructionsBtn.textContent = 'Hide VM Instructions';
+            this.updateVmInstructions();
+        }
+    }
+
     updateParseTreeIfVisible(pattern, flags) {
         if (!this.elements.parseTreeSection.classList.contains('hidden')) {
             this.updateParseTree(pattern, flags);
@@ -231,6 +252,12 @@ class FancyRegexPlayground {
     updateAnalysisIfVisible(pattern, flags) {
         if (!this.elements.analysisSection.classList.contains('hidden')) {
             this.updateAnalysis(pattern, flags);
+        }
+    }
+
+    updateVmInstructionsIfVisible(pattern, flags) {
+        if (!this.elements.vmInstructionsSection.classList.contains('hidden')) {
+            this.updateVmInstructions(pattern, flags);
         }
     }
 
@@ -276,6 +303,27 @@ class FancyRegexPlayground {
         }
     }
 
+    updateVmInstructions(pattern = null, flags = null) {
+        if (pattern === null) {
+            pattern = this.elements.regexInput.value.trim();
+        }
+        if (flags === null) {
+            flags = this.getFlags();
+        }
+
+        if (!pattern) {
+            this.elements.vmInstructionsDisplay.innerHTML = '<div class="info">Enter a regex pattern to see VM instructions</div>';
+            return;
+        }
+
+        try {
+            const instructions = get_vm_instructions(pattern, flags);
+            this.renderVmInstructions(instructions);
+        } catch (error) {
+            this.elements.vmInstructionsDisplay.innerHTML = `<div class="error">VM Instructions error: ${this.escapeHtml(error.toString())}</div>`;
+        }
+    }
+
     displayError(message) {
         const errorHtml = `<div class="error">${this.escapeHtml(message)}</div>`;
         this.elements.matchResults.innerHTML = errorHtml;
@@ -309,6 +357,42 @@ class FancyRegexPlayground {
     renderAnalysis(data) {
         this.elements.analysisDisplay.innerHTML = this.createAnalysisHTML(data);
         this.attachTreeEventListeners();
+    }
+
+    renderVmInstructions(instructions) {
+        if (!instructions || instructions.length === 0) {
+            this.elements.vmInstructionsDisplay.innerHTML = '<div class="info">No VM instructions generated</div>';
+            return;
+        }
+
+        let html = '';
+        instructions.forEach(instr => {
+            const sourceInfo = instr.source_expr_type ? 
+                `<span class="vm-instruction-source">// from ${this.escapeHtml(instr.source_expr_type)}</span>` : 
+                '';
+            
+            html += `<div class="vm-instruction" data-instr-index="${instr.index}">` +
+                   `<span class="vm-instruction-index">${instr.index}:</span>` +
+                   `<span class="vm-instruction-content">${this.escapeHtml(instr.instruction)}</span>` +
+                   sourceInfo +
+                   `</div>`;
+        });
+
+        this.elements.vmInstructionsDisplay.innerHTML = html;
+        this.attachVmInstructionEventListeners();
+    }
+
+    attachVmInstructionEventListeners() {
+        const instructions = this.elements.vmInstructionsDisplay.querySelectorAll('.vm-instruction');
+        instructions.forEach(instr => {
+            instr.addEventListener('mouseenter', () => {
+                // Could add highlighting of related analysis nodes here
+                instr.classList.add('highlighted');
+            });
+            instr.addEventListener('mouseleave', () => {
+                instr.classList.remove('highlighted');
+            });
+        });
     }
 
     createTreeHTML(node, cssClass = '') {

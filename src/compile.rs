@@ -38,6 +38,10 @@ use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
 struct VMBuilder {
     prog: Vec<Insn>,
     n_saves: usize,
+    #[cfg(feature = "std")]
+    debug_info: crate::vm::DebugInfo,
+    #[cfg(feature = "std")]
+    next_expr_id: crate::vm::ExprNodeId,
 }
 
 impl VMBuilder {
@@ -45,11 +49,25 @@ impl VMBuilder {
         VMBuilder {
             prog: Vec::new(),
             n_saves: max_group * 2,
+            #[cfg(feature = "std")]
+            debug_info: crate::vm::DebugInfo {
+                insn_to_expr: std::collections::HashMap::new(),
+                expr_info: std::collections::HashMap::new(),
+            },
+            #[cfg(feature = "std")]
+            next_expr_id: 0,
         }
     }
 
     fn build(self) -> Prog {
-        Prog::new(self.prog, self.n_saves)
+        #[cfg(feature = "std")]
+        {
+            Prog::new_with_debug(self.prog, self.n_saves, self.debug_info)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            Prog::new(self.prog, self.n_saves)
+        }
     }
 
     fn newsave(&mut self) -> usize {
@@ -65,6 +83,51 @@ impl VMBuilder {
     // would "emit" be a better name?
     fn add(&mut self, insn: Insn) {
         self.prog.push(insn);
+    }
+
+    /// Add an instruction with source expression tracking
+    #[cfg(feature = "std")]
+    fn add_with_source(&mut self, insn: Insn, expr_id: crate::vm::ExprNodeId) {
+        let insn_idx = self.prog.len();
+        self.prog.push(insn);
+        self.debug_info.insn_to_expr.insert(insn_idx, expr_id);
+    }
+
+    /// Register an expression node and return its ID
+    #[cfg(feature = "std")]
+    fn register_expr(&mut self, expr: &Expr) -> crate::vm::ExprNodeId {
+        let expr_id = self.next_expr_id;
+        self.next_expr_id += 1;
+        
+        let expr_type = match expr {
+            Expr::Empty => "Empty",
+            Expr::Any { .. } => "Any",
+            Expr::Assertion(_) => "Assertion", 
+            Expr::Literal { .. } => "Literal",
+            Expr::Concat(_) => "Concat",
+            Expr::Alt(_) => "Alt",
+            Expr::Group(_) => "Group",
+            Expr::LookAround(_, _) => "LookAround",
+            Expr::Repeat { .. } => "Repeat",
+            Expr::Delegate { .. } => "Delegate",
+            Expr::Backref { .. } => "Backref",
+            Expr::BackrefWithRelativeRecursionLevel { .. } => "BackrefWithRelativeRecursionLevel",
+            Expr::AtomicGroup(_) => "AtomicGroup",
+            Expr::KeepOut => "KeepOut",
+            Expr::ContinueFromPreviousMatchEnd => "ContinueFromPreviousMatchEnd",
+            Expr::BackrefExistsCondition(_) => "BackrefExistsCondition",
+            Expr::Conditional { .. } => "Conditional",
+            Expr::SubroutineCall(_) => "SubroutineCall",
+            Expr::UnresolvedNamedSubroutineCall { .. } => "UnresolvedNamedSubroutineCall",
+        }.to_string();
+
+        let expr_info = crate::vm::ExprNodeInfo {
+            expr_type,
+            span: None, // TODO: Could be extracted from parsing if needed
+        };
+
+        self.debug_info.expr_info.insert(expr_id, expr_info);
+        expr_id
     }
 
     fn set_jmp_target(&mut self, jmp_pc: usize, target: usize) {
@@ -106,6 +169,19 @@ impl Compiler {
         }
     }
 
+    /// Helper to add instruction with source tracking
+    #[cfg(feature = "std")]
+    fn add_insn(&mut self, insn: Insn, expr: &Expr) {
+        let expr_id = self.b.register_expr(expr);
+        self.b.add_with_source(insn, expr_id);
+    }
+
+    /// Helper to add instruction without source tracking (fallback)
+    #[cfg(not(feature = "std"))]
+    fn add_insn(&mut self, insn: Insn, _expr: &Expr) {
+        self.b.add(insn);
+    }
+
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         if !hard && !info.hard {
             // easy case, delegate entire subexpr
@@ -115,16 +191,16 @@ impl Compiler {
             Expr::Empty => (),
             Expr::Literal { ref val, casei } => {
                 if !casei {
-                    self.b.add(Insn::Lit(val.clone()));
+                    self.add_insn(Insn::Lit(val.clone()), info.expr);
                 } else {
                     self.compile_delegate(info)?;
                 }
             }
             Expr::Any { newline: true } => {
-                self.b.add(Insn::Any);
+                self.add_insn(Insn::Any, info.expr);
             }
             Expr::Any { newline: false } => {
-                self.b.add(Insn::AnyNoNL);
+                self.add_insn(Insn::AnyNoNL, info.expr);
             }
             Expr::Concat(_) => {
                 self.compile_concat(info, hard)?;
@@ -135,9 +211,9 @@ impl Compiler {
             }
             Expr::Group(_) => {
                 let group = info.start_group;
-                self.b.add(Insn::Save(group * 2));
+                self.add_insn(Insn::Save(group * 2), info.expr);
                 self.visit(&info.children[0], hard)?;
-                self.b.add(Insn::Save(group * 2 + 1));
+                self.add_insn(Insn::Save(group * 2 + 1), info.expr);
             }
             Expr::Repeat { lo, hi, greedy, .. } => {
                 self.compile_repeat(info, lo, hi, greedy, hard)?;
@@ -146,10 +222,10 @@ impl Compiler {
                 self.compile_lookaround(info, la)?;
             }
             Expr::Backref { group, casei } => {
-                self.b.add(Insn::Backref {
+                self.add_insn(Insn::Backref {
                     slot: group * 2,
                     casei,
-                });
+                }, info.expr);
             }
             Expr::BackrefExistsCondition(group) => {
                 self.b.add(Insn::BackrefExistsCondition(group));

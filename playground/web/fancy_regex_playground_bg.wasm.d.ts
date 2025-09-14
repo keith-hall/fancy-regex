@@ -1,6 +1,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const get_vm_instructions: (a: number, b: number, c: any) => [number, number, number];
 export const find_captures: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
 export const parse_regex: (a: number, b: number, c: any) => [number, number, number];
 export const analyze_regex: (a: number, b: number, c: any) => [number, number, number];
