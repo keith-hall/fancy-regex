@@ -207,6 +207,67 @@ fn expr_to_serializable(expr: &fancy_regex::Expr, start_pos: usize, pattern: &st
     }
 }
 
+/// Serializable representation of a VM instruction for the playground
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SerializableVMInstruction {
+    pub index: usize,
+    pub instruction: String,
+    pub source_expr_id: Option<u32>,
+    pub source_expr_type: Option<String>,
+}
+
+#[wasm_bindgen]
+pub fn get_vm_instructions(pattern: &str, flags: JsValue) -> Result<JsValue, JsValue> {
+    let flags = get_flags(flags)?;
+    let regex_flags = compute_regex_flags(&flags);
+
+    use fancy_regex::internal::{analyze, optimize, compile};
+
+    match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
+        Ok(mut tree) => {
+            optimize(&mut tree);
+            match analyze(&tree, 1) {
+                Ok(info) => {
+                    match compile(&info, true) {
+                        Ok(prog) => {
+                            let mut instructions = Vec::new();
+                            for (i, insn) in prog.body.iter().enumerate() {
+                                let (source_expr_id, source_expr_type) = {
+                                    #[cfg(feature = "std")]
+                                    {
+                                        if let Some(debug_info) = prog.get_instruction_debug_info(i) {
+                                            (Some(i as u32), Some(debug_info.expr_type.clone()))
+                                        } else {
+                                            (None, None)
+                                        }
+                                    }
+                                    #[cfg(not(feature = "std"))]
+                                    {
+                                        (None, None)
+                                    }
+                                };
+
+                                instructions.push(SerializableVMInstruction {
+                                    index: i,
+                                    instruction: format!("{:?}", insn),
+                                    source_expr_id,
+                                    source_expr_type,
+                                });
+                            }
+
+                            serde_wasm_bindgen::to_value(&instructions)
+                                .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+                        },
+                        Err(e) => Err(JsValue::from_str(&format!("Compilation error: {}", e))),
+                    }
+                },
+                Err(e) => Err(JsValue::from_str(&format!("Analysis error: {}", e))),
+            }
+        }
+        Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
+    }
+}
+
 /// Convert analysis Info to serializable format  
 fn analysis_to_serializable(info: &fancy_regex::internal::Info, pattern: &str) -> SerializableAnalysisInfo {
     // Extract the necessary information from the Info struct
