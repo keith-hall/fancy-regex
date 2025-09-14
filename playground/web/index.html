@@ -240,6 +240,52 @@
             overflow-y: auto;
         }
 
+        .vm-instructions {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 1rem;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            overflow-y: auto;
+            max-height: 400px;
+        }
+
+        .vm-instruction {
+            padding: 2px 4px;
+            margin: 1px 0;
+            border-radius: 2px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .vm-instruction:hover {
+            background-color: rgba(52, 152, 219, 0.3);
+        }
+
+        .vm-instruction.highlighted {
+            background-color: rgba(52, 152, 219, 0.5);
+        }
+
+        .vm-instruction-index {
+            color: #95a5a6;
+            display: inline-block;
+            width: 3em;
+            text-align: right;
+            margin-right: 8px;
+        }
+
+        .vm-instruction-content {
+            color: #ecf0f1;
+        }
+
+        .vm-instruction-source {
+            color: #3498db;
+            font-style: italic;
+            margin-left: 8px;
+        }
+
         .loading {
             opacity: 0.6;
             pointer-events: none;
@@ -418,6 +464,7 @@
                 <div class="toggle-section">
                     <button id="show-parse-tree" class="toggle-btn">Show Parse Tree</button>
                     <button id="show-analysis" class="toggle-btn">Show Analysis</button>
+                    <button id="show-vm-instructions" class="toggle-btn">Show VM Instructions</button>
                 </div>
             </div>
         </div>
@@ -452,6 +499,15 @@
                         <div class="output-header">Analysis</div>
                         <div id="analysis-content" class="output-content">
                             <div class="parse-tree" id="analysis-display"></div>
+                        </div>
+                    </div>
+
+                    <div id="vm-instructions-section" class="output-section hidden">
+                        <div class="output-header">VM Instructions</div>
+                        <div id="vm-instructions-content" class="output-content">
+                            <div class="vm-instructions" id="vm-instructions-display">
+                                <div class="info">Enter a regex pattern to see VM instructions</div>
+                            </div>
                         </div>
                     </div>
                 </div>
