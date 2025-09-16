@@ -56,8 +56,26 @@ fn lookbehind_variable_sized_alt() {
     assert_eq!(find(r"(?<=a|bc)", "xxb"), None);
     assert_eq!(find(r"(?<=a|bc)", "xxc"), None);
 
-    assert!(Regex::new(r"(?<=a(?:b|cd))").is_err());
-    assert!(Regex::new(r"(?<=a+b+))").is_err());
+    // These patterns now work with variable length lookbehind support
+    assert!(Regex::new(r"(?<=a(?:b|cd))").is_ok());
+    assert!(Regex::new(r"(?<=a+b+)").is_ok());
+}
+
+#[test]
+fn lookbehind_variable_sized_functionality() {
+    // Test (?<=a(?:b|cd)) pattern
+    assert_eq!(find(r"(?<=a(?:b|cd))x", "abx"), Some((2, 3)));
+    assert_eq!(find(r"(?<=a(?:b|cd))x", "acdx"), Some((3, 4)));
+    assert_eq!(find(r"(?<=a(?:b|cd))x", "ax"), None);
+    assert_eq!(find(r"(?<=a(?:b|cd))x", "bcx"), None);
+    
+    // Test (?<=a+b+) pattern  
+    assert_eq!(find(r"(?<=a+b+)x", "abx"), Some((2, 3)));
+    assert_eq!(find(r"(?<=a+b+)x", "aabbx"), Some((4, 5)));
+    assert_eq!(find(r"(?<=a+b+)x", "aaabbbx"), Some((6, 7)));
+    assert_eq!(find(r"(?<=a+b+)x", "ax"), None);
+    assert_eq!(find(r"(?<=a+b+)x", "bx"), None);
+    assert_eq!(find(r"(?<=a+b+)x", "abcx"), None);
 }
 
 #[test]

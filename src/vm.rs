@@ -221,6 +221,8 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    /// Reverse lookbehind using regex-automata for variable-sized patterns
+    ReverseLookbehind(Delegate),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -274,6 +276,8 @@ struct State {
     max_stack: usize,
     #[allow(dead_code)]
     options: u32,
+    /// Direction indicator for matching: true for forward, false for reverse
+    forward: bool,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -294,6 +298,7 @@ impl State {
             explicit_sp: n_saves,
             max_stack,
             options,
+            forward: true,
         }
     }
 
@@ -770,6 +775,65 @@ pub(crate) fn run(
                         } else {
                             break 'fail;
                         }
+                    }
+                }
+                Insn::ReverseLookbehind(Delegate {
+                    ref inner,
+                    pattern: _,
+                    start_group,
+                    end_group,
+                }) => {
+                    // For reverse lookbehind, we need to find if there's a match of the pattern
+                    // that ends exactly at the current position (ix)
+                    let mut found_match = false;
+                    
+                    if start_group == end_group {
+                        // No groups, so we can use faster methods
+                        // Try all possible starting positions that could result in a match ending at ix
+                        for start_pos in 0..=ix {
+                            let input = Input::new(s).span(start_pos..ix).anchored(Anchored::Yes);
+                            if let Some(m) = inner.search_half(&input) {
+                                // For anchored search, the match starts at start_pos
+                                // m.offset() gives the end position relative to the input span
+                                // So absolute end position is start_pos + m.offset()
+                                if start_pos + m.offset() == ix {
+                                    found_match = true;
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        // Handle groups
+                        inner_slots.resize((end_group - start_group + 1) * 2, None);
+                        // Try all possible starting positions that could result in a match ending at ix
+                        for start_pos in 0..=ix {
+                            let input = Input::new(s).span(start_pos..ix).anchored(Anchored::Yes);
+                            if inner.search_slots(&input, &mut inner_slots).is_some() {
+                                if let Some(match_end) = inner_slots[1] {
+                                    // Check if this match ends exactly at ix (relative to start_pos)
+                                    if match_end.get() + start_pos == ix {
+                                        found_match = true;
+                                        // Save the captured groups (adjust positions relative to string start)
+                                        for i in 0..(end_group - start_group) {
+                                            let slot = (start_group + i) * 2;
+                                            if let Some(group_start) = inner_slots[(i + 1) * 2] {
+                                                let group_end = inner_slots[(i + 1) * 2 + 1].unwrap();
+                                                state.save(slot, group_start.get() + start_pos);
+                                                state.save(slot + 1, group_end.get() + start_pos);
+                                            } else {
+                                                state.save(slot, usize::MAX);
+                                                state.save(slot + 1, usize::MAX);
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if !found_match {
+                        break 'fail;
                     }
                 }
                 Insn::ContinueFromPreviousMatchEnd => {
