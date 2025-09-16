@@ -739,8 +739,7 @@ pub(crate) fn run(
                     }
                 }
                 Insn::ReverseLookbehind(ref delegate) => {
-                    // For reverse lookbehind, we need to search backwards from current position
-                    // Create a substring from start of string to current position
+                    // For reverse lookbehind, we need to check if any match ends at current position
                     if ix == 0 {
                         break 'fail;
                     }
@@ -753,47 +752,56 @@ pub(crate) fn run(
                         end_group,
                     } = delegate;
                     
+                    // Search for all matches in the text before current position
+                    let mut found = false;
+                    
                     if start_group == end_group {
-                        // No groups, need to find if any match ends at ix
-                        let mut found = false;
+                        // No groups - use simple find approach
+                        // Try to find matches that end at ix by searching with different start positions
                         for start_pos in 0..ix {
-                            let input = Input::new(search_text).span(start_pos..ix).anchored(Anchored::Yes);
-                            if inner.search_half(&input).is_some() {
-                                found = true;
-                                break;
+                            let substr = &search_text[start_pos..];
+                            let sub_input = Input::new(substr).anchored(Anchored::Yes);
+                            if let Some(half_match) = inner.search_half(&sub_input) {
+                                // Check if this match ends at ix
+                                if start_pos + half_match.offset() == ix {
+                                    found = true;
+                                    break;
+                                }
                             }
-                        }
-                        if !found {
-                            break 'fail;
                         }
                     } else {
-                        // With groups - find any match that ends at current position
+                        // With groups - need to capture group information
                         inner_slots.resize((end_group - start_group + 1) * 2, None);
-                        let mut found_match = false;
                         
                         for start_pos in 0..ix {
-                            let input = Input::new(search_text).span(start_pos..ix).anchored(Anchored::Yes);
-                            if inner.search_slots(&input, &mut inner_slots).is_some() {
-                                // Save the group captures
-                                for i in 0..(end_group - start_group) {
-                                    let slot = (start_group + i) * 2;
-                                    if let Some(start) = inner_slots[(i + 1) * 2] {
-                                        let end = inner_slots[(i + 1) * 2 + 1].unwrap();
-                                        state.save(slot, start.get());
-                                        state.save(slot + 1, end.get());
-                                    } else {
-                                        state.save(slot, usize::MAX);
-                                        state.save(slot + 1, usize::MAX);
+                            let substr = &search_text[start_pos..];
+                            let sub_input = Input::new(substr).anchored(Anchored::Yes);
+                            if inner.search_slots(&sub_input, &mut inner_slots).is_some() {
+                                // Check if this match ends at ix
+                                if let Some(match_end) = inner_slots[1] {
+                                    if start_pos + match_end.get() == ix {
+                                        // Save group captures with correct offsets
+                                        for i in 0..(end_group - start_group) {
+                                            let slot = (start_group + i) * 2;
+                                            if let Some(start) = inner_slots[(i + 1) * 2] {
+                                                let end = inner_slots[(i + 1) * 2 + 1].unwrap();
+                                                state.save(slot, start_pos + start.get());
+                                                state.save(slot + 1, start_pos + end.get());
+                                            } else {
+                                                state.save(slot, usize::MAX);
+                                                state.save(slot + 1, usize::MAX);
+                                            }
+                                        }
+                                        found = true;
+                                        break;
                                     }
                                 }
-                                found_match = true;
-                                break;
                             }
                         }
-                        
-                        if !found_match {
-                            break 'fail;
-                        }
+                    }
+                    
+                    if !found {
+                        break 'fail;
                     }
                 }
                 Insn::ReverseDirection => {
