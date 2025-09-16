@@ -221,6 +221,10 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    /// Reverse lookbehind using regex-automata for variable-sized patterns
+    ReverseLookbehind(Delegate),
+    /// Flip the current match direction (forward <-> reverse)
+    ReverseDirection,
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -272,6 +276,8 @@ struct State {
     /// Maximum size of the stack. If the size would be exceeded during execution, a `StackOverflow`
     /// error is raised.
     max_stack: usize,
+    /// Current match direction: true for forward, false for reverse
+    direction_forward: bool,
     #[allow(dead_code)]
     options: u32,
 }
@@ -293,6 +299,7 @@ impl State {
             nsave: 0,
             explicit_sp: n_saves,
             max_stack,
+            direction_forward: true, // Start with forward direction
             options,
         }
     }
@@ -730,6 +737,68 @@ pub(crate) fn run(
                         // Referenced group hasn't matched, so the backref doesn't match either
                         break 'fail;
                     }
+                }
+                Insn::ReverseLookbehind(ref delegate) => {
+                    // For reverse lookbehind, we need to search backwards from current position
+                    // Create a substring from start of string to current position
+                    if ix == 0 {
+                        break 'fail;
+                    }
+                    
+                    let search_text = &s[0..ix];
+                    let Delegate {
+                        ref inner,
+                        pattern: _,
+                        start_group,
+                        end_group,
+                    } = delegate;
+                    
+                    if start_group == end_group {
+                        // No groups, need to find if any match ends at ix
+                        let mut found = false;
+                        for start_pos in 0..ix {
+                            let input = Input::new(search_text).span(start_pos..ix).anchored(Anchored::Yes);
+                            if inner.search_half(&input).is_some() {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if !found {
+                            break 'fail;
+                        }
+                    } else {
+                        // With groups - find any match that ends at current position
+                        inner_slots.resize((end_group - start_group + 1) * 2, None);
+                        let mut found_match = false;
+                        
+                        for start_pos in 0..ix {
+                            let input = Input::new(search_text).span(start_pos..ix).anchored(Anchored::Yes);
+                            if inner.search_slots(&input, &mut inner_slots).is_some() {
+                                // Save the group captures
+                                for i in 0..(end_group - start_group) {
+                                    let slot = (start_group + i) * 2;
+                                    if let Some(start) = inner_slots[(i + 1) * 2] {
+                                        let end = inner_slots[(i + 1) * 2 + 1].unwrap();
+                                        state.save(slot, start.get());
+                                        state.save(slot + 1, end.get());
+                                    } else {
+                                        state.save(slot, usize::MAX);
+                                        state.save(slot + 1, usize::MAX);
+                                    }
+                                }
+                                found_match = true;
+                                break;
+                            }
+                        }
+                        
+                        if !found_match {
+                            break 'fail;
+                        }
+                    }
+                }
+                Insn::ReverseDirection => {
+                    // Flip the match direction
+                    state.direction_forward = !state.direction_forward;
                 }
                 Insn::BeginAtomic => {
                     let count = state.backtrack_count();

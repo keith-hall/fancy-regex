@@ -56,8 +56,15 @@ fn lookbehind_variable_sized_alt() {
     assert_eq!(find(r"(?<=a|bc)", "xxb"), None);
     assert_eq!(find(r"(?<=a|bc)", "xxc"), None);
 
-    assert!(Regex::new(r"(?<=a(?:b|cd))").is_err());
-    assert!(Regex::new(r"(?<=a+b+))").is_err());
+    // These should now work with variable-length lookbehind support
+    assert!(Regex::new(r"(?<=a(?:b|cd))").is_ok());
+    assert!(Regex::new(r"(?<=a+b+)").is_ok());
+    
+    // Test the functionality of nested groups
+    assert_eq!(find(r"(?<=a(?:b|cd))", "xxab"), Some((4, 4)));
+    assert_eq!(find(r"(?<=a(?:b|cd))", "xxacd"), Some((5, 5)));
+    assert_eq!(find(r"(?<=a(?:b|cd))", "xxa"), None);
+    assert_eq!(find(r"(?<=a(?:b|cd))", "xxb"), None);
 }
 
 #[test]
@@ -70,8 +77,15 @@ fn negative_lookbehind_variable_sized_alt() {
     assert_eq!(find(r"(?<!a|bc)x", "ax"), None);
     assert_eq!(find(r"(?<!a|bc)x", "bcx"), None);
 
-    assert!(Regex::new(r"(?<!a(?:b|cd))").is_err());
-    assert!(Regex::new(r"(?<!a+b+)").is_err());
+    // These should now work with variable-length lookbehind support
+    assert!(Regex::new(r"(?<!a(?:b|cd))").is_ok());
+    assert!(Regex::new(r"(?<!a+b+)").is_ok());
+    
+    // Test the functionality of nested negative lookbehind
+    assert_eq!(find(r"(?<!a(?:b|cd))x", "abx"), None);
+    assert_eq!(find(r"(?<!a(?:b|cd))x", "acdx"), None);
+    assert_eq!(find(r"(?<!a(?:b|cd))x", "ax"), Some((1, 2)));
+    assert_eq!(find(r"(?<!a(?:b|cd))x", "bx"), Some((1, 2)));
 }
 
 #[test]
