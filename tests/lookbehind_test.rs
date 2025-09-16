@@ -46,25 +46,33 @@ fn test_variable_lookbehind_functionality() {
 }
 
 #[test]
-fn test_simple_negative_lookbehind() {
-    // Check if the pattern a+ is considered variable sized (and uses ReverseLookbehind)
-    let re_debug = std::env::var("RUST_BACKTRACE").is_ok();
+fn test_debug_negative_lookbehind() {
+    // First verify that const-size negative lookbehinds work correctly
+    let const_re = fancy_regex::Regex::new(r"(?<!a)x").unwrap();
+    println!("Const (?<!a)x on 'ax': {:?}", const_re.is_match("ax").unwrap());
+    println!("Const (?<!a)x on 'bx': {:?}", const_re.is_match("bx").unwrap());
     
-    // Simple test to understand the behavior - const size negative lookbehind
-    let re = Regex::new(r"(?<!ab)x").unwrap();
-    println!("Testing (?<!ab)x on 'abx': {:?}", re.is_match("abx").unwrap());
-    println!("Testing (?<!ab)x on 'acx': {:?}", re.is_match("acx").unwrap());
-    assert!(!re.is_match("abx").unwrap()); // Should NOT match (preceded by ab)
-    assert!(re.is_match("acx").unwrap());  // Should match (not preceded by ab)
+    assert!(!const_re.is_match("ax").unwrap());  // Should NOT match (preceded by a)
+    assert!(const_re.is_match("bx").unwrap());   // Should match (not preceded by a)
     
-    // Variable-size negative lookbehind 
-    let re2 = Regex::new(r"(?<!a+)x").unwrap();
-    println!("Testing (?<!a+)x on 'ax': {:?}", re2.is_match("ax").unwrap());
-    println!("Testing (?<!a+)x on 'aax': {:?}", re2.is_match("aax").unwrap());
-    println!("Testing (?<!a+)x on 'bx': {:?}", re2.is_match("bx").unwrap());
+    // Now test a variable-size positive lookbehind to make sure that works
+    let pos_var_re = fancy_regex::Regex::new(r"(?<=a+)x").unwrap();
+    println!("Positive (?<=a+)x on 'ax': {:?}", pos_var_re.is_match("ax").unwrap());
+    println!("Positive (?<=a+)x on 'aax': {:?}", pos_var_re.is_match("aax").unwrap());
+    println!("Positive (?<=a+)x on 'bx': {:?}", pos_var_re.is_match("bx").unwrap());
     
-    // For now, just log the results - I'll fix the expectations once I understand the behavior
-    // assert!(!re2.is_match("ax").unwrap());   // Should NOT match (preceded by a+)
-    // assert!(!re2.is_match("aax").unwrap());  // Should NOT match (preceded by a+)
-    // assert!(re2.is_match("bx").unwrap());    // Should match (not preceded by a+)
+    assert!(pos_var_re.is_match("ax").unwrap());   // Should match (preceded by a+)
+    assert!(pos_var_re.is_match("aax").unwrap());  // Should match (preceded by a+)
+    assert!(!pos_var_re.is_match("bx").unwrap());  // Should NOT match (not preceded by a+)
+    
+    // Finally test variable-size negative lookbehind
+    let neg_var_re = fancy_regex::Regex::new(r"(?<!a+)x").unwrap();
+    println!("Negative (?<!a+)x on 'ax': {:?}", neg_var_re.is_match("ax").unwrap());
+    println!("Negative (?<!a+)x on 'aax': {:?}", neg_var_re.is_match("aax").unwrap());
+    println!("Negative (?<!a+)x on 'bx': {:?}", neg_var_re.is_match("bx").unwrap());
+    
+    // This should be the opposite of the positive lookbehind
+    assert!(!neg_var_re.is_match("ax").unwrap());   // Should NOT match (preceded by a+)
+    assert!(!neg_var_re.is_match("aax").unwrap());  // Should NOT match (preceded by a+)
+    assert!(neg_var_re.is_match("bx").unwrap());    // Should match (not preceded by a+)
 }
