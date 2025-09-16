@@ -221,10 +221,8 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
-    /// Reverse lookbehind using regex-automata for variable-sized patterns
+    /// Reverse lookbehind using regex-automata for variable-sized patterns (optimized with reverse iteration)
     ReverseLookbehind(Delegate),
-    /// Reverse the matching direction (flip forward flag)
-    ReverseDirection,
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -786,7 +784,7 @@ pub(crate) fn run(
                     end_group,
                 }) => {
                     // For reverse lookbehind, find a match that ends exactly at the current position
-                    // Use more efficient reverse iteration instead of forward iteration
+                    // Use efficient reverse iteration (start from near current position)
                     let mut found_match = false;
                     
                     if start_group == end_group {
@@ -831,10 +829,6 @@ pub(crate) fn run(
                     if !found_match {
                         break 'fail;
                     }
-                }
-                Insn::ReverseDirection => {
-                    // Flip the matching direction
-                    state.forward = !state.forward;
                 }
                 Insn::ContinueFromPreviousMatchEnd => {
                     if ix > pos || option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {

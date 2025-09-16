@@ -446,7 +446,7 @@ impl Compiler {
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
             if !inner.const_size {
-                // For variable-length lookbehind, use ReverseLookbehind instruction
+                // For variable-length lookbehind, use ReverseLookbehind instruction (optimized)
                 if la == LookBehind {
                     let delegate = self.compile_reverse_lookbehind_delegate(inner)?;
                     self.b.add(Insn::ReverseLookbehind(delegate));
