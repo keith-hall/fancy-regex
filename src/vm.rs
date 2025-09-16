@@ -221,6 +221,8 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    /// Reverse lookbehind using regex-automata for variable-sized patterns
+    ReverseLookbehind(Delegate),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -729,6 +731,35 @@ pub(crate) fn run(
                     if lo == usize::MAX {
                         // Referenced group hasn't matched, so the backref doesn't match either
                         break 'fail;
+                    }
+                }
+                Insn::ReverseLookbehind(Delegate {
+                    inner: _,
+                    ref pattern,
+                    start_group: _,
+                    end_group: _,
+                }) => {
+                    // Use regex-automata to search backwards from current position
+                    use regex_automata::nfa::thompson;
+                    use regex_automata::hybrid::dfa::DFA;
+                    
+                    // Build a reverse DFA for the pattern
+                    let dfa = match DFA::builder()
+                        .thompson(thompson::Config::new().reverse(true))
+                        .build(pattern)
+                    {
+                        Ok(dfa) => dfa,
+                        Err(_) => break 'fail,
+                    };
+                    
+                    let mut cache = dfa.create_cache();
+                    let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
+                    
+                    match dfa.try_search_rev(&mut cache, &input) {
+                        Ok(Some(_)) => {
+                            // Reverse lookbehind succeeded, continue with normal execution
+                        }
+                        _ => break 'fail,
                     }
                 }
                 Insn::BeginAtomic => {
