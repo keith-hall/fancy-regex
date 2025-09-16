@@ -452,7 +452,8 @@ impl Compiler {
             } else {
                 // Use reverse matching for variable-sized lookbehinds
                 let delegate = self.compile_reverse_lookbehind_delegate(inner)?;
-                self.b.add(Insn::ReverseLookbehind(delegate));
+                let is_negative = la == LookBehindNeg;
+                self.b.add(Insn::ReverseLookbehind { delegate, is_negative });
                 Ok(())
             }
         } else {

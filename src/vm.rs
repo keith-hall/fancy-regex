@@ -222,7 +222,12 @@ pub enum Insn {
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
     /// Reverse lookbehind using regex-automata for variable-sized patterns
-    ReverseLookbehind(Delegate),
+    ReverseLookbehind { 
+        /// The delegate regex to match backwards
+        delegate: Delegate, 
+        /// Whether this is a negative lookbehind (true) or positive (false)
+        is_negative: bool 
+    },
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -733,15 +738,23 @@ pub(crate) fn run(
                         break 'fail;
                     }
                 }
-                Insn::ReverseLookbehind(Delegate {
-                    inner: _,
-                    ref pattern,
-                    start_group: _,
-                    end_group: _,
-                }) => {
+                Insn::ReverseLookbehind { 
+                    delegate: Delegate {
+                        inner: _,
+                        ref pattern,
+                        start_group: _,
+                        end_group: _,
+                    },
+                    is_negative,
+                } => {
                     // Use regex-automata to search backwards from current position
                     use regex_automata::nfa::thompson;
                     use regex_automata::hybrid::dfa::DFA;
+                    
+                    #[cfg(feature = "std")]
+                    if option_flags & OPTION_TRACE != 0 {
+                        println!("ReverseLookbehind: pattern={}, is_negative={}, ix={}", pattern, is_negative, ix);
+                    }
                     
                     // Build a reverse DFA for the pattern
                     let dfa = match DFA::builder()
@@ -755,11 +768,20 @@ pub(crate) fn run(
                     let mut cache = dfa.create_cache();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
                     
-                    match dfa.try_search_rev(&mut cache, &input) {
-                        Ok(Some(_)) => {
-                            // Reverse lookbehind succeeded, continue with normal execution
-                        }
-                        _ => break 'fail,
+                    let found_match = match dfa.try_search_rev(&mut cache, &input) {
+                        Ok(Some(_)) => true,
+                        _ => false,
+                    };
+                    
+                    #[cfg(feature = "std")]
+                    if option_flags & OPTION_TRACE != 0 {
+                        println!("ReverseLookbehind: found_match={}, will_fail={}", found_match, is_negative == found_match);
+                    }
+                    
+                    // For negative lookbehinds, we fail if we found a match
+                    // For positive lookbehinds, we fail if we didn't find a match
+                    if is_negative == found_match {
+                        break 'fail;
                     }
                 }
                 Insn::BeginAtomic => {
