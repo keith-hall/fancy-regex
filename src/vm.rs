@@ -223,6 +223,8 @@ pub enum Insn {
     BackrefExistsCondition(usize),
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     ReverseLookbehind(Delegate),
+    /// Reverse the matching direction (flip forward flag)
+    ReverseDirection,
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -783,19 +785,15 @@ pub(crate) fn run(
                     start_group,
                     end_group,
                 }) => {
-                    // For reverse lookbehind, we need to find if there's a match of the pattern
-                    // that ends exactly at the current position (ix)
+                    // For reverse lookbehind, find a match that ends exactly at the current position
+                    // Use more efficient reverse iteration instead of forward iteration
                     let mut found_match = false;
                     
                     if start_group == end_group {
-                        // No groups, so we can use faster methods
-                        // Try all possible starting positions that could result in a match ending at ix
-                        for start_pos in 0..=ix {
+                        // No groups, use efficient reverse search
+                        for start_pos in (0..=ix).rev() {
                             let input = Input::new(s).span(start_pos..ix).anchored(Anchored::Yes);
                             if let Some(m) = inner.search_half(&input) {
-                                // For anchored search, the match starts at start_pos
-                                // m.offset() gives the end position relative to the input span
-                                // So absolute end position is start_pos + m.offset()
                                 if start_pos + m.offset() == ix {
                                     found_match = true;
                                     break;
@@ -803,17 +801,15 @@ pub(crate) fn run(
                             }
                         }
                     } else {
-                        // Handle groups
+                        // Handle groups with reverse search
                         inner_slots.resize((end_group - start_group + 1) * 2, None);
-                        // Try all possible starting positions that could result in a match ending at ix
-                        for start_pos in 0..=ix {
+                        for start_pos in (0..=ix).rev() {
                             let input = Input::new(s).span(start_pos..ix).anchored(Anchored::Yes);
                             if inner.search_slots(&input, &mut inner_slots).is_some() {
                                 if let Some(match_end) = inner_slots[1] {
-                                    // Check if this match ends exactly at ix (relative to start_pos)
                                     if match_end.get() + start_pos == ix {
                                         found_match = true;
-                                        // Save the captured groups (adjust positions relative to string start)
+                                        // Save the captured groups
                                         for i in 0..(end_group - start_group) {
                                             let slot = (start_group + i) * 2;
                                             if let Some(group_start) = inner_slots[(i + 1) * 2] {
@@ -835,6 +831,10 @@ pub(crate) fn run(
                     if !found_match {
                         break 'fail;
                     }
+                }
+                Insn::ReverseDirection => {
+                    // Flip the matching direction
+                    state.forward = !state.forward;
                 }
                 Insn::ContinueFromPreviousMatchEnd => {
                     if ix > pos || option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {
