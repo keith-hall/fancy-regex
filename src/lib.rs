@@ -738,12 +738,16 @@ impl Regex {
 
         // try to optimize the expression tree
         let requires_capture_group_fixup = optimize(&mut tree);
-        let mut info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
-
-        // apply catastrophic backtracking optimization after analysis (needs hard info)
-        crate::optimize::optimize_catastrophic_backtracking(&mut tree, &info);
-        // re-analyze after optimization to get updated info
-        info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
+        
+        // First analysis to determine if we have any hard features
+        let initial_info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
+        let has_hard_features = initial_info.hard;
+        
+        // Apply catastrophic backtracking optimization (with simple hardness check)
+        crate::optimize::optimize_catastrophic_backtracking_simple(&mut tree, has_hard_features);
+        
+        // Final analysis for compilation
+        let info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
 
         if !info.hard {
             // easy case, wrap regex
@@ -1928,7 +1932,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 pub mod internal {
     pub use crate::analyze::{analyze, can_compile_as_anchored};
     pub use crate::compile::compile;
-    pub use crate::optimize::{optimize, optimize_catastrophic_backtracking};
+    pub use crate::optimize::{optimize, optimize_catastrophic_backtracking, optimize_catastrophic_backtracking_simple};
     pub use crate::vm::{run_default, run_trace, Insn, Prog};
 }
 

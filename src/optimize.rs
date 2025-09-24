@@ -47,6 +47,12 @@ pub fn optimize_catastrophic_backtracking(tree: &mut ExprTree, info: &Info<'_>) 
     optimize_catastrophic_backtracking_expr(&mut tree.expr, info);
 }
 
+/// Optimize expressions to prevent catastrophic backtracking using extracted hardness info.
+pub fn optimize_catastrophic_backtracking_simple(tree: &mut ExprTree, is_hard: bool) {
+    // Create a simple recursive visitor that doesn't need full Info
+    optimize_catastrophic_backtracking_simple_expr(&mut tree.expr, is_hard);
+}
+
 fn optimize_catastrophic_backtracking_expr(expr: &mut Expr, info: &Info<'_>) {
     // First, recursively optimize children
     match expr {
@@ -285,6 +291,186 @@ fn optimize_nested_repetition(
         }
         Expr::Alt(_) => {
             if has_overlapping_alternatives(child, child_info) {
+                // Wrap in atomic group: (?>a|ab)*
+                let atomic_child = Expr::AtomicGroup(Box::new(child.clone()));
+                return Some(Expr::Repeat {
+                    child: Box::new(atomic_child),
+                    lo: outer_lo,
+                    hi: outer_hi,
+                    greedy: outer_greedy,
+                });
+            }
+        }
+        _ => {
+            // No optimization for other patterns
+        }
+    }
+    None
+}
+
+fn optimize_catastrophic_backtracking_simple_expr(expr: &mut Expr, is_hard: bool) {
+    // First, recursively optimize children
+    match expr {
+        Expr::Concat(children) => {
+            for child_expr in children.iter_mut() {
+                optimize_catastrophic_backtracking_simple_expr(child_expr, is_hard);
+            }
+        }
+        Expr::Alt(children) => {
+            for child_expr in children.iter_mut() {
+                optimize_catastrophic_backtracking_simple_expr(child_expr, is_hard);
+            }
+        }
+        Expr::Group(child) => {
+            optimize_catastrophic_backtracking_simple_expr(child, is_hard);
+        }
+        Expr::Repeat { child, .. } => {
+            optimize_catastrophic_backtracking_simple_expr(child, is_hard);
+        }
+        Expr::LookAround(child, _) => {
+            optimize_catastrophic_backtracking_simple_expr(child, is_hard);
+        }
+        Expr::AtomicGroup(child) => {
+            optimize_catastrophic_backtracking_simple_expr(child, is_hard);
+        }
+        _ => {
+            // No recursion needed for other expression types
+        }
+    }
+
+    // Then, apply catastrophic backtracking optimizations to this level
+    if let Expr::Repeat { child, lo, hi, greedy } = expr {
+        let lo_val = *lo;
+        let hi_val = *hi;
+        let greedy_val = *greedy;
+        
+        if should_optimize_nested_repetition_simple(child, lo_val, hi_val, is_hard) {
+            if let Some(new_expr) = optimize_nested_repetition_simple(child, lo_val, hi_val, greedy_val) {
+                *expr = new_expr;
+            }
+        }
+    }
+}
+
+/// Simplified version of should_optimize_nested_repetition that doesn't need full Info
+fn should_optimize_nested_repetition_simple(
+    child: &Expr, 
+    _outer_lo: usize, 
+    outer_hi: usize,
+    is_hard: bool
+) -> bool {
+    // Only optimize if this is a hard expression (handled by our VM)
+    if !is_hard {
+        return false;
+    }
+    
+    // Only optimize unbounded outer repetitions (*, +, {n,})
+    if outer_hi != usize::MAX {
+        return false;
+    }
+    
+    match child {
+        // Pattern: (inner_repeat)* or (inner_repeat)+
+        Expr::Group(inner) => {
+            if matches!(**inner, Expr::Repeat { hi: usize::MAX, .. }) {
+                return true;
+            }
+            // Pattern with overlapping alternatives like (a|ab)*
+            if matches!(**inner, Expr::Alt(_)) {
+                return has_overlapping_alternatives_simple(inner);
+            }
+            false
+        }
+        // Direct nested repetition: repeat* or repeat+
+        Expr::Repeat { hi: usize::MAX, .. } => true,
+        // Pattern with overlapping alternatives like (a|ab)*
+        Expr::Alt(_) => {
+            has_overlapping_alternatives_simple(child)
+        }
+        _ => false,
+    }
+}
+
+/// Simplified version that doesn't need Info
+fn has_overlapping_alternatives_simple(expr: &Expr) -> bool {
+    let alternatives = match expr {
+        Expr::Alt(alts) => alts,
+        Expr::Group(inner) => {
+            if let Expr::Alt(alts) = &**inner {
+                alts
+            } else {
+                return false;
+            }
+        }
+        _ => return false,
+    };
+    
+    // Check for overlapping prefixes among alternatives
+    for (i, alt1) in alternatives.iter().enumerate() {
+        for alt2 in alternatives.iter().skip(i + 1) {
+            if is_prefix_of(alt1, alt2) || is_prefix_of(alt2, alt1) {
+                return true;
+            }
+        }
+    }
+    
+    false
+}
+
+/// Simplified version of optimize_nested_repetition that doesn't need Info
+fn optimize_nested_repetition_simple(
+    child: &Expr, 
+    outer_lo: usize, 
+    outer_hi: usize,
+    outer_greedy: bool
+) -> Option<Expr> {
+    match child {
+        // Pattern: (a+)* -> a*  or  (a+)+ -> a+
+        Expr::Group(inner) => {
+            if matches!(**inner, Expr::Repeat { hi: usize::MAX, .. }) {
+                if let Expr::Repeat { child: inner_child, lo: inner_lo, hi: inner_hi, greedy: _inner_greedy } = &**inner {
+                    if *inner_hi == usize::MAX && *inner_lo >= 1 {
+                        // Transform (a+)* to a* and (a+)+ to a+
+                        let new_lo = if outer_lo == 0 { 0 } else { *inner_lo };
+                        return Some(Expr::Repeat {
+                            child: inner_child.clone(),
+                            lo: new_lo,
+                            hi: outer_hi,
+                            greedy: outer_greedy,
+                        });
+                    }
+                }
+            }
+            // Pattern: (a|ab)* -> use atomic groups to prevent backtracking
+            else if matches!(**inner, Expr::Alt(_)) {
+                if has_overlapping_alternatives_simple(inner) {
+                    // Wrap the group in an atomic group: (?>a|ab)*
+                    let atomic_child = Expr::AtomicGroup(inner.clone());
+                    let atomic_group = Box::new(Expr::Group(Box::new(atomic_child)));
+                    return Some(Expr::Repeat {
+                        child: atomic_group,
+                        lo: outer_lo,
+                        hi: outer_hi,
+                        greedy: outer_greedy,
+                    });
+                }
+            }
+        }
+        // Pattern: a+* -> a*  or  a++ -> a+
+        Expr::Repeat { child: inner_child, lo: inner_lo, hi: inner_hi, greedy: _ } => {
+            if *inner_hi == usize::MAX && *inner_lo >= 1 {
+                // Transform a+* to a* and a++ to a+
+                let new_lo = if outer_lo == 0 { 0 } else { *inner_lo };
+                return Some(Expr::Repeat {
+                    child: inner_child.clone(),
+                    lo: new_lo,
+                    hi: outer_hi,
+                    greedy: outer_greedy,
+                });
+            }
+        }
+        Expr::Alt(_) => {
+            if has_overlapping_alternatives_simple(child) {
                 // Wrap in atomic group: (?>a|ab)*
                 let atomic_child = Expr::AtomicGroup(Box::new(child.clone()));
                 return Some(Expr::Repeat {
