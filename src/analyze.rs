@@ -30,7 +30,7 @@ use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
 use crate::{CompileError, Error, Expr, Result};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Info<'a> {
     pub(crate) start_group: usize,
     pub(crate) end_group: usize,
