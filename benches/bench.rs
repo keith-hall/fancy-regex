@@ -97,6 +97,42 @@ fn run_backtrack_limit(c: &mut Criterion) {
     });
 }
 
+fn run_assertion_word_boundary(c: &mut Criterion) {
+    use fancy_regex::Regex;
+    let regex = Regex::new(r"\bword\b").unwrap();
+    let text = "this is a word in a sentence with multiple words";
+    c.bench_function("run_assertion_word_boundary", |b| {
+        b.iter(|| regex.is_match(text).unwrap())
+    });
+}
+
+fn run_assertion_start_end_text(c: &mut Criterion) {
+    use fancy_regex::Regex;
+    let regex = Regex::new(r"^start.*end$").unwrap();
+    let text = "start this is some text that ends with end";
+    c.bench_function("run_assertion_start_end_text", |b| {
+        b.iter(|| regex.is_match(text).unwrap())
+    });
+}
+
+fn run_assertion_line_boundaries(c: &mut Criterion) {
+    use fancy_regex::Regex;
+    let regex = Regex::new(r"(?m)^line\d+$").unwrap();
+    let text = "line1\nline2\nline3\nline4\nline5";
+    c.bench_function("run_assertion_line_boundaries", |b| {
+        b.iter(|| regex.find_iter(text).count())
+    });
+}
+
+fn run_mixed_assertions(c: &mut Criterion) {
+    use fancy_regex::Regex;
+    let regex = Regex::new(r"(?m)^\w+\b.*\btest\b.*$").unwrap();
+    let text = "word1 this is a test line\nword2 another test here\nword3 final test case";
+    c.bench_function("run_mixed_assertions", |b| {
+        b.iter(|| regex.find_iter(text).count())
+    });
+}
+
 criterion_group!(
     name = benches;
     config = Criterion::default().warm_up_time(Duration::from_secs(10));
@@ -107,6 +143,10 @@ criterion_group!(
     analyze_literal_re,
     run_backtrack,
     run_tricky,
+    run_assertion_word_boundary,
+    run_assertion_start_end_text,
+    run_assertion_line_boundaries,
+    run_mixed_assertions,
 );
 criterion_group!(
     name = slow_benches;

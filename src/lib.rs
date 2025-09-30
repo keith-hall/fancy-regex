@@ -2067,6 +2067,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn assertion_functionality_preserved() {
+        // Test various assertions to ensure they still work correctly
+        // when potentially delegated to regex-automata
+        
+        // Word boundaries
+        let re = Regex::new(r"\bword\b").unwrap();
+        assert!(re.is_match("a word here").unwrap());
+        assert!(!re.is_match("awordhere").unwrap());
+        
+        // Start/end of text
+        let re = Regex::new(r"^start.*end$").unwrap();
+        assert!(re.is_match("start middle end").unwrap());
+        assert!(!re.is_match(" start middle end ").unwrap());
+        
+        // Line boundaries 
+        let re = Regex::new(r"(?m)^line$").unwrap();
+        assert_eq!(re.find_iter("line\nline\nother").count(), 2);
+        
+        // Mixed assertions
+        let re = Regex::new(r"(?m)^\w+\b").unwrap();
+        let matches: Vec<_> = re.find_iter("word1\nword2 test\nword3").collect();
+        assert_eq!(matches.len(), 3);
+    }
+
+    #[test]
+    fn test_word_boundary_assertions() {
+        // Test that different word boundary types work correctly
+        let left_re = Regex::new(r"(?<!\w)word").unwrap();
+        let right_re = Regex::new(r"word(?!\w)").unwrap();
+        let both_re = Regex::new(r"\bword\b").unwrap();
+        let not_boundary_re = Regex::new(r"\Bor\B").unwrap();
+        
+        let text = "word sword words";
+        assert!(left_re.is_match(text).unwrap());
+        assert!(right_re.is_match(text).unwrap());
+        assert!(both_re.is_match(text).unwrap());
+        assert!(not_boundary_re.is_match(text).unwrap()); // 'or' in 'sword'
+    }
+
     /*
     #[test]
     fn detect_backref() {
