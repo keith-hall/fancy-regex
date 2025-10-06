@@ -1892,6 +1892,14 @@ impl Expr {
             _ => panic!("attempting to format hard expr {:?}", self),
         }
     }
+
+    pub fn to_seek_str(&self, buf: &mut String, precedence: u8) {
+        match *self {
+            Expr::KeepOut => (),
+            Expr::ContinueFromPreviousMatchEnd => (), // TODO: treat as anchored if it is the first instruction...
+            // TODO: probably needs to be part of the compiler rather than the Expr, because subroutine calls and capture group backreferences require knowing what they were
+        }
+    }
 }
 
 // precondition: ix > 0
