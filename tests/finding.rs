@@ -447,3 +447,25 @@ fn incomplete_escape_sequences() {
     assert!(Regex::new("\\U").is_err());
     assert!(Regex::new("\\x").is_err());
 }
+
+#[test]
+#[cfg(not(feature = "variable-lookbehinds"))]
+fn variable_lookbehind_requires_feature() {
+    use fancy_regex::Error;
+    // Without the feature flag, variable-length lookbehinds should error
+    let result = Regex::new(r"(?<=a+b+)x");
+    assert!(result.is_err());
+    if let Err(Error::CompileError(_)) = result {
+        // Expected error type
+    } else {
+        panic!("Expected CompileError");
+    }
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn variable_lookbehind_with_feature() {
+    // With the feature flag, variable-length lookbehinds should work
+    assert_eq!(find(r"(?<=a+b+)x", "abx"), Some((2, 3)));
+    assert_eq!(find(r"(?<=a+b+)x", "aabbx"), Some((4, 5)));
+}
