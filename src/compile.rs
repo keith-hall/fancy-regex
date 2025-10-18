@@ -446,10 +446,31 @@ impl Compiler {
 
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
-            if inner.const_size {
+            if inner.const_size && !inner.hard {
+                // Easy const-size lookbehind
                 self.b.add(Insn::GoBack(inner.min_size));
                 self.visit(inner, false)
+            } else if inner.const_size && inner.hard {
+                // Hard const-size lookbehind (e.g., with word boundaries)
+                #[cfg(feature = "variable-lookbehinds")]
+                {
+                    // Go back by the minimum size, compile the expression in hard context,
+                    // then go back again to restore position
+                    if inner.min_size > 0 {
+                        self.b.add(Insn::GoBack(inner.min_size));
+                    }
+                    self.visit(inner, true)?;
+                    if inner.min_size > 0 {
+                        self.b.add(Insn::GoBack(inner.min_size));
+                    }
+                    Ok(())
+                }
+                #[cfg(not(feature = "variable-lookbehinds"))]
+                {
+                    Err(Error::CompileError(CompileError::LookBehindNotConst))
+                }
             } else if !inner.hard && inner.start_group == inner.end_group {
+                // Easy variable-size lookbehind
                 #[cfg(feature = "variable-lookbehinds")]
                 {
                     let mut delegate_builder = DelegateBuilder::new();
