@@ -113,6 +113,26 @@ fn lookbehind_negative_variable_sized_functionality() {
 }
 
 #[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_with_const_size_hard_expressions() {
+    // Test word boundary (\b) in positive lookbehind
+    assert_eq!(find(r"(?<=\b)c", "c"), Some((0, 1)));
+    assert_eq!(find(r"(?<=\b)c", " c"), Some((1, 2)));
+    assert_eq!(find(r"(?<=\b)c", "ac"), None);
+    
+    // Test word boundary in negative lookbehind
+    assert_eq!(find(r"(?<!\b)c", "c"), None);
+    assert_eq!(find(r"(?<!\b)c", " c"), None);
+    assert_eq!(find(r"(?<!\b)c", "ac"), Some((1, 2)));
+    
+    // Test not-word-boundary (\B) in positive lookbehind
+    assert_eq!(find(r"(?<=\B)c", "ac"), Some((1, 2)));
+    assert_eq!(find(r"(?<=\B)c", " c"), None);
+    assert_eq!(find(r"(?<=\B)c", "c"), None);
+}
+
+
+#[test]
 fn lookbehind_containing_const_size_backref() {
     assert_eq!(find(r"(..)(?<=\1\1)", "yyxxxx"), Some((4, 6)));
 }
