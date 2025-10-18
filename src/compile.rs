@@ -471,7 +471,9 @@ impl Compiler {
                 }
                 #[cfg(not(feature = "variable-lookbehinds"))]
                 {
-                    // Without variable-lookbehinds, use the simple approach for all const-size
+                    // Without variable-lookbehinds, use the original simple approach
+                    // This works for both easy and hard const-size expressions because
+                    // hard expressions won't be delegated even when visited in easy mode
                     self.b.add(Insn::GoBack(inner.min_size));
                     self.visit(inner, false)
                 }
