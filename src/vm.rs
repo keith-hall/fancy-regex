@@ -775,7 +775,10 @@ pub(crate) fn run(
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
 
                     let found_match = match dfa.try_search_rev(&mut cache, &input) {
-                        Ok(Some(_)) => true,
+                        Ok(Some(half_match)) => {
+                            ix = half_match.offset();
+                            true
+                        }
                         _ => false,
                     };
 
