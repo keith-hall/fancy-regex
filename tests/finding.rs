@@ -439,7 +439,8 @@ fn hard_lookbehind_with_word_boundary() {
 #[cfg(feature = "variable-lookbehinds")]
 fn hard_lookbehind_with_backref() {
     // Test case from problem statement: (.)(?<=\1-\ba+b+.)c
-    assert_eq!(find(r"(.)(?<=\1-\ba+b+.)c", "2-ab2c"), Some((4, 5)));
+    // Should match the "2c" in "2-ab2c"
+    assert_eq!(find(r"(.)(?<=\1-\ba+b+.)c", "2-ab2c"), Some((4, 6)));
 }
 
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
