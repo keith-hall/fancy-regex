@@ -482,28 +482,7 @@ impl Compiler {
                     for child in &inner.children[*start..*end] {
                         delegate_builder.push(child);
                     }
-                    let pattern = &delegate_builder.re;
-                    
-                    use regex_automata::nfa::thompson;
-                    let dfa = match regex_automata::hybrid::dfa::DFA::builder()
-                        .thompson(thompson::Config::new().reverse(true))
-                        .build(&pattern)
-                    {
-                        Ok(dfa) => dfa,
-                        Err(e) => {
-                            return Err(Error::CompileError(CompileError::DfaBuildError(
-                                e.to_string(),
-                            )))
-                        }
-                    };
-
-                    let cache = core::cell::RefCell::new(dfa.create_cache());
-                    self.b
-                        .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
-                            dfa,
-                            cache,
-                            pattern: pattern.to_string(),
-                        }));
+                    self.compile_backwards_delegate(&delegate_builder.re)?;
                 } else {
                     // Emit instruction for hard child
                     let child = &inner.children[*start];
@@ -514,6 +493,30 @@ impl Compiler {
         } else {
             self.compile_lookbehind_expr(inner)
         }
+    }
+
+    fn compile_backwards_delegate(&mut self, pattern: &str) -> Result<()> {
+        use regex_automata::nfa::thompson;
+        let dfa = match regex_automata::hybrid::dfa::DFA::builder()
+            .thompson(thompson::Config::new().reverse(true))
+            .build(&pattern)
+        {
+            Ok(dfa) => dfa,
+            Err(e) => {
+                return Err(Error::CompileError(CompileError::DfaBuildError(
+                    e.to_string(),
+                )))
+            }
+        };
+
+        let cache = core::cell::RefCell::new(dfa.create_cache());
+        self.b
+            .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
+                dfa,
+                cache,
+                pattern: pattern.to_string(),
+            }));
+        Ok(())
     }
 
     fn compile_lookbehind_expr(&mut self, info: &Info<'_>) -> Result<()> {
@@ -547,39 +550,19 @@ impl Compiler {
                     if info.start_group == info.end_group {
                         let mut delegate_builder = DelegateBuilder::new();
                         delegate_builder.push(info);
-                        let pattern = &delegate_builder.re;
-                        
-                        use regex_automata::nfa::thompson;
-                        let dfa = match regex_automata::hybrid::dfa::DFA::builder()
-                            .thompson(thompson::Config::new().reverse(true))
-                            .build(&pattern)
-                        {
-                            Ok(dfa) => dfa,
-                            Err(e) => {
-                                return Err(Error::CompileError(CompileError::DfaBuildError(
-                                    e.to_string(),
-                                )))
-                            }
-                        };
-
-                        let cache = core::cell::RefCell::new(dfa.create_cache());
-                        self.b
-                            .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
-                                dfa,
-                                cache,
-                                pattern: pattern.to_string(),
-                            }));
-                        Ok(())
+                        self.compile_backwards_delegate(&delegate_builder.re)
                     } else {
                         // Has groups, can't use BackwardsDelegate
                         self.b.add(Insn::GoBack(info.min_size));
-                        self.visit(info, false)
+                        self.visit(info, false)?;
+                        Ok(())
                     }
                 }
                 _ => {
                     // Other const-size hard expressions
                     self.b.add(Insn::GoBack(info.min_size));
-                    self.visit(info, false)
+                    self.visit(info, false)?;
+                    Ok(())
                 }
             }
         } else {
@@ -588,29 +571,7 @@ impl Compiler {
                 // Easy non-const-size can use BackwardsDelegate
                 let mut delegate_builder = DelegateBuilder::new();
                 delegate_builder.push(info);
-                let pattern = &delegate_builder.re;
-                
-                use regex_automata::nfa::thompson;
-                let dfa = match regex_automata::hybrid::dfa::DFA::builder()
-                    .thompson(thompson::Config::new().reverse(true))
-                    .build(&pattern)
-                {
-                    Ok(dfa) => dfa,
-                    Err(e) => {
-                        return Err(Error::CompileError(CompileError::DfaBuildError(
-                            e.to_string(),
-                        )))
-                    }
-                };
-
-                let cache = core::cell::RefCell::new(dfa.create_cache());
-                self.b
-                    .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
-                        dfa,
-                        cache,
-                        pattern: pattern.to_string(),
-                    }));
-                Ok(())
+                self.compile_backwards_delegate(&delegate_builder.re)
             } else {
                 // Hard non-const-size expressions
                 // Go back min_size, compile forward, then go back again
