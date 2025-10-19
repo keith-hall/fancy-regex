@@ -495,6 +495,11 @@ impl Compiler {
         }
     }
 
+    /// Compile a BackwardsDelegate instruction for the given pattern.
+    /// 
+    /// Creates a reverse DFA that matches the pattern backwards from the current position.
+    /// This is used for easy (non-hard) expressions in lookbehinds that can be delegated
+    /// to the regex-automata engine.
     fn compile_backwards_delegate(&mut self, pattern: &str) -> Result<()> {
         use regex_automata::nfa::thompson;
         let dfa = match regex_automata::hybrid::dfa::DFA::builder()
