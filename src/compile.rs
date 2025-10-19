@@ -444,6 +444,154 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_lookbehind_hard(&mut self, inner: &Info<'_>) -> Result<()> {
+        // Handle concat specially - similar to compile_concat but in reverse
+        if let Expr::Concat(_) = inner.expr {
+            // Group consecutive easy children together for BackwardsDelegate
+            // Process in reverse order for lookbehind
+            
+            let mut groups: Vec<(usize, usize, bool)> = Vec::new();
+            let mut i = 0;
+            while i < inner.children.len() {
+                let child = &inner.children[i];
+                if !child.hard && child.start_group == child.end_group {
+                    // Start of an easy group
+                    let start = i;
+                    i += 1;
+                    while i < inner.children.len() {
+                        let next = &inner.children[i];
+                        if !next.hard && next.start_group == next.end_group {
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    groups.push((start, i, true)); // easy group
+                } else {
+                    // Hard child
+                    groups.push((i, i + 1, false)); // hard child
+                    i += 1;
+                }
+            }
+            
+            // Process groups in reverse order
+            for (start, end, is_easy) in groups.iter().rev() {
+                if *is_easy {
+                    // Emit BackwardsDelegate for easy group
+                    let mut delegate_builder = DelegateBuilder::new();
+                    for child in &inner.children[*start..*end] {
+                        delegate_builder.push(child);
+                    }
+                    self.compile_backwards_delegate(&delegate_builder.re)?;
+                } else {
+                    // Emit instruction for hard child
+                    let child = &inner.children[*start];
+                    self.compile_lookbehind_expr(child)?;
+                }
+            }
+            Ok(())
+        } else {
+            self.compile_lookbehind_expr(inner)
+        }
+    }
+
+    /// Compile a BackwardsDelegate instruction for the given pattern.
+    /// 
+    /// Creates a reverse DFA that matches the pattern backwards from the current position.
+    /// This is used for easy (non-hard) expressions in lookbehinds that can be delegated
+    /// to the regex-automata engine.
+    fn compile_backwards_delegate(&mut self, pattern: &str) -> Result<()> {
+        use regex_automata::nfa::thompson;
+        let dfa = match regex_automata::hybrid::dfa::DFA::builder()
+            .thompson(thompson::Config::new().reverse(true))
+            .build(&pattern)
+        {
+            Ok(dfa) => dfa,
+            Err(e) => {
+                return Err(Error::CompileError(CompileError::DfaBuildError(
+                    e.to_string(),
+                )))
+            }
+        };
+
+        let cache = core::cell::RefCell::new(dfa.create_cache());
+        self.b
+            .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
+                dfa,
+                cache,
+                pattern: pattern.to_string(),
+            }));
+        Ok(())
+    }
+
+    fn compile_lookbehind_expr(&mut self, info: &Info<'_>) -> Result<()> {
+        // Check if this expression is const-size
+        if info.const_size {
+            // For const-size expressions, we can emit instructions directly
+            match info.expr {
+                Expr::Assertion(assertion) => {
+                    // Assertions are const-size and can be emitted directly
+                    self.b.add(Insn::Assertion(*assertion));
+                    Ok(())
+                }
+                Expr::Backref { group, casei } => {
+                    // Backrefs are const-size if the referenced group is const-size
+                    // In a lookbehind, we need to go back, match forward, then go back again
+                    if info.min_size > 0 {
+                        self.b.add(Insn::GoBack(info.min_size));
+                    }
+                    self.b.add(Insn::Backref {
+                        slot: *group * 2,
+                        casei: *casei,
+                    });
+                    // Go back by the size of the backref to restore position
+                    if info.min_size > 0 {
+                        self.b.add(Insn::GoBack(info.min_size));
+                    }
+                    Ok(())
+                }
+                _ if !info.hard => {
+                    // Easy const-size expressions can be delegated with BackwardsDelegate
+                    if info.start_group == info.end_group {
+                        let mut delegate_builder = DelegateBuilder::new();
+                        delegate_builder.push(info);
+                        self.compile_backwards_delegate(&delegate_builder.re)
+                    } else {
+                        // Has groups, can't use BackwardsDelegate
+                        self.b.add(Insn::GoBack(info.min_size));
+                        self.visit(info, false)?;
+                        Ok(())
+                    }
+                }
+                _ => {
+                    // Other const-size hard expressions
+                    self.b.add(Insn::GoBack(info.min_size));
+                    self.visit(info, false)?;
+                    Ok(())
+                }
+            }
+        } else {
+            // Non-const-size expression
+            if !info.hard && info.start_group == info.end_group {
+                // Easy non-const-size can use BackwardsDelegate
+                let mut delegate_builder = DelegateBuilder::new();
+                delegate_builder.push(info);
+                self.compile_backwards_delegate(&delegate_builder.re)
+            } else {
+                // Hard non-const-size expressions
+                // Go back min_size, compile forward, then go back again
+                if info.min_size > 0 {
+                    self.b.add(Insn::GoBack(info.min_size));
+                }
+                self.visit(info, true)?;
+                if info.min_size > 0 {
+                    self.b.add(Insn::GoBack(info.min_size));
+                }
+                Ok(())
+            }
+        }
+    }
+
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
             if inner.const_size {
@@ -486,8 +634,15 @@ impl Compiler {
                     ))
                 }
             } else {
-                // variable sized lookbehinds with fancy features are currently unsupported
-                Err(Error::CompileError(CompileError::LookBehindNotConst))
+                // Hard lookbehind - compile recursively
+                #[cfg(feature = "variable-lookbehinds")]
+                {
+                    self.compile_lookbehind_hard(inner)
+                }
+                #[cfg(not(feature = "variable-lookbehinds"))]
+                {
+                    Err(Error::CompileError(CompileError::LookBehindNotConst))
+                }
             }
         } else {
             self.visit(inner, false)

@@ -427,6 +427,22 @@ fn find_endtext_before_newlines() {
     assert_eq!(find(r"\Z", "hello\nworld\n\n\n"), Some((11, 11)));
 }
 
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_lookbehind_with_word_boundary() {
+    // Test case from problem statement: (?<=\ba+b+)c
+    assert_eq!(find(r"(?<=\ba+b+)c", "aabbc"), Some((4, 5)));
+    assert_eq!(find(r"(?<=\ba+b+)c", "babc"), None);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_lookbehind_with_backref() {
+    // Test case from problem statement: (.)(?<=\1-\ba+b+.)c
+    // Should match the "2c" in "2-ab2c"
+    assert_eq!(find(r"(.)(?<=\1-\ba+b+.)c", "2-ab2c"), Some((4, 6)));
+}
+
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     find_match(re, text).map(|m| (m.start(), m.end()))
 }
