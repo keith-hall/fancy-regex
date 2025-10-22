@@ -247,8 +247,17 @@ impl<'a> Analyzer<'a> {
                 // For repeat expressions with max = 0, the child doesn't actually contribute to min_size
                 // This is important for left recursion detection
                 let child_info = if hi == 0 {
-                    // If max repetitions is 0, this repeat matches nothing, so position doesn't advance
-                    self.visit(child, min_pos_in_group)?
+                    // If max repetitions is 0, this repeat matches nothing
+                    // TODO: find out what group we are actually in, not use the number of groups encountered so far
+                    let was_reachable = self.inside_groups.contains(self.group_ix - 1);
+                    if was_reachable {
+                        self.inside_groups.remove(self.group_ix - 1);
+                    }
+                    let child_info = self.visit(child, min_pos_in_group)?;
+                    if was_reachable {
+                        self.inside_groups.insert(self.group_ix - 1);
+                    }
+                    child_info
                 } else {
                     self.visit(child, min_pos_in_group)?
                 };
@@ -633,19 +642,19 @@ mod tests {
 
     #[test]
     fn repeat_with_max_zero_ignored_for_left_recursion() {
-        // Test that repeat expressions with max=0 don't affect left recursion detection
         let tree = Expr::parse_tree(r"(?<a>\g<a>{0})").unwrap();
-        let result = analyze(&tree, 1).err();
-        println!("{:?}", result);
-        // Should detect left recursion despite the {0} repeat
-        assert!(matches!(result, Some(Error::CompileError(CompileError::LeftRecursiveSubroutineCall(1)))));
+        let result = analyze(&tree, 1);
+        assert!(!result.is_err());
 
-        // Test with a more complex case
         let tree = Expr::parse_tree(r"(?<a>x{0}\g<a>)").unwrap();
         let result = analyze(&tree, 1).err();
         println!("{:?}", result);
         // Should detect left recursion because x{0} doesn't consume anything
         assert!(matches!(result, Some(Error::CompileError(CompileError::LeftRecursiveSubroutineCall(1)))));
+
+        let tree = Expr::parse_tree(r"(?<a>(?:\g<a>){0})").unwrap();
+        let result = analyze(&tree, 1);
+        assert!(!result.is_err());
     }
 
     #[test]
