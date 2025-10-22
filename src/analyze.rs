@@ -87,8 +87,6 @@ struct Analyzer<'a> {
     call_graph: Map<usize, Vec<SubroutineCall>>,
     /// Track whether we encountered any subroutine calls that need to be checked
     has_subroutine_calls: bool,
-    /// Evaluate subroutine calls
-    evaluate_subroutine_calls: bool,
 }
 
 impl<'a> Analyzer<'a> {
@@ -226,10 +224,7 @@ impl<'a> Analyzer<'a> {
                 self.group_ix += 1;
                 self.call_graph.insert(group, Vec::new());
                 self.inside_groups.insert(group);
-                let prev_evaluate_subroutine_calls = self.evaluate_subroutine_calls;
-                self.evaluate_subroutine_calls = true;
                 let child_info = self.visit(child, 0)?;
-                self.evaluate_subroutine_calls = prev_evaluate_subroutine_calls;
                 self.inside_groups.remove(group);
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
@@ -249,14 +244,14 @@ impl<'a> Analyzer<'a> {
             Expr::Repeat {
                 ref child, lo, hi, ..
             } => {
-                // For repeat expressions with max = 0, we can skip left recursion detection
-                // for children inside the expression, unless it contains a group which is called...
-                let prev_evaluate_subroutine_calls = self.evaluate_subroutine_calls;
-                if hi == 0 {
-                    self.evaluate_subroutine_calls = false;
-                }
-                let child_info = self.visit(child, min_pos_in_group)?;
-                self.evaluate_subroutine_calls = prev_evaluate_subroutine_calls;
+                // For repeat expressions with max = 0, the child doesn't actually contribute to min_size
+                // This is important for left recursion detection
+                let child_info = if hi == 0 {
+                    // If max repetitions is 0, this repeat matches nothing, so position doesn't advance
+                    self.visit(child, min_pos_in_group)?
+                } else {
+                    self.visit(child, min_pos_in_group)?
+                };
                 
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
@@ -330,7 +325,7 @@ impl<'a> Analyzer<'a> {
                 self.has_subroutine_calls = true;
 
                 // Check for direct left recursive calls immediately if we're at position 0
-                if self.evaluate_subroutine_calls && min_pos_in_group == 0 && self.inside_groups.contains(group) {
+                if min_pos_in_group == 0 && self.inside_groups.contains(group) {
                     return Err(Error::CompileError(
                         CompileError::LeftRecursiveSubroutineCall(group),
                     ));
@@ -379,7 +374,6 @@ pub fn analyze<'a>(tree: &'a ExprTree, start_group: usize) -> Result<Info<'a>> {
         call_graph: Map::new(),
         inside_groups: BitSet::new(),
         has_subroutine_calls: false,
-        evaluate_subroutine_calls: true,
     };
 
     let analyzed = analyzer.visit(&tree.expr, 0)?;
