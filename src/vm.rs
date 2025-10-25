@@ -251,6 +251,16 @@ pub enum Insn {
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     BackwardsDelegate(ReverseBackwardsDelegate),
+    #[cfg(feature = "variable-lookbehinds")]
+    /// Lookbehind with capture groups - uses reverse DFA to find start, then forward matching
+    LookbehindWithCaptures {
+        /// DFA for finding the start of the match going backward
+        dfa: regex_automata::hybrid::dfa::DFA,
+        /// Cache for reverse DFA searches
+        cache: core::cell::RefCell<regex_automata::hybrid::dfa::Cache>,
+        /// Forward delegate for capturing groups
+        delegate: Delegate,
+    },
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -784,6 +794,66 @@ pub(crate) fn run(
 
                     if !found_match {
                         break 'fail;
+                    }
+                }
+                #[cfg(feature = "variable-lookbehinds")]
+                Insn::LookbehindWithCaptures {
+                    ref dfa,
+                    ref cache,
+                    ref delegate,
+                } => {
+                    // First, use reverse DFA to find the start position of the match
+                    let mut dfa_cache = cache.borrow_mut();
+                    let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
+                    
+                    let start_pos = match dfa.try_search_rev(&mut dfa_cache, &input) {
+                        Ok(Some(half_match)) => half_match.offset(),
+                        _ => {
+                            break 'fail;
+                        }
+                    };
+                    drop(dfa_cache);
+                    
+                    // Now match forward from start_pos to capture groups
+                    // The match must end exactly at ix (current position)
+                    let forward_input = Input::new(s).span(start_pos..ix).anchored(Anchored::Yes);
+                    
+                    if delegate.start_group == delegate.end_group {
+                        // No capture groups - just verify the match
+                        match delegate.inner.search_half(&forward_input) {
+                            Some(m) if m.offset() == ix => {
+                                // Match succeeded and ends at current position
+                                // ix stays the same (lookbehind doesn't consume)
+                            }
+                            _ => break 'fail,
+                        }
+                    } else {
+                        // Has capture groups - capture them
+                        inner_slots.resize((delegate.end_group - delegate.start_group + 1) * 2, None);
+                        
+                        if delegate.inner.search_slots(&forward_input, &mut inner_slots).is_some() {
+                            // Verify the match ends exactly at current position
+                            // The end position is in inner_slots[1] (end of group 0)
+                            if inner_slots[1].map(|m| m.get()) != Some(ix) {
+                                break 'fail;
+                            }
+                            
+                            // Save capture group positions
+                            for i in 0..(delegate.end_group - delegate.start_group) {
+                                let slot = (delegate.start_group + i) * 2;
+                                if let Some(start) = inner_slots[(i + 1) * 2] {
+                                    let end = inner_slots[(i + 1) * 2 + 1].unwrap();
+                                    state.save(slot, start.get());
+                                    state.save(slot + 1, end.get());
+                                } else {
+                                    state.save(slot, usize::MAX);
+                                    state.save(slot + 1, usize::MAX);
+                                }
+                            }
+                            // ix stays the same (lookbehind doesn't consume)
+                        } else {
+                            break 'fail;
+                        }
                     }
                 }
                 Insn::BeginAtomic => {

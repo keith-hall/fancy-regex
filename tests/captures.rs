@@ -380,3 +380,63 @@ fn expander_errors() {
         exp.check("${xx}", &with_names),
         Err(Error::CompileError(CompileError::InvalidGroupNameBackref(ref name))) if name == "xx"));
 }
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_in_variable_sized_lookbehind() {
+    // Test capture groups in variable-sized lookbehind
+    let captures = captures(r"(?<=(a+))b", "aaab");
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "b", 3, 4);
+    assert_match(captures.get(1), "aaa", 0, 3);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_in_variable_sized_lookbehind_alt() {
+    // Test capture groups with alternation in variable-sized lookbehind
+    let caps1 = captures(r"(?<=(a|bc))d", "bcd");
+    assert_eq!(caps1.len(), 2);
+    assert_match(caps1.get(0), "d", 2, 3);
+    assert_match(caps1.get(1), "bc", 0, 2);
+    
+    let caps2 = captures(r"(?<=(a|bc))d", "ad");
+    assert_eq!(caps2.len(), 2);
+    assert_match(caps2.get(0), "d", 1, 2);
+    assert_match(caps2.get(1), "a", 0, 1);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_in_variable_sized_lookbehind_complex() {
+    // Test more complex patterns with capture groups
+    let captures = captures(r"(?<=(a+)(b+))c", "aaabbbc");
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), "c", 6, 7);
+    assert_match(captures.get(1), "aaa", 0, 3);
+    assert_match(captures.get(2), "bbb", 3, 6);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_in_variable_sized_lookbehind_named() {
+    // Test named capture groups in variable-sized lookbehind
+    let captures = captures(r"(?<=(?P<prefix>a+))b", "aaab");
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "b", 3, 4);
+    assert_match(captures.name("prefix"), "aaa", 0, 3);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn negative_lookbehind_with_captures() {
+    // Negative lookbehind with captures should still work (capture won't be populated)
+    let re = common::regex(r"(?<!(a+))b");
+    let text = "cb";
+    let captures = re.captures(text).unwrap().unwrap();
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "b", 1, 2);
+    // Group 1 exists but doesn't match in a negative lookbehind
+    assert!(captures.get(1).is_none());
+}
+

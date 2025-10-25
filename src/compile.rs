@@ -485,8 +485,52 @@ impl Compiler {
                         CompileError::VariableLookBehindRequiresFeature,
                     ))
                 }
+            } else if !inner.hard {
+                // Variable-sized lookbehinds with capture groups but no hard features
+                #[cfg(feature = "variable-lookbehinds")]
+                {
+                    let mut delegate_builder = DelegateBuilder::new();
+                    delegate_builder.push(inner);
+                    let pattern = &delegate_builder.re;
+                    
+                    // Build a reverse DFA for finding the start position
+                    use regex_automata::nfa::thompson;
+                    let dfa = match regex_automata::hybrid::dfa::DFA::builder()
+                        .thompson(thompson::Config::new().reverse(true))
+                        .build(&pattern)
+                    {
+                        Ok(dfa) => dfa,
+                        Err(e) => {
+                            return Err(Error::CompileError(CompileError::DfaBuildError(
+                                e.to_string(),
+                            )))
+                        }
+                    };
+                    
+                    let cache = core::cell::RefCell::new(dfa.create_cache());
+                    
+                    // Build the forward delegate for capturing groups
+                    let delegate = delegate_builder.build(&self.options)?;
+                    let delegate = match delegate {
+                        Insn::Delegate(d) => d,
+                        _ => unreachable!("DelegateBuilder should always build a Delegate"),
+                    };
+                    
+                    self.b.add(Insn::LookbehindWithCaptures {
+                        dfa,
+                        cache,
+                        delegate,
+                    });
+                    Ok(())
+                }
+                #[cfg(not(feature = "variable-lookbehinds"))]
+                {
+                    Err(Error::CompileError(
+                        CompileError::VariableLookBehindRequiresFeature,
+                    ))
+                }
             } else {
-                // variable sized lookbehinds with fancy features are currently unsupported
+                // variable sized lookbehinds with hard features are currently unsupported
                 Err(Error::CompileError(CompileError::LookBehindNotConst))
             }
         } else {
