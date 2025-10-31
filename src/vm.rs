@@ -792,7 +792,7 @@ pub(crate) fn run(
                 }) => {
                     // Use regex-automata to search backwards from current position
                     #[cfg(feature = "std")]
-                    let mut cache_guard = cache.lock().unwrap();
+                    let mut cache_guard = cache.lock().expect("DFA cache mutex poisoned");
                     #[cfg(not(feature = "std"))]
                     let mut cache_guard = cache.borrow_mut();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
