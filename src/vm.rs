@@ -84,7 +84,11 @@ use regex_automata::util::pool::Pool;
 
 #[cfg(feature = "variable-lookbehinds")]
 type CachePoolFn = alloc::boxed::Box<
-    dyn Fn() -> regex_automata::hybrid::dfa::Cache + Send + Sync + core::panic::UnwindSafe + core::panic::RefUnwindSafe,
+    dyn Fn() -> regex_automata::hybrid::dfa::Cache
+        + Send
+        + Sync
+        + core::panic::UnwindSafe
+        + core::panic::RefUnwindSafe,
 >;
 
 use crate::error::RuntimeError;
@@ -794,7 +798,8 @@ pub(crate) fn run(
                     let mut cache_guard = cache_pool.get();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
 
-                    let found_match = matches!(dfa.try_search_rev(&mut cache_guard, &input), Ok(Some(_)));
+                    let found_match =
+                        matches!(dfa.try_search_rev(&mut cache_guard, &input), Ok(Some(_)));
 
                     if !found_match {
                         break 'fail;

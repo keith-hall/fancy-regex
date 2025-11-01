@@ -24,14 +24,18 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
-#[cfg(all(test, feature = "std"))]
-use std::{collections::BTreeMap, sync::RwLock};
 #[cfg(feature = "variable-lookbehinds")]
 use regex_automata::util::pool::Pool;
+#[cfg(all(test, feature = "std"))]
+use std::{collections::BTreeMap, sync::RwLock};
 
 #[cfg(feature = "variable-lookbehinds")]
 type CachePoolFn = alloc::boxed::Box<
-    dyn Fn() -> regex_automata::hybrid::dfa::Cache + Send + Sync + core::panic::UnwindSafe + core::panic::RefUnwindSafe,
+    dyn Fn() -> regex_automata::hybrid::dfa::Cache
+        + Send
+        + Sync
+        + core::panic::UnwindSafe
+        + core::panic::RefUnwindSafe,
 >;
 
 use crate::analyze::Info;

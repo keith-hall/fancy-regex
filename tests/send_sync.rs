@@ -1,4 +1,4 @@
-use fancy_regex::{Regex, Matches};
+use fancy_regex::{Matches, Regex};
 
 // Helper functions to ensure types implement Send and Sync
 fn assert_send<T: Send>() {}
@@ -30,7 +30,7 @@ fn test_variable_lookbehind_regex_is_send_sync() {
     let re = Regex::new(r"(?<=ab+)x").unwrap();
     assert_send::<Regex>();
     assert_sync::<Regex>();
-    
+
     // Verify it actually works
     assert!(re.is_match("abx").unwrap());
     assert!(re.is_match("abbx").unwrap());
@@ -45,7 +45,7 @@ fn test_variable_lookbehind_regex_is_send_sync_no_std() {
     let re = Regex::new(r"(?<=ab+)x").unwrap();
     assert_send::<Regex>();
     assert_sync::<Regex>();
-    
+
     // Verify it actually works
     assert!(re.is_match("abx").unwrap());
     assert!(re.is_match("abbx").unwrap());
