@@ -81,6 +81,8 @@ use regex_automata::Input;
 
 #[cfg(feature = "std")]
 use std::sync::Mutex;
+#[cfg(not(feature = "std"))]
+use spin::Mutex;
 
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
@@ -142,10 +144,7 @@ pub struct ReverseBackwardsDelegate {
     /// The delegate regex to match backwards
     pub(crate) dfa: regex_automata::hybrid::dfa::DFA,
     /// Cache for DFA searches
-    #[cfg(feature = "std")]
     pub(crate) cache: Mutex<regex_automata::hybrid::dfa::Cache>,
-    #[cfg(not(feature = "std"))]
-    pub(crate) cache: core::cell::RefCell<regex_automata::hybrid::dfa::Cache>,
 }
 
 #[cfg(feature = "variable-lookbehinds")]
@@ -155,10 +154,7 @@ impl Clone for ReverseBackwardsDelegate {
             pattern: self.pattern.clone(),
             dfa: self.dfa.clone(),
             // Create a new cache for the clone
-            #[cfg(feature = "std")]
             cache: Mutex::new(self.dfa.create_cache()),
-            #[cfg(not(feature = "std"))]
-            cache: core::cell::RefCell::new(self.dfa.create_cache()),
         }
     }
 }
@@ -794,7 +790,7 @@ pub(crate) fn run(
                     #[cfg(feature = "std")]
                     let mut cache_guard = cache.lock().expect("DFA cache mutex poisoned");
                     #[cfg(not(feature = "std"))]
-                    let mut cache_guard = cache.borrow_mut();
+                    let mut cache_guard = cache.lock();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
 
                     let found_match = matches!(dfa.try_search_rev(&mut cache_guard, &input), Ok(Some(_)));

@@ -1,4 +1,6 @@
-use fancy_regex::{Regex, Matches};
+use fancy_regex::Regex;
+#[cfg(feature = "std")]
+use fancy_regex::Matches;
 
 // Helper functions to ensure types implement Send and Sync
 fn assert_send<T: Send>() {}
@@ -27,6 +29,33 @@ fn test_matches_is_send() {
 fn test_variable_lookbehind_regex_is_send_sync() {
     // Create a regex with variable-length lookbehind to ensure
     // ReverseBackwardsDelegate is Send/Sync when std is available
+    let re = Regex::new(r"(?<=ab+)x").unwrap();
+    assert_send::<Regex>();
+    assert_sync::<Regex>();
+    
+    // Verify it actually works
+    assert!(re.is_match("abx").unwrap());
+    assert!(re.is_match("abbx").unwrap());
+    assert!(!re.is_match("ax").unwrap());
+}
+
+#[test]
+#[cfg(not(feature = "std"))]
+fn test_regex_is_send_no_std() {
+    assert_send::<Regex>();
+}
+
+#[test]
+#[cfg(not(feature = "std"))]
+fn test_regex_is_sync_no_std() {
+    assert_sync::<Regex>();
+}
+
+#[test]
+#[cfg(all(feature = "variable-lookbehinds", not(feature = "std")))]
+fn test_variable_lookbehind_regex_is_send_sync_no_std() {
+    // Create a regex with variable-length lookbehind to ensure
+    // ReverseBackwardsDelegate is Send/Sync when std is not available
     let re = Regex::new(r"(?<=ab+)x").unwrap();
     assert_send::<Regex>();
     assert_sync::<Regex>();
