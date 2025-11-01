@@ -36,3 +36,18 @@ fn test_variable_lookbehind_regex_is_send_sync() {
     assert!(re.is_match("abbx").unwrap());
     assert!(!re.is_match("ax").unwrap());
 }
+
+#[test]
+#[cfg(all(feature = "variable-lookbehinds", not(feature = "std")))]
+fn test_variable_lookbehind_regex_is_send_sync_no_std() {
+    // Create a regex with variable-length lookbehind to ensure
+    // ReverseBackwardsDelegate is Send/Sync even without std feature
+    let re = Regex::new(r"(?<=ab+)x").unwrap();
+    assert_send::<Regex>();
+    assert_sync::<Regex>();
+    
+    // Verify it actually works
+    assert!(re.is_match("abx").unwrap());
+    assert!(re.is_match("abbx").unwrap());
+    assert!(!re.is_match("ax").unwrap());
+}
