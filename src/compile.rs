@@ -29,18 +29,9 @@ use regex_automata::util::pool::Pool;
 #[cfg(all(test, feature = "std"))]
 use std::{collections::BTreeMap, sync::RwLock};
 
-#[cfg(feature = "variable-lookbehinds")]
-type CachePoolFn = alloc::boxed::Box<
-    dyn Fn() -> regex_automata::hybrid::dfa::Cache
-        + Send
-        + Sync
-        + core::panic::UnwindSafe
-        + core::panic::RefUnwindSafe,
->;
-
 use crate::analyze::Info;
 #[cfg(feature = "variable-lookbehinds")]
-use crate::vm::ReverseBackwardsDelegate;
+use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};

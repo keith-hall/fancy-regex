@@ -83,7 +83,7 @@ use regex_automata::Input;
 use regex_automata::util::pool::Pool;
 
 #[cfg(feature = "variable-lookbehinds")]
-type CachePoolFn = alloc::boxed::Box<
+pub(crate) type CachePoolFn = alloc::boxed::Box<
     dyn Fn() -> regex_automata::hybrid::dfa::Cache
         + Send
         + Sync
@@ -157,13 +157,12 @@ pub struct ReverseBackwardsDelegate {
 #[cfg(feature = "variable-lookbehinds")]
 impl Clone for ReverseBackwardsDelegate {
     fn clone(&self) -> Self {
-        let dfa = self.dfa.clone();
-        let dfa_for_closure = dfa.clone();
+        let dfa_for_closure = self.dfa.clone();
         let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
         Self {
             pattern: self.pattern.clone(),
             cache_pool: Pool::new(create),
-            dfa,
+            dfa: self.dfa.clone(),
         }
     }
 }
