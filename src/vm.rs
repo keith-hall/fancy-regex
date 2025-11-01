@@ -82,6 +82,90 @@ use regex_automata::Input;
 #[cfg(feature = "std")]
 use std::sync::Mutex;
 
+#[cfg(not(feature = "std"))]
+pub(crate) mod sync {
+    use core::cell::UnsafeCell;
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    /// A simple spin-lock based mutex for no_std environments.
+    ///
+    /// This provides Send and Sync implementations while maintaining interior mutability.
+    /// Note: Spinlocks are not ideal and can have performance implications in contended scenarios.
+    /// See https://matklad.github.io/2020/01/02/spinlocks-considered-harmful.html
+    #[derive(Debug)]
+    pub struct Mutex<T> {
+        locked: AtomicBool,
+        data: UnsafeCell<T>,
+    }
+
+    // SAFETY: Since a Mutex guarantees exclusive access, as long as we can
+    // send it across threads, it must also be Sync.
+    unsafe impl<T: Send> Sync for Mutex<T> {}
+
+    // SAFETY: A Mutex<T> can be sent to another thread if T can be sent.
+    unsafe impl<T: Send> Send for Mutex<T> {}
+
+    impl<T> Mutex<T> {
+        /// Create a new mutex.
+        pub const fn new(value: T) -> Mutex<T> {
+            Mutex {
+                locked: AtomicBool::new(false),
+                data: UnsafeCell::new(value),
+            }
+        }
+
+        /// Lock this mutex and return a guard providing exclusive access to T.
+        /// This blocks (spins) if some other thread has already locked this mutex.
+        pub fn lock(&self) -> MutexGuard<'_, T> {
+            while self
+                .locked
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
+                core::hint::spin_loop();
+            }
+            // SAFETY: The only way we're here is if we successfully set
+            // 'locked' to true, which implies we must be the only thread here
+            // and thus have exclusive access to 'data'.
+            let data = unsafe { &mut *self.data.get() };
+            MutexGuard {
+                locked: &self.locked,
+                data,
+            }
+        }
+    }
+
+    /// A guard that derefs to &T and &mut T. When it's dropped, the lock is released.
+    pub struct MutexGuard<'a, T> {
+        locked: &'a AtomicBool,
+        data: &'a mut T,
+    }
+
+    impl<'a, T> core::ops::Deref for MutexGuard<'a, T> {
+        type Target = T;
+
+        fn deref(&self) -> &T {
+            self.data
+        }
+    }
+
+    impl<'a, T> core::ops::DerefMut for MutexGuard<'a, T> {
+        fn deref_mut(&mut self) -> &mut T {
+            self.data
+        }
+    }
+
+    impl<'a, T> Drop for MutexGuard<'a, T> {
+        fn drop(&mut self) {
+            // Drop means 'data' is no longer accessible, so we can unlock the mutex.
+            self.locked.store(false, Ordering::Release);
+        }
+    }
+}
+
+#[cfg(not(feature = "std"))]
+use sync::Mutex;
+
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
 use crate::Assertion;
@@ -142,10 +226,7 @@ pub struct ReverseBackwardsDelegate {
     /// The delegate regex to match backwards
     pub(crate) dfa: regex_automata::hybrid::dfa::DFA,
     /// Cache for DFA searches
-    #[cfg(feature = "std")]
     pub(crate) cache: Mutex<regex_automata::hybrid::dfa::Cache>,
-    #[cfg(not(feature = "std"))]
-    pub(crate) cache: core::cell::RefCell<regex_automata::hybrid::dfa::Cache>,
 }
 
 #[cfg(feature = "variable-lookbehinds")]
@@ -155,10 +236,7 @@ impl Clone for ReverseBackwardsDelegate {
             pattern: self.pattern.clone(),
             dfa: self.dfa.clone(),
             // Create a new cache for the clone
-            #[cfg(feature = "std")]
             cache: Mutex::new(self.dfa.create_cache()),
-            #[cfg(not(feature = "std"))]
-            cache: core::cell::RefCell::new(self.dfa.create_cache()),
         }
     }
 }
@@ -794,7 +872,7 @@ pub(crate) fn run(
                     #[cfg(feature = "std")]
                     let mut cache_guard = cache.lock().expect("DFA cache mutex poisoned");
                     #[cfg(not(feature = "std"))]
-                    let mut cache_guard = cache.borrow_mut();
+                    let mut cache_guard = cache.lock();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
 
                     let found_match = matches!(dfa.try_search_rev(&mut cache_guard, &input), Ok(Some(_)));
