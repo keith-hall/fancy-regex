@@ -26,8 +26,12 @@ use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 #[cfg(all(test, feature = "std"))]
 use std::{collections::BTreeMap, sync::RwLock};
-#[cfg(all(feature = "variable-lookbehinds", feature = "std"))]
+#[cfg(feature = "variable-lookbehinds")]
+#[cfg(feature = "std")]
 use std::sync::Mutex;
+#[cfg(feature = "variable-lookbehinds")]
+#[cfg(not(feature = "std"))]
+use spin::Mutex;
 
 use crate::analyze::Info;
 #[cfg(feature = "variable-lookbehinds")]
@@ -472,10 +476,7 @@ impl Compiler {
                         }
                     };
 
-                    #[cfg(feature = "std")]
                     let cache = Mutex::new(dfa.create_cache());
-                    #[cfg(not(feature = "std"))]
-                    let cache = core::cell::RefCell::new(dfa.create_cache());
                     self.b
                         .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
                             dfa,

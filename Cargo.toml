@@ -35,6 +35,11 @@ default-features = false
 version = "0.8"
 default-features = false
 
+[dependencies.spin]
+version = "0.9"
+default-features = false
+features = ["mutex", "spin_mutex"]
+
 [dev-dependencies]
 criterion = "0.5"
 matches = "0.1.10"
