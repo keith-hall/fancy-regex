@@ -158,11 +158,12 @@ pub struct ReverseBackwardsDelegate {
 impl Clone for ReverseBackwardsDelegate {
     fn clone(&self) -> Self {
         let dfa = self.dfa.clone();
-        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa.create_cache());
+        let dfa_for_closure = dfa.clone();
+        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
         Self {
             pattern: self.pattern.clone(),
             cache_pool: Pool::new(create),
-            dfa: self.dfa.clone(),
+            dfa,
         }
     }
 }
