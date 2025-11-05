@@ -1,5 +1,8 @@
 use fancy_regex::{Matches, Regex};
 
+#[cfg(not(feature = "std"))]
+extern crate alloc;
+
 // Helper functions to ensure types implement Send and Sync
 fn assert_send<T: Send>() {}
 fn assert_sync<T: Sync>() {}
@@ -78,6 +81,41 @@ fn test_threading_with_arc() {
     // Collect results from all threads
     for (handle, expected) in handles {
         let (haystack, result) = handle.join().unwrap();
+        assert_eq!(
+            result, expected,
+            "Failed for haystack '{}': expected {}, got {}",
+            haystack, expected, result
+        );
+    }
+}
+
+#[cfg(not(feature = "std"))]
+#[test]
+fn test_arc_without_std() {
+    use alloc::sync::Arc;
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
+
+    // Create a single regex wrapped in Arc (works without std)
+    // Use a simpler pattern that doesn't require variable-lookbehinds feature
+    let re = Arc::new(Regex::new(r"ab+x").unwrap());
+
+    // Test that we can clone the Arc and use it
+    // This demonstrates the pattern that would be used with threads
+    let test_cases = vec![
+        ("abbx", true),
+        ("abbbx", true),
+        ("ax", false),
+        ("x", false),
+        ("abbbbbbx", true),
+    ];
+
+    for (haystack, expected) in test_cases {
+        // Clone the Arc - this is what would be done when moving to a thread
+        let re_clone = Arc::clone(&re);
+        
+        // Use the cloned Arc to match (simulates what a thread would do)
+        let result = re_clone.is_match(haystack).unwrap();
         assert_eq!(
             result, expected,
             "Failed for haystack '{}': expected {}, got {}",
