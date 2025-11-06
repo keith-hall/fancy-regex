@@ -556,6 +556,28 @@ fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool 
     re.find(&s[ix..end]).is_some()
 }
 
+/// Helper function to store capture group positions from inner_slots into state.
+/// This is used by both Delegate and BackwardsDelegate instructions.
+#[inline]
+fn store_capture_groups(
+    state: &mut State,
+    inner_slots: &[Option<NonMaxUsize>],
+    start_group: usize,
+    end_group: usize,
+) {
+    for i in 0..(end_group - start_group) {
+        let slot = (start_group + i) * 2;
+        if let Some(start) = inner_slots[(i + 1) * 2] {
+            let end = inner_slots[(i + 1) * 2 + 1].unwrap();
+            state.save(slot, start.get());
+            state.save(slot + 1, end.get());
+        } else {
+            state.save(slot, usize::MAX);
+            state.save(slot + 1, usize::MAX);
+        }
+    }
+}
+
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(prog, s, pos, OPTION_TRACE, &RegexOptions::default())
@@ -831,17 +853,7 @@ pub(crate) fn run(
                                 
                                 if inner.search_slots(&forward_input, &mut inner_slots).is_some() {
                                     // Store capture group positions
-                                    for i in 0..(end_group - start_group) {
-                                        let slot = (start_group + i) * 2;
-                                        if let Some(start) = inner_slots[(i + 1) * 2] {
-                                            let end = inner_slots[(i + 1) * 2 + 1].unwrap();
-                                            state.save(slot, start.get());
-                                            state.save(slot + 1, end.get());
-                                        } else {
-                                            state.save(slot, usize::MAX);
-                                            state.save(slot + 1, usize::MAX);
-                                        }
-                                    }
+                                    store_capture_groups(&mut state, &inner_slots, start_group, end_group);
                                     // Update ix to the end of the match (start of the forward search result)
                                     ix = match_start;
                                 } else {
@@ -876,17 +888,7 @@ pub(crate) fn run(
                     } else {
                         inner_slots.resize((end_group - start_group + 1) * 2, None);
                         if inner.search_slots(&input, &mut inner_slots).is_some() {
-                            for i in 0..(end_group - start_group) {
-                                let slot = (start_group + i) * 2;
-                                if let Some(start) = inner_slots[(i + 1) * 2] {
-                                    let end = inner_slots[(i + 1) * 2 + 1].unwrap();
-                                    state.save(slot, start.get());
-                                    state.save(slot + 1, end.get());
-                                } else {
-                                    state.save(slot, usize::MAX);
-                                    state.save(slot + 1, usize::MAX);
-                                }
-                            }
+                            store_capture_groups(&mut state, &inner_slots, start_group, end_group);
                             ix = inner_slots[1].unwrap().get();
                         } else {
                             break 'fail;
