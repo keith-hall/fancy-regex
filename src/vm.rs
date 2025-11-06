@@ -854,7 +854,7 @@ pub(crate) fn run(
                                 if inner.search_slots(&forward_input, &mut inner_slots).is_some() {
                                     // Store capture group positions
                                     store_capture_groups(&mut state, &inner_slots, start_group, end_group);
-                                    // Update ix to the end of the match (start of the forward search result)
+                                    // Update ix to the start of the match (where the lookbehind matched)
                                     ix = match_start;
                                 } else {
                                     break 'fail;
