@@ -94,6 +94,15 @@ fn captures_both_inside_and_outside_variable_lookbehind() {
 }
 
 #[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn variable_lookbehind_no_captures_fast_path() {
+    // This should use the fast path (no forward search needed)
+    let captures = captures(r"(?<=ab+)x", "abbbbx");
+    assert_eq!(captures.len(), 1);
+    assert_match(captures.get(0), "x", 5, 6);
+}
+
+#[test]
 fn captures_with_keepout_inside_at_end() {
     let captures = captures(r"\s*(\w+\K)(?=\.)", "foo bar.");
     assert_eq!(captures.len(), 2);
