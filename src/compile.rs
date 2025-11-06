@@ -453,12 +453,15 @@ impl Compiler {
             if inner.const_size {
                 self.b.add(Insn::GoBack(inner.min_size));
                 self.visit(inner, false)
-            } else if !inner.hard && inner.start_group == inner.end_group {
+            } else if !inner.hard {
                 #[cfg(feature = "variable-lookbehinds")]
                 {
                     let mut delegate_builder = DelegateBuilder::new();
                     delegate_builder.push(inner);
                     let pattern = &delegate_builder.re;
+                    let start_group = delegate_builder.start_group.expect("Expected at least one expression");
+                    let end_group = delegate_builder.end_group;
+                    
                     // Use reverse matching for variable-sized lookbehinds without fancy features
                     use regex_automata::nfa::thompson;
                     // Build a reverse DFA for the pattern
@@ -479,11 +482,18 @@ impl Compiler {
                         move || dfa.create_cache()
                     });
                     let cache_pool = Pool::new(create);
+                    
+                    // Build the forward regex for capture group extraction
+                    let forward_regex = compile_inner(&pattern, &self.options)?;
+                    
                     self.b
                         .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
                             dfa,
                             cache_pool,
                             pattern: pattern.to_string(),
+                            inner: forward_regex,
+                            start_group,
+                            end_group,
                         }));
                     Ok(())
                 }
@@ -820,7 +830,7 @@ mod tests {
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
-        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _ }) if pattern == "ab+");
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, inner: _, start_group: _, end_group: _ }) if pattern == "ab+");
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);
