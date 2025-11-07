@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Generate code coverage
-        run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml --engine llvm --run-types Tests Doctests Examples
+        run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml --engine llvm --run-types Tests --run-types Doctests --run-types Examples
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v4
