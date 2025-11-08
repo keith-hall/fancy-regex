@@ -133,6 +133,38 @@ fn variable_size_alt_lookbehind(c: &mut Criterion) {
     });
 }
 
+fn continue_from_previous_match_end_short(c: &mut Criterion) {
+    // Benchmark \G anchor with a short haystack that won't match
+    // This should be fast after the first failure
+    use fancy_regex::Regex;
+    let re = Regex::new(r"\Gfoo").unwrap();
+    let short_input = "bar baz";
+    c.bench_function("continue_from_previous_match_end_short", |b| {
+        b.iter(|| {
+            let matches: Vec<_> = re.find_iter(short_input).collect();
+            assert_eq!(matches.len(), 0);
+        })
+    });
+}
+
+fn continue_from_previous_match_end_long(c: &mut Criterion) {
+    // Benchmark \G anchor with a long haystack that won't match
+    // This currently takes much longer than the short case due to 
+    // checking every position in the haystack
+    use fancy_regex::Regex;
+    let re = Regex::new(r"\Gfoo").unwrap();
+    let mut long_input = String::new();
+    for _ in 0..1000 {
+        long_input.push_str("bar baz ");
+    }
+    c.bench_function("continue_from_previous_match_end_long", |b| {
+        b.iter(|| {
+            let matches: Vec<_> = re.find_iter(&long_input).collect();
+            assert_eq!(matches.len(), 0);
+        })
+    });
+}
+
 #[cfg(feature = "variable-lookbehinds")]
 criterion_group!(
     name = lookbehind_benches;
@@ -158,9 +190,15 @@ criterion_group!(
     config = Criterion::default().sample_size(10);
     targets = run_backtrack_limit,
 );
+criterion_group!(
+    name = continue_from_prev_benches;
+    config = Criterion::default();
+    targets = continue_from_previous_match_end_short,
+    continue_from_previous_match_end_long,
+);
 
 #[cfg(feature = "variable-lookbehinds")]
-criterion_main!(benches, slow_benches, lookbehind_benches);
+criterion_main!(benches, slow_benches, lookbehind_benches, continue_from_prev_benches);
 
 #[cfg(not(feature = "variable-lookbehinds"))]
-criterion_main!(benches, slow_benches);
+criterion_main!(benches, slow_benches, continue_from_prev_benches);
