@@ -2145,4 +2145,43 @@ mod tests {
         assert_eq!(detect_possible_backref("a0a1a2\\"), false);
     }
     */
+
+    #[test]
+    fn test_g_first_instruction_optimization() {
+        // Test that \G at the start with empty match doesn't scan the entire string
+        // This pattern matches empty at position 0, then should fail fast for remaining positions
+        let re = Regex::new(r"\G(foo)?").unwrap();
+        
+        // Short string
+        let short_matches: Vec<_> = re.find_iter("bar baz").map(|m| m.unwrap()).collect();
+        assert_eq!(short_matches.len(), 1);
+        assert_eq!(short_matches[0].start(), 0);
+        assert_eq!(short_matches[0].end(), 0);
+        assert_eq!(short_matches[0].as_str(), "");
+        
+        // Long string - should be just as fast
+        let long_input = "x".repeat(10000);
+        let long_matches: Vec<_> = re.find_iter(&long_input).map(|m| m.unwrap()).collect();
+        assert_eq!(long_matches.len(), 1);
+        assert_eq!(long_matches[0].start(), 0);
+        assert_eq!(long_matches[0].end(), 0);
+    }
+
+    #[test]
+    fn test_g_not_first_no_optimization() {
+        // When \G is not at the first position, optimization shouldn't apply
+        // This pattern should still work normally
+        let re = Regex::new(r"x\G").unwrap();
+        let matches: Vec<_> = re.find_iter("bar baz").map(|m| m.unwrap()).collect();
+        assert_eq!(matches.len(), 0);
+    }
+
+    #[test]
+    fn test_g_with_match() {
+        // Test that \G still works when it actually matches
+        let re = Regex::new(r"\Gfoo").unwrap();
+        let matches: Vec<_> = re.find_iter("foobar").map(|m| m.unwrap()).collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].as_str(), "foo");
+    }
 }
