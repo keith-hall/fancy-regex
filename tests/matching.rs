@@ -230,3 +230,46 @@ fn match_text(re: &str, text: &str) -> bool {
     );
     result.unwrap()
 }
+
+#[test]
+fn test_continue_from_g_optimization() {
+    use fancy_regex::Regex;
+
+    // Test 1: \G at start, should only match at the beginning
+    let re = Regex::new(r"\Gfoo").unwrap();
+    let text = "foobar foobaz";
+    let matches: Vec<_> = re.find_iter(text).map(|m| m.unwrap()).collect();
+    assert_eq!(matches.len(), 1, "Should match only at the start");
+    assert_eq!(matches[0].as_str(), "foo");
+    assert_eq!(matches[0].start(), 0);
+
+    // Test 2: Multiple consecutive matches with \G
+    let re = Regex::new(r"\Gx").unwrap();
+    let text = "xxxyyyxxx";
+    let matches: Vec<_> = re.find_iter(text).map(|m| m.unwrap()).collect();
+    assert_eq!(matches.len(), 3, "Should match first 3 consecutive x's");
+    for (i, m) in matches.iter().enumerate() {
+        assert_eq!(m.as_str(), "x");
+        assert_eq!(m.start(), i);
+    }
+
+    // Test 3: \G with no match at all (early failure optimization)
+    let re = Regex::new(r"\Gfoo").unwrap();
+    let text = "barfoo";
+    let matches: Vec<_> = re.find_iter(text).collect();
+    assert_eq!(matches.len(), 0, "Should not match when first char differs");
+
+    // Test 4: \G in concat at start
+    let re = Regex::new(r"\Gfoo\d+").unwrap();
+    let text = "foo123 bar foo456";
+    let matches: Vec<_> = re.find_iter(text).map(|m| m.unwrap()).collect();
+    assert_eq!(matches.len(), 1, "Should match only at the start");
+    assert_eq!(matches[0].as_str(), "foo123");
+    assert_eq!(matches[0].start(), 0);
+
+    // Test 5: Empty string
+    let re = Regex::new(r"\Gfoo").unwrap();
+    let text = "";
+    let matches: Vec<_> = re.find_iter(text).collect();
+    assert_eq!(matches.len(), 0);
+}

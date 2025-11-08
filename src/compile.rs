@@ -101,6 +101,8 @@ impl VMBuilder {
 struct Compiler {
     b: VMBuilder,
     options: RegexOptions,
+    /// Whether the next ContinueFromPreviousMatchEnd is at the start of the pattern
+    continue_from_g_at_start: bool,
 }
 
 impl Compiler {
@@ -108,6 +110,7 @@ impl Compiler {
         Compiler {
             b: VMBuilder::new(max_group),
             options: Default::default(),
+            continue_from_g_at_start: false,
         }
     }
 
@@ -177,7 +180,9 @@ impl Compiler {
                 self.b.add(Insn::Save(0));
             }
             Expr::ContinueFromPreviousMatchEnd => {
-                self.b.add(Insn::ContinueFromPreviousMatchEnd);
+                let at_start = self.continue_from_g_at_start;
+                self.continue_from_g_at_start = false; // Reset after use
+                self.b.add(Insn::ContinueFromPreviousMatchEnd { at_start });
             }
             Expr::Conditional { .. } => {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
@@ -575,6 +580,17 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group);
+
+    // Check if the pattern starts with \G (ContinueFromPreviousMatchEnd)
+    // This is true if the root expression is \G, or if it's a Concat and the first child is \G
+    c.continue_from_g_at_start = match info.expr {
+        Expr::ContinueFromPreviousMatchEnd => true,
+        Expr::Concat(_) if !info.children.is_empty() => {
+            matches!(info.children[0].expr, Expr::ContinueFromPreviousMatchEnd)
+        }
+        _ => false,
+    };
+
     if !anchored {
         // add instructions as if \O*? was used at the start of the expression
         // so that we bump the haystack index by one when failing to match at the current position
