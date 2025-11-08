@@ -269,8 +269,13 @@ pub enum Insn {
     EndAtomic,
     /// Delegate matching to the regex crate
     Delegate(Delegate),
-    /// Anchor to match at the position where the previous match ended
-    ContinueFromPreviousMatchEnd,
+    /// Anchor to match at the position where the previous match ended.
+    ContinueFromPreviousMatchEnd {
+        /// Whether this is the first instruction in the pattern (after any non-anchored search
+        /// prefix). When true, we can optimize by returning early instead of backtracking when
+        /// the match fails with OPTION_SKIPPED_EMPTY_MATCH set.
+        is_first: bool,
+    },
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
     #[cfg(feature = "variable-lookbehinds")]
@@ -847,8 +852,17 @@ pub(crate) fn run(
                         }
                     }
                 }
-                Insn::ContinueFromPreviousMatchEnd => {
+                Insn::ContinueFromPreviousMatchEnd { is_first } => {
                     if ix > pos || option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {
+                        // If this is the first instruction and we skipped an empty match,
+                        // we can return early because the pattern will never match again.
+                        // The OPTION_SKIPPED_EMPTY_MATCH flag is set when iterating over
+                        // matches and we've moved past a position where we already had a match.
+                        // Since \G requires matching at the exact previous match end position,
+                        // and we've moved past that, it will fail at every subsequent position.
+                        if is_first && option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {
+                            return Ok(None);
+                        }
                         break 'fail;
                     }
                 }

@@ -101,6 +101,8 @@ impl VMBuilder {
 struct Compiler {
     b: VMBuilder,
     options: RegexOptions,
+    /// The PC where the first user instruction should be (after prefix and Save(0))
+    expected_first_pc: usize,
 }
 
 impl Compiler {
@@ -108,6 +110,7 @@ impl Compiler {
         Compiler {
             b: VMBuilder::new(max_group),
             options: Default::default(),
+            expected_first_pc: 0,
         }
     }
 
@@ -177,7 +180,8 @@ impl Compiler {
                 self.b.add(Insn::Save(0));
             }
             Expr::ContinueFromPreviousMatchEnd => {
-                self.b.add(Insn::ContinueFromPreviousMatchEnd);
+                let is_first = self.b.pc() == self.expected_first_pc;
+                self.b.add(Insn::ContinueFromPreviousMatchEnd { is_first });
             }
             Expr::Conditional { .. } => {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
@@ -575,7 +579,7 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group);
-    if !anchored {
+    let prefix_pc = if !anchored {
         // add instructions as if \O*? was used at the start of the expression
         // so that we bump the haystack index by one when failing to match at the current position
         let current_pc = c.b.pc();
@@ -583,11 +587,21 @@ pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
         c.b.add(Insn::Split(current_pc + 3, current_pc + 1));
         c.b.add(Insn::Any);
         c.b.add(Insn::Jmp(current_pc));
-    }
-    if info.start_group == 1 {
+        3
+    } else {
+        0
+    };
+    let expected_first_pc = if info.start_group == 1 {
         // add implicit capture group 0 begin
         c.b.add(Insn::Save(0));
-    }
+        prefix_pc + 1
+    } else {
+        prefix_pc
+    };
+    
+    // Store the PC where the first user instruction should be
+    c.expected_first_pc = expected_first_pc;
+    
     c.visit(info, false)?;
     if info.start_group == 1 {
         // add implicit capture group 0 end

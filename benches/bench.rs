@@ -134,25 +134,26 @@ fn variable_size_alt_lookbehind(c: &mut Criterion) {
 }
 
 fn continue_from_previous_match_end_short(c: &mut Criterion) {
-    // Benchmark \G anchor with a short haystack that won't match
-    // This should be fast after the first failure
+    // Benchmark \G anchor with a short haystack
+    // Pattern has an empty match at position 0, then \G fails at subsequent positions
     use fancy_regex::Regex;
-    let re = Regex::new(r"\Gfoo").unwrap();
+    let re = Regex::new(r"\G(foo)?").unwrap(); // This can match empty at position 0
     let short_input = "bar baz";
     c.bench_function("continue_from_previous_match_end_short", |b| {
         b.iter(|| {
             let matches: Vec<_> = re.find_iter(short_input).collect();
-            assert_eq!(matches.len(), 0);
+            // Should have 1 empty match at position 0
+            assert_eq!(matches.len(), 1);
         })
     });
 }
 
 fn continue_from_previous_match_end_long(c: &mut Criterion) {
-    // Benchmark \G anchor with a long haystack that won't match
-    // This currently takes much longer than the short case due to 
-    // checking every position in the haystack
+    // Benchmark \G anchor with a long haystack
+    // Pattern has an empty match at position 0, then \G fails at subsequent positions
+    // With the optimization, this should be fast (only try once more after empty match)
     use fancy_regex::Regex;
-    let re = Regex::new(r"\Gfoo").unwrap();
+    let re = Regex::new(r"\G(foo)?").unwrap(); // This can match empty at position 0
     let mut long_input = String::new();
     for _ in 0..1000 {
         long_input.push_str("bar baz ");
@@ -160,7 +161,8 @@ fn continue_from_previous_match_end_long(c: &mut Criterion) {
     c.bench_function("continue_from_previous_match_end_long", |b| {
         b.iter(|| {
             let matches: Vec<_> = re.find_iter(&long_input).collect();
-            assert_eq!(matches.len(), 0);
+            // Should have 1 empty match at position 0
+            assert_eq!(matches.len(), 1);
         })
     });
 }
