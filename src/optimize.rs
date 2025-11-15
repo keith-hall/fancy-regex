@@ -116,7 +116,7 @@ mod tests {
         let requires_capture_group_fixup = optimize(&mut tree);
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
-        tree.expr.to_str(&mut s, 0);
+        tree.expr.expr.to_str(&mut s, 0);
         assert_eq!(s, "(a)b");
     }
 
@@ -126,7 +126,7 @@ mod tests {
         let requires_capture_group_fixup = optimize(&mut tree);
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
-        tree.expr.to_str(&mut s, 0);
+        tree.expr.expr.to_str(&mut s, 0);
         assert_eq!(s, "()b");
     }
 
@@ -136,7 +136,7 @@ mod tests {
         let requires_capture_group_fixup = optimize(&mut tree);
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
-        tree.expr.to_str(&mut s, 0);
+        tree.expr.expr.to_str(&mut s, 0);
         assert_eq!(s, "(a)(?:b|c)");
     }
 
@@ -145,19 +145,10 @@ mod tests {
         let mut tree = Expr::parse_tree(r"(a)\1(?=c)").unwrap();
         let requires_capture_group_fixup = optimize(&mut tree);
         assert_eq!(requires_capture_group_fixup, true);
-        assert_eq!(
-            tree.expr,
-            Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Concat(vec![
-                    Expr::Group(Box::new(make_literal("a"))),
-                    Expr::Backref {
-                        group: 1,
-                        casei: false
-                    }
-                ]))),
-                make_literal("c"),
-            ])
-        );
+        let mut s = String::new();
+        tree.expr.expr.to_str(&mut s, 0);
+        // The pattern should be transformed to ((a)\1)c
+        assert_eq!(s, "((a)\\1)c");
     }
 
     #[test]

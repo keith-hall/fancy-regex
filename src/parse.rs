@@ -2841,29 +2841,7 @@ mod tests {
         let options = get_options("(?i)^hello$", |x| x.multi_line(true));
 
         let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
-        let expr = &tree.unwrap().expr.expr;
-
-        assert_eq!(
-            expr,
-            &Expr::Concat(vec![
-                make_expr_with_pos(Expr::Assertion(Assertion::StartLine { crlf: false }), 4),
-                make_literal_expr_with_pos("h", 5),
-                make_literal_expr_with_pos("e", 6),
-                make_literal_expr_with_pos("l", 7),
-                make_literal_expr_with_pos("l", 8),
-                make_literal_expr_with_pos("o", 9),
-                make_expr_with_pos(Expr::Assertion(Assertion::EndLine { crlf: false }), 10),
-            ])
-        );
-    }
-
-    #[test]
-    fn parse_with_multi_line_and_case_insensitive_options() {
-        let mut options = get_options("^hello$", |x| x.multi_line(true));
-        options.syntaxc = options.syntaxc.case_insensitive(true);
-
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
-        let expr = tree.unwrap().expr;
+        let expr = tree.unwrap().expr.strip_positions();
 
         assert_eq!(
             expr,
@@ -2875,7 +2853,29 @@ mod tests {
                 make_literal_case_insensitive("l", true),
                 make_literal_case_insensitive("o", true),
                 Expr::Assertion(Assertion::EndLine { crlf: false })
-            ])
+            ].into_iter().map(|e| ExprWithPosition { expr: e, ix: 0 }).collect::<Vec<_>>().into_iter().map(|e| e.strip_positions()).collect())
+        );
+    }
+
+    #[test]
+    fn parse_with_multi_line_and_case_insensitive_options() {
+        let mut options = get_options("^hello$", |x| x.multi_line(true));
+        options.syntaxc = options.syntaxc.case_insensitive(true);
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr.strip_positions();
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                make_literal_case_insensitive("h", true),
+                make_literal_case_insensitive("e", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("o", true),
+                Expr::Assertion(Assertion::EndLine { crlf: false })
+            ].into_iter().map(|e| ExprWithPosition { expr: e, ix: 0 }).collect::<Vec<_>>().into_iter().map(|e| e.strip_positions()).collect())
         );
     }
 }

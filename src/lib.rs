@@ -1590,6 +1590,53 @@ pub struct ExprWithPosition {
     pub ix: usize,
 }
 
+impl ExprWithPosition {
+    /// Strip position information from this expression and all its children.
+    /// This is primarily useful for testing where position information is not relevant.
+    #[cfg(test)]
+    pub fn strip_positions(self) -> Expr {
+        strip_positions_from_expr(self.expr)
+    }
+}
+
+#[cfg(test)]
+fn strip_positions_from_expr(expr: Expr) -> Expr {
+    match expr {
+        Expr::Concat(children) => {
+            Expr::Concat(children.into_iter().map(|c| c.strip_positions()).collect())
+        }
+        Expr::Alt(children) => {
+            Expr::Alt(children.into_iter().map(|c| c.strip_positions()).collect())
+        }
+        Expr::Group(child) => {
+            Expr::Group(Box::new(child.strip_positions()))
+        }
+        Expr::LookAround(child, la) => {
+            Expr::LookAround(Box::new(child.strip_positions()), la)
+        }
+        Expr::Repeat { child, lo, hi, greedy } => {
+            Expr::Repeat {
+                child: Box::new(child.strip_positions()),
+                lo,
+                hi,
+                greedy,
+            }
+        }
+        Expr::AtomicGroup(child) => {
+            Expr::AtomicGroup(Box::new(child.strip_positions()))
+        }
+        Expr::Conditional { condition, true_branch, false_branch } => {
+            Expr::Conditional {
+                condition: Box::new(condition.strip_positions()),
+                true_branch: Box::new(true_branch.strip_positions()),
+                false_branch: Box::new(false_branch.strip_positions()),
+            }
+        }
+        // For all other variants, just return as-is
+        other => other,
+    }
+}
+
 /// Regular expression AST. This is public for now but may change.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
