@@ -1582,6 +1582,8 @@ impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
 // TODO: might be nice to implement ExactSizeIterator etc for SubCaptures
 
 /// Wrapper struct that holds an Expr along with its starting position in the original regex pattern.
+/// This enables tracking where each expression node originated in the source pattern, which is
+/// useful for error reporting, debugging, and analysis.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ExprWithPosition {
     /// The expression node

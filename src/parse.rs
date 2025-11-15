@@ -38,6 +38,9 @@ pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
 #[cfg(feature = "std")]
 pub(crate) type NamedGroups = std::collections::HashMap<String, usize>;
 
+/// Represents a parsed regex expression tree with metadata.
+/// The expr field now contains ExprWithPosition instead of raw Expr,
+/// enabling position tracking throughout the tree.
 #[derive(Debug, Clone)]
 pub struct ExprTree {
     pub expr: ExprWithPosition,
