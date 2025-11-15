@@ -1581,37 +1581,93 @@ impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
 
 // TODO: might be nice to implement ExactSizeIterator etc for SubCaptures
 
+/// Macro to conditionally include position field in Expr variants
+#[cfg(feature = "parse_positions")]
+macro_rules! with_pos {
+    () => {
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    };
+}
+
+#[cfg(not(feature = "parse_positions"))]
+macro_rules! with_pos {
+    () => {};
+}
+
 /// Regular expression AST. This is public for now but may change.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
     /// An empty expression, e.g. the last branch in `(a|b|)`
-    Empty,
+    Empty {
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// Any character, regex `.`
     Any {
         /// Whether it also matches newlines or not
         newline: bool,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
     },
     /// An assertion
-    Assertion(Assertion),
+    Assertion {
+        /// The assertion type
+        assertion: Assertion,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// The string as a literal, e.g. `a`
     Literal {
         /// The string to match
         val: String,
         /// Whether match is case-insensitive or not
         casei: bool,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
     },
     /// Concatenation of multiple expressions, must match in order, e.g. `a.` is a concatenation of
     /// the literal `a` and `.` for any character
-    Concat(Vec<Expr>),
+    Concat {
+        /// The expressions to concatenate
+        exprs: Vec<Expr>,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// Alternative of multiple expressions, one of them must match, e.g. `a|b` is an alternative
     /// where either the literal `a` or `b` must match
-    Alt(Vec<Expr>),
+    Alt {
+        /// The alternative expressions
+        exprs: Vec<Expr>,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// Capturing group of expression, e.g. `(a.)` matches `a` and any character and "captures"
     /// (remembers) the match
-    Group(Box<Expr>),
+    Group {
+        /// The grouped expression
+        expr: Box<Expr>,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// Look-around (e.g. positive/negative look-ahead or look-behind) with an expression, e.g.
     /// `(?=a)` means the next character must be `a` (but the match is not consumed)
-    LookAround(Box<Expr>, LookAround),
+    LookAround {
+        /// The expression to match
+        expr: Box<Expr>,
+        /// The type of look-around
+        lookaround: LookAround,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// Repeat of an expression, e.g. `a*` or `a+` or `a{1,3}`
     Repeat {
         /// The expression that is being repeated
@@ -1623,6 +1679,9 @@ pub enum Expr {
         /// Greedy means as much as possible is matched, e.g. `.*b` would match all of `abab`.
         /// Non-greedy means as little as possible, e.g. `.*?b` would match only `ab` in `abab`.
         greedy: bool,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
     },
     /// Delegate a regex to the regex crate. This is used as a simplification so that we don't have
     /// to represent all the expressions in the AST, e.g. character classes.
@@ -1633,6 +1692,9 @@ pub enum Expr {
         size: usize, // TODO: move into analysis result
         /// Whether the matching is case-insensitive or not
         casei: bool,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
     },
     /// Back reference to a capture group, e.g. `\1` in `(abc|def)\1` references the captured group
     /// and the whole regex matches either `abcabc` or `defdef`.
@@ -1641,6 +1703,9 @@ pub enum Expr {
         group: usize,
         /// Whether the matching is case-insensitive or not
         casei: bool,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
     },
     /// Back reference to a capture group at the given specified relative recursion level.
     BackrefWithRelativeRecursionLevel {
@@ -1650,16 +1715,39 @@ pub enum Expr {
         relative_level: isize,
         /// Whether the matching is case-insensitive or not
         casei: bool,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
     },
     /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
     /// never backtrack and try `a`, even if matching fails after the atomic group.
-    AtomicGroup(Box<Expr>),
+    AtomicGroup {
+        /// The grouped expression
+        expr: Box<Expr>,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// Keep matched text so far out of overall match
-    KeepOut,
+    KeepOut {
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// Anchor to match at the position where the previous match ended
-    ContinueFromPreviousMatchEnd,
+    ContinueFromPreviousMatchEnd {
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// Conditional expression based on whether the numbered capture group matched or not
-    BackrefExistsCondition(usize),
+    BackrefExistsCondition {
+        /// The capture group number
+        group: usize,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// If/Then/Else Condition. If there is no Then/Else, these will just be empty expressions.
     Conditional {
         /// The conditional expression to evaluate
@@ -1668,16 +1756,63 @@ pub enum Expr {
         true_branch: Box<Expr>,
         /// What to execute if the condition is false
         false_branch: Box<Expr>,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
     },
     /// Subroutine call to the specified group number
-    SubroutineCall(usize),
+    SubroutineCall {
+        /// The group number to call
+        group: usize,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
+    },
     /// Unresolved subroutine call to the specified group name
     UnresolvedNamedSubroutineCall {
         /// The capture group name
         name: String,
         /// The position in the original regex pattern where the subroutine call is made
         ix: usize,
+        #[cfg(feature = "parse_positions")]
+        /// The starting position of this expression in the source regex pattern
+        start_ix: usize,
     },
+}
+
+/// Helper macro for getting the position from an Expr
+#[cfg(feature = "parse_positions")]
+macro_rules! get_pos {
+    ($expr:expr) => {
+        match $expr {
+            Expr::Empty {} {} { start_ix } => *start_ix,
+            Expr::Any { start_ix, .. } => *start_ix,
+            Expr::Assertion { start_ix, .. } => *start_ix,
+            Expr::Literal { start_ix, .. } => *start_ix,
+            Expr::Concat { start_ix, .. } => *start_ix,
+            Expr::Alt { start_ix, .. } => *start_ix,
+            Expr::Group { start_ix, .. } => *start_ix,
+            Expr::LookAround { start_ix, .. } => *start_ix,
+            Expr::Repeat { start_ix, .. } => *start_ix,
+            Expr::Delegate { start_ix, .. } => *start_ix,
+            Expr::Backref { start_ix, .. } => *start_ix,
+            Expr::BackrefWithRelativeRecursionLevel { start_ix, .. } => *start_ix,
+            Expr::AtomicGroup { start_ix, .. } => *start_ix,
+            Expr::KeepOut {} {} { start_ix } => *start_ix,
+            Expr::ContinueFromPreviousMatchEnd {} {} { start_ix } => *start_ix,
+            Expr::BackrefExistsCondition { start_ix, .. } => *start_ix,
+            Expr::Conditional { start_ix, .. } => *start_ix,
+            Expr::SubroutineCall { start_ix, .. } => *start_ix,
+            Expr::UnresolvedNamedSubroutineCall { start_ix, .. } => *start_ix,
+        }
+    };
+}
+
+#[cfg(not(feature = "parse_positions"))]
+macro_rules! get_pos {
+    ($expr:expr) => {
+        0
+    };
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -1814,7 +1949,7 @@ impl Expr {
     /// Panics for expressions that are hard, i.e. can not be handled by the regex crate.
     pub fn to_str(&self, buf: &mut String, precedence: u8) {
         match *self {
-            Expr::Empty => (),
+            Expr::Empty {} {} => (),
             Expr::Any { newline } => buf.push_str(if newline { "(?s:.)" } else { "." }),
             Expr::Literal { ref val, casei } => {
                 if casei {
@@ -1825,13 +1960,13 @@ impl Expr {
                     buf.push(')');
                 }
             }
-            Expr::Assertion(Assertion::StartText) => buf.push('^'),
-            Expr::Assertion(Assertion::EndText) => buf.push('$'),
-            Expr::Assertion(Assertion::StartLine { crlf: false }) => buf.push_str("(?m:^)"),
-            Expr::Assertion(Assertion::EndLine { crlf: false }) => buf.push_str("(?m:$)"),
-            Expr::Assertion(Assertion::StartLine { crlf: true }) => buf.push_str("(?Rm:^)"),
-            Expr::Assertion(Assertion::EndLine { crlf: true }) => buf.push_str("(?Rm:$)"),
-            Expr::Concat(ref children) => {
+            Expr::Assertion { assertion: Assertion::StartText } => buf.push('^'),
+            Expr::Assertion { assertion: Assertion::EndText } => buf.push('$'),
+            Expr::Assertion { assertion: Assertion::StartLine { crlf: false } } => buf.push_str("(?m:^)"),
+            Expr::Assertion { assertion: Assertion::EndLine { crlf: false } } => buf.push_str("(?m:$)"),
+            Expr::Assertion { assertion: Assertion::StartLine { crlf: true } } => buf.push_str("(?Rm:^)"),
+            Expr::Assertion { assertion: Assertion::EndLine { crlf: true } } => buf.push_str("(?Rm:$)"),
+            Expr::Concat { exprs: ref children } => {
                 if precedence > 1 {
                     buf.push_str("(?:");
                 }
@@ -1842,7 +1977,7 @@ impl Expr {
                     buf.push(')')
                 }
             }
-            Expr::Alt(ref children) => {
+            Expr::Alt { exprs: ref children } => {
                 if precedence > 0 {
                     buf.push_str("(?:");
                 }
@@ -1856,7 +1991,7 @@ impl Expr {
                     buf.push(')');
                 }
             }
-            Expr::Group(ref child) => {
+            Expr::Group { expr: ref child } => {
                 buf.push('(');
                 child.to_str(buf, 0);
                 buf.push(')');
@@ -2010,17 +2145,17 @@ mod tests {
 
     #[test]
     fn to_str_concat_alt() {
-        let e = Expr::Concat(vec![
-            Expr::Alt(vec![make_literal("a"), make_literal("b")]),
+        let e = Expr::Concat { exprs: vec![
+            Expr::Alt { exprs: vec![make_literal("a"), make_literal("b")] },
             make_literal("c"),
-        ]);
+        ] };
         assert_eq!(to_str(e), "(?:a|b)c");
     }
 
     #[test]
     fn to_str_rep_concat() {
         let e = Expr::Repeat {
-            child: Box::new(Expr::Concat(vec![make_literal("a"), make_literal("b")])),
+            child: Box::new(Expr::Concat { exprs: vec![make_literal("a"), make_literal("b")] }),
             lo: 2,
             hi: 3,
             greedy: true,

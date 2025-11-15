@@ -47,9 +47,9 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
     // as `(a(?=b))`
     // to `(a)b`
 
-    if let Expr::Concat(ref mut root_concat_children) = tree.expr {
+    if let Expr::Concat { exprs: ref mut root_concat_children } = tree.expr {
         // we get the last child if it is a positive lookahead
-        if let Some(Expr::LookAround(_, LookAround::LookAhead)) = root_concat_children.last() {
+        if let Some(Expr::LookAround { expr: _, lookaround: LookAround::LookAhead }) = root_concat_children.last() {
             // then pop the lookahead
             let lookahead_expr = root_concat_children
                 .pop()
@@ -58,22 +58,22 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
             let group0_children = mem::take(root_concat_children);
 
             // extract the inner expression from the lookahead
-            if let Expr::LookAround(inner, LookAround::LookAhead) = lookahead_expr {
-                let group0 = Expr::Group(Box::new(Expr::Concat(group0_children)));
+            if let Expr::LookAround { expr: inner, lookaround: LookAround::LookAhead } = lookahead_expr {
+                let group0 = Expr::Group { expr: Box::new(Expr::Concat { exprs: group0_children }) };
                 // compose new Concat: [Group0, lookahead inner expr]
-                let new_concat = Expr::Concat(vec![group0, *inner]);
+                let new_concat = Expr::Concat { exprs: vec![group0, *inner] };
                 tree.expr = new_concat;
                 return true;
             } else {
                 unreachable!("already checked it is a lookahead");
             }
         }
-    } else if let Expr::LookAround(ref mut inner, LookAround::LookAhead) = &mut tree.expr {
-        let group0 = Expr::Group(Box::new(Expr::Empty));
-        let mut swap = Expr::Empty;
+    } else if let Expr::LookAround { expr: ref mut inner, lookaround: LookAround::LookAhead } = &mut tree.expr {
+        let group0 = Expr::Group { expr: Box::new(Expr::Empty {} {}) };
+        let mut swap = Expr::Empty {} {};
         mem::swap(&mut swap, inner);
         // compose new Concat: [Group0, lookahead inner expr]
-        tree.expr = Expr::Concat(vec![group0, swap]);
+        tree.expr = Expr::Concat { exprs: vec![group0, swap] };
         return true;
     }
     false
@@ -125,16 +125,16 @@ mod tests {
         assert_eq!(requires_capture_group_fixup, true);
         assert_eq!(
             tree.expr,
-            Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Concat(vec![
-                    Expr::Group(Box::new(make_literal("a"))),
+            Expr::Concat { exprs: vec![
+                Expr::Group { expr: Box::new(Expr::Concat { exprs: vec![
+                    Expr::Group { expr: Box::new(make_literal("a")) },
                     Expr::Backref {
                         group: 1,
                         casei: false
                     }
-                ]))),
+                ] }) },
                 make_literal("c"),
-            ])
+            ] }
         );
     }
 
