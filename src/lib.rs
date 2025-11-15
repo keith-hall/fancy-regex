@@ -800,7 +800,7 @@ impl Regex {
             // we do our own to_str because escapes are different
             // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
             let mut re_cooked = String::new();
-            tree.expr.to_str(&mut re_cooked, 0);
+            tree.expr.expr.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked, &options)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
@@ -1581,6 +1581,15 @@ impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
 
 // TODO: might be nice to implement ExactSizeIterator etc for SubCaptures
 
+/// Wrapper struct that holds an Expr along with its starting position in the original regex pattern.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct ExprWithPosition {
+    /// The expression node
+    pub expr: Expr,
+    /// The starting position (index) of this expression in the original regex pattern
+    pub ix: usize,
+}
+
 /// Regular expression AST. This is public for now but may change.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
@@ -1602,20 +1611,20 @@ pub enum Expr {
     },
     /// Concatenation of multiple expressions, must match in order, e.g. `a.` is a concatenation of
     /// the literal `a` and `.` for any character
-    Concat(Vec<Expr>),
+    Concat(Vec<ExprWithPosition>),
     /// Alternative of multiple expressions, one of them must match, e.g. `a|b` is an alternative
     /// where either the literal `a` or `b` must match
-    Alt(Vec<Expr>),
+    Alt(Vec<ExprWithPosition>),
     /// Capturing group of expression, e.g. `(a.)` matches `a` and any character and "captures"
     /// (remembers) the match
-    Group(Box<Expr>),
+    Group(Box<ExprWithPosition>),
     /// Look-around (e.g. positive/negative look-ahead or look-behind) with an expression, e.g.
     /// `(?=a)` means the next character must be `a` (but the match is not consumed)
-    LookAround(Box<Expr>, LookAround),
+    LookAround(Box<ExprWithPosition>, LookAround),
     /// Repeat of an expression, e.g. `a*` or `a+` or `a{1,3}`
     Repeat {
         /// The expression that is being repeated
-        child: Box<Expr>,
+        child: Box<ExprWithPosition>,
         /// The minimum number of repetitions
         lo: usize,
         /// The maximum number of repetitions (or `usize::MAX`)
@@ -1653,7 +1662,7 @@ pub enum Expr {
     },
     /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
     /// never backtrack and try `a`, even if matching fails after the atomic group.
-    AtomicGroup(Box<Expr>),
+    AtomicGroup(Box<ExprWithPosition>),
     /// Keep matched text so far out of overall match
     KeepOut,
     /// Anchor to match at the position where the previous match ended
@@ -1663,11 +1672,11 @@ pub enum Expr {
     /// If/Then/Else Condition. If there is no Then/Else, these will just be empty expressions.
     Conditional {
         /// The conditional expression to evaluate
-        condition: Box<Expr>,
+        condition: Box<ExprWithPosition>,
         /// What to execute if the condition is true
-        true_branch: Box<Expr>,
+        true_branch: Box<ExprWithPosition>,
         /// What to execute if the condition is false
-        false_branch: Box<Expr>,
+        false_branch: Box<ExprWithPosition>,
     },
     /// Subroutine call to the specified group number
     SubroutineCall(usize),
@@ -1836,7 +1845,7 @@ impl Expr {
                     buf.push_str("(?:");
                 }
                 for child in children {
-                    child.to_str(buf, 2);
+                    child.expr.to_str(buf, 2);
                 }
                 if precedence > 1 {
                     buf.push(')')
@@ -1850,7 +1859,7 @@ impl Expr {
                     if i != 0 {
                         buf.push('|');
                     }
-                    child.to_str(buf, 1);
+                    child.expr.to_str(buf, 1);
                 }
                 if precedence > 0 {
                     buf.push(')');
@@ -1858,7 +1867,7 @@ impl Expr {
             }
             Expr::Group(ref child) => {
                 buf.push('(');
-                child.to_str(buf, 0);
+                child.expr.to_str(buf, 0);
                 buf.push(')');
             }
             Expr::Repeat {
@@ -1870,7 +1879,7 @@ impl Expr {
                 if precedence > 2 {
                     buf.push_str("(?:");
                 }
-                child.to_str(buf, 3);
+                child.expr.to_str(buf, 3);
                 match (lo, hi) {
                     (0, 1) => buf.push('?'),
                     (0, usize::MAX) => buf.push('*'),

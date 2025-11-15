@@ -28,7 +28,7 @@ use bit_set::BitSet;
 
 use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
-use crate::{CompileError, Error, Expr, Result};
+use crate::{CompileError, Error, Expr, ExprWithPosition, Result};
 
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as Map;
@@ -43,6 +43,7 @@ pub struct Info<'a> {
     pub(crate) const_size: bool,
     pub(crate) hard: bool,
     pub(crate) expr: &'a Expr,
+    pub(crate) ix: usize,
     pub(crate) children: Vec<Info<'a>>,
 }
 
@@ -83,7 +84,9 @@ struct Analyzer<'a> {
 }
 
 impl<'a> Analyzer<'a> {
-    fn visit(&mut self, expr: &'a Expr) -> Result<Info<'a>> {
+    fn visit(&mut self, expr_with_pos: &'a ExprWithPosition) -> Result<Info<'a>> {
+        let expr = &expr_with_pos.expr;
+        let ix = expr_with_pos.ix;
         let start_group = self.group_ix;
         let mut children = Vec::new();
         let mut min_size = 0;
@@ -247,6 +250,7 @@ impl<'a> Analyzer<'a> {
 
         Ok(Info {
             expr,
+            ix,
             children,
             start_group,
             end_group: self.group_ix,
@@ -296,11 +300,11 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
 /// Determine if the expression will always only ever match at position 0.
 /// Note that false negatives are possible - it can return false even if it could be anchored.
 /// This should therefore only be treated as an optimization.
-pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
+pub fn can_compile_as_anchored(root_expr: &ExprWithPosition) -> bool {
     use crate::Assertion;
 
-    match root_expr {
-        Expr::Concat(ref children) => match children[0] {
+    match &root_expr.expr {
+        Expr::Concat(ref children) => match &children[0].expr {
             Expr::Assertion(ref assertion) => *assertion == Assertion::StartText,
             _ => false,
         },

@@ -22,6 +22,7 @@
 
 use crate::parse::ExprTree;
 use crate::Expr;
+use crate::ExprWithPosition;
 use crate::LookAround;
 
 use alloc::boxed::Box;
@@ -47,33 +48,54 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
     // as `(a(?=b))`
     // to `(a)b`
 
-    if let Expr::Concat(ref mut root_concat_children) = tree.expr {
+    if let Expr::Concat(ref mut root_concat_children) = tree.expr.expr {
         // we get the last child if it is a positive lookahead
-        if let Some(Expr::LookAround(_, LookAround::LookAhead)) = root_concat_children.last() {
-            // then pop the lookahead
-            let lookahead_expr = root_concat_children
-                .pop()
-                .expect("lookaround should be popped");
-            // take the rest of the children from the original Concat
-            let group0_children = mem::take(root_concat_children);
+        if let Some(expr_with_pos) = root_concat_children.last() {
+            if let Expr::LookAround(_, LookAround::LookAhead) = expr_with_pos.expr {
+                // then pop the lookahead
+                let lookahead_expr = root_concat_children
+                    .pop()
+                    .expect("lookaround should be popped");
+                // take the rest of the children from the original Concat
+                let group0_children = mem::take(root_concat_children);
+                let group0_ix = if group0_children.is_empty() {
+                    tree.expr.ix
+                } else {
+                    group0_children[0].ix
+                };
 
-            // extract the inner expression from the lookahead
-            if let Expr::LookAround(inner, LookAround::LookAhead) = lookahead_expr {
-                let group0 = Expr::Group(Box::new(Expr::Concat(group0_children)));
-                // compose new Concat: [Group0, lookahead inner expr]
-                let new_concat = Expr::Concat(vec![group0, *inner]);
-                tree.expr = new_concat;
-                return true;
-            } else {
-                unreachable!("already checked it is a lookahead");
+                // extract the inner expression from the lookahead
+                if let Expr::LookAround(inner, LookAround::LookAhead) = lookahead_expr.expr {
+                    let group0 = ExprWithPosition {
+                        expr: Expr::Group(Box::new(ExprWithPosition {
+                            expr: Expr::Concat(group0_children),
+                            ix: group0_ix,
+                        })),
+                        ix: group0_ix,
+                    };
+                    // compose new Concat: [Group0, lookahead inner expr]
+                    tree.expr.expr = Expr::Concat(vec![group0, *inner]);
+                    return true;
+                } else {
+                    unreachable!("already checked it is a lookahead");
+                }
             }
         }
-    } else if let Expr::LookAround(ref mut inner, LookAround::LookAhead) = &mut tree.expr {
-        let group0 = Expr::Group(Box::new(Expr::Empty));
-        let mut swap = Expr::Empty;
+    } else if let Expr::LookAround(ref mut inner, LookAround::LookAhead) = &mut tree.expr.expr {
+        let group0 = ExprWithPosition {
+            expr: Expr::Group(Box::new(ExprWithPosition {
+                expr: Expr::Empty,
+                ix: tree.expr.ix,
+            })),
+            ix: tree.expr.ix,
+        };
+        let mut swap = ExprWithPosition {
+            expr: Expr::Empty,
+            ix: inner.ix,
+        };
         mem::swap(&mut swap, inner);
         // compose new Concat: [Group0, lookahead inner expr]
-        tree.expr = Expr::Concat(vec![group0, swap]);
+        tree.expr.expr = Expr::Concat(vec![group0, swap]);
         return true;
     }
     false
