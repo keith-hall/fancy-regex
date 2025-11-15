@@ -123,7 +123,7 @@ impl<'a> Parser<'a> {
                 children.push(child);
                 ix = self.optional_whitespace(next)?;
             }
-            return Ok((ix, Expr::Alt(children)));
+            return Ok((ix, Expr::Alt { exprs: children }));
         }
         // can't have numeric backrefs and named backrefs
         if self.numeric_backrefs && !self.named_groups.is_empty() {
@@ -140,15 +140,15 @@ impl<'a> Parser<'a> {
             if next == ix {
                 break;
             }
-            if child != Expr::Empty {
+            if child != Expr::Empty {} {
                 children.push(child);
             }
             ix = next;
         }
         match children.len() {
-            0 => Ok((ix, Expr::Empty)),
+            0 => Ok((ix, Expr::Empty {} ),
             1 => Ok((ix, children.pop().unwrap())),
-            _ => Ok((ix, Expr::Concat(children))),
+            _ => Ok((ix, Expr::Concat { exprs: children })),
         }
     }
 
@@ -194,7 +194,7 @@ impl<'a> Parser<'a> {
             };
             if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
                 ix += 1;
-                node = Expr::AtomicGroup(Box::new(node));
+                node = Expr::AtomicGroup { expr: Box::new(node });
             }
             return Ok((ix, node));
         }
@@ -203,12 +203,12 @@ impl<'a> Parser<'a> {
 
     fn is_repeatable(&self, child: &Expr) -> bool {
         match child {
-            Expr::LookAround(_, _) => false,
-            Expr::Empty => false,
-            Expr::Assertion(_) => false,
-            Expr::KeepOut => false,
-            Expr::ContinueFromPreviousMatchEnd => false,
-            Expr::BackrefExistsCondition(_) => false,
+            Expr::LookAround { expr: _, lookaround: _ } => false,
+            Expr::Empty {} => false,
+            Expr::Assertion { assertion: _ } => false,
+            Expr::KeepOut {} => false,
+            Expr::ContinueFromPreviousMatchEnd {} => false,
+            Expr::BackrefExistsCondition { group: _ } => false,
             _ => true,
         }
     }
@@ -257,7 +257,7 @@ impl<'a> Parser<'a> {
     fn parse_atom(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
         let ix = self.optional_whitespace(ix)?;
         if ix == self.re.len() {
-            return Ok((ix, Expr::Empty));
+            return Ok((ix, Expr::Empty {} );
         }
         match self.re.as_bytes()[ix] {
             b'.' => Ok((
@@ -270,23 +270,23 @@ impl<'a> Parser<'a> {
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
                     // TODO: support crlf flag
-                    Expr::Assertion(Assertion::StartLine { crlf: false })
+                    Expr::Assertion { assertion: Assertion::StartLine { crlf: false } }
                 } else {
-                    Expr::Assertion(Assertion::StartText)
+                    Expr::Assertion { assertion: Assertion::StartText }
                 },
             )),
             b'$' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
                     // TODO: support crlf flag
-                    Expr::Assertion(Assertion::EndLine { crlf: false })
+                    Expr::Assertion { assertion: Assertion::EndLine { crlf: false } }
                 } else {
-                    Expr::Assertion(Assertion::EndText)
+                    Expr::Assertion { assertion: Assertion::EndText }
                 },
             )),
             b'(' => self.parse_group(ix, depth),
             b'\\' => self.parse_escape(ix, false),
-            b'+' | b'*' | b'?' | b'|' | b')' => Ok((ix, Expr::Empty)),
+            b'+' | b'*' | b'?' | b'|' | b')' => Ok((ix, Expr::Empty {} ),
             b'[' => self.parse_class(ix),
             b => {
                 // TODO: maybe want to match multiple codepoints?
@@ -364,7 +364,7 @@ impl<'a> Parser<'a> {
             if group == 0 {
                 self.self_recursive = true;
             }
-            return Ok((end, Expr::SubroutineCall(group)));
+            return Ok((end, Expr::SubroutineCall { group: group }));
         }
         if let Some(group_name) = group_name {
             // here the name was parsed but doesn't match a capture group we have already parsed
@@ -452,7 +452,7 @@ impl<'a> Parser<'a> {
         if group == 0 {
             self.self_recursive = true;
         }
-        Ok((end, Expr::SubroutineCall(group)))
+        Ok((end, Expr::SubroutineCall { group: group }))
     }
 
     fn parse_numbered_backref_or_subroutine_call(&self, ix: usize) -> Result<(usize, usize)> {
@@ -482,9 +482,9 @@ impl<'a> Parser<'a> {
                 return self.parse_named_backref(end, "<", ">", true);
             }
         } else if b == b'A' && !in_class {
-            (end, Expr::Assertion(Assertion::StartText))
+            (end, Expr::Assertion { assertion: Assertion::StartText })
         } else if b == b'z' && !in_class {
-            (end, Expr::Assertion(Assertion::EndText))
+            (end, Expr::Assertion { assertion: Assertion::EndText })
         } else if b == b'Z' && !in_class {
             (
                 end,
@@ -505,7 +505,7 @@ impl<'a> Parser<'a> {
                     ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
                 ));
             }
-            (end, Expr::Assertion(Assertion::WordBoundary))
+            (end, Expr::Assertion { assertion: Assertion::WordBoundary })
         } else if b == b'B' && !in_class {
             if bytes.get(end) == Some(&b'{') {
                 // Support for \b{...} is not implemented yet
@@ -514,19 +514,19 @@ impl<'a> Parser<'a> {
                     ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
                 ));
             }
-            (end, Expr::Assertion(Assertion::NotWordBoundary))
+            (end, Expr::Assertion { assertion: Assertion::NotWordBoundary })
         } else if b == b'<' && !in_class {
             let expr = if self.flag(FLAG_ONIGURUMA_MODE) {
                 make_literal("<")
             } else {
-                Expr::Assertion(Assertion::LeftWordBoundary)
+                Expr::Assertion { assertion: Assertion::LeftWordBoundary }
             };
             (end, expr)
         } else if b == b'>' && !in_class {
             let expr = if self.flag(FLAG_ONIGURUMA_MODE) {
                 make_literal(">")
             } else {
-                Expr::Assertion(Assertion::RightWordBoundary)
+                Expr::Assertion { assertion: Assertion::RightWordBoundary }
             };
             (end, expr)
         } else if matches!(b | 32, b'd' | b's' | b'w') {
@@ -584,9 +584,9 @@ impl<'a> Parser<'a> {
                 },
             )
         } else if b == b'K' && !in_class {
-            (end, Expr::KeepOut)
+            (end, Expr::KeepOut {} 
         } else if b == b'G' && !in_class {
-            (end, Expr::ContinueFromPreviousMatchEnd)
+            (end, Expr::ContinueFromPreviousMatchEnd {} 
         } else if b == b'O' && !in_class {
             (end, Expr::Any { newline: true })
         } else if b == b'g' && !in_class {
@@ -826,9 +826,9 @@ impl<'a> Parser<'a> {
         let (ix, child) = self.parse_re(ix, depth)?;
         let ix = self.check_for_close_paren(ix)?;
         let result = match (la, skip) {
-            (Some(la), _) => Expr::LookAround(Box::new(child), la),
-            (None, 2) => Expr::AtomicGroup(Box::new(child)),
-            _ => Expr::Group(Box::new(child)),
+            (Some(la), _) => Expr::LookAround { expr: Box::new(child), lookaround: la },
+            (None, 2) => Expr::AtomicGroup { expr: Box::new(child }),
+            _ => Expr::Group { expr: Box::new(child }),
         };
         Ok((ix, result))
     }
@@ -886,7 +886,7 @@ impl<'a> Parser<'a> {
                     if ix == start || neg && ix == start + 1 {
                         return Err(unknown_flag(self.re, start, ix));
                     }
-                    return Ok((ix + 1, Expr::Empty));
+                    return Ok((ix + 1, Expr::Empty {} );
                 }
                 b':' => {
                     if neg && ix == start + 1 {
@@ -934,7 +934,7 @@ impl<'a> Parser<'a> {
             // Backreference validity checker
             if let Expr::Backref { group, .. } = condition {
                 let after = self.check_for_close_paren(end)?;
-                return Ok((after, Expr::BackrefExistsCondition(group)));
+                return Ok((after, Expr::BackrefExistsCondition { group: group }));
             } else {
                 return Err(Error::ParseError(
                     end,
@@ -945,8 +945,8 @@ impl<'a> Parser<'a> {
             }
         }
         let if_true: Expr;
-        let mut if_false: Expr = Expr::Empty;
-        if let Expr::Alt(mut alternatives) = child {
+        let mut if_false: Expr = Expr::Empty {} 
+        if let Expr::Alt { exprs: mut alternatives } = child {
             // the truth branch will be the first alternative
             if_true = alternatives.remove(0);
             // if there is only one alternative left, take it out the Expr::Alt
@@ -954,14 +954,14 @@ impl<'a> Parser<'a> {
                 if_false = alternatives.pop().expect("expected 2 alternatives");
             } else {
                 // otherwise the remaining branches become the false branch
-                if_false = Expr::Alt(alternatives);
+                if_false = Expr::Alt { exprs: alternatives };
             }
         } else {
             // there is only one branch - the truth branch. i.e. "if" without "else"
             if_true = child;
         }
         let inner_condition = if let Expr::Backref { group, .. } = condition {
-            Expr::BackrefExistsCondition(group)
+            Expr::BackrefExistsCondition { group: group }
         } else {
             condition
         };
@@ -969,7 +969,7 @@ impl<'a> Parser<'a> {
         let after = self.check_for_close_paren(end)?;
         Ok((
             after,
-            if if_true == Expr::Empty && if_false == Expr::Empty {
+            if if_true == Expr::Empty {} && if_false == Expr::Empty {} {
                 inner_condition
             } else {
                 Expr::Conditional {
@@ -1033,16 +1033,16 @@ impl<'a> Parser<'a> {
         match expr {
             Expr::UnresolvedNamedSubroutineCall { name, .. } => {
                 if let Some(group) = self.named_groups.get(name) {
-                    *expr = Expr::SubroutineCall(*group);
+                    *expr = Expr::SubroutineCall { group: *group };
                 } else {
                     self.has_unresolved_subroutines = true;
                 }
             }
             // recursively resolve in inner expressions
-            Expr::Group(inner) | Expr::LookAround(inner, _) | Expr::AtomicGroup(inner) => {
+            Expr::Group { expr: inner } | Expr::LookAround { expr: inner, lookaround: _ } | Expr::AtomicGroup { expr: inner } => {
                 self.resolve_named_subroutine_calls(inner);
             }
-            Expr::Concat(children) | Expr::Alt(children) => {
+            Expr::Concat { exprs: children } | Expr::Alt { exprs: children } => {
                 for child in children {
                     self.resolve_named_subroutine_calls(child);
                 }
@@ -1193,7 +1193,7 @@ mod tests {
 
     #[test]
     fn empty() {
-        assert_eq!(p(""), Expr::Empty);
+        assert_eq!(p(""), Expr::Empty {} ;
     }
 
     #[test]
@@ -1204,12 +1204,12 @@ mod tests {
 
     #[test]
     fn start_text() {
-        assert_eq!(p("^"), Expr::Assertion(Assertion::StartText));
+        assert_eq!(p("^"), Expr::Assertion { assertion: Assertion::StartText });
     }
 
     #[test]
     fn end_text() {
-        assert_eq!(p("$"), Expr::Assertion(Assertion::EndText));
+        assert_eq!(p("$"), Expr::Assertion { assertion: Assertion::EndText });
     }
 
     #[test]
@@ -1305,10 +1305,10 @@ mod tests {
     fn literal_unescaped_opening_curly() {
         // `{` in position where quantifier is not allowed results in literal `{`
         assert_eq!(p("{"), make_literal("{"));
-        assert_eq!(p("({)"), Expr::Group(Box::new(make_literal("{"),)));
+        assert_eq!(p("({)"), Expr::Group { expr: Box::new(make_literal("{" },)));
         assert_eq!(
             p("a|{"),
-            Expr::Alt(vec![make_literal("a"), make_literal("{"),])
+            Expr::Alt { exprs: vec![make_literal("a" }, make_literal("{"),])
         );
         assert_eq!(
             p("{{2}"),
@@ -1390,7 +1390,7 @@ mod tests {
     fn concat() {
         assert_eq!(
             p("ab"),
-            Expr::Concat(vec![make_literal("a"), make_literal("b"),])
+            Expr::Concat { exprs: vec![make_literal("a" }, make_literal("b"),])
         );
     }
 
@@ -1398,19 +1398,19 @@ mod tests {
     fn alt() {
         assert_eq!(
             p("a|b"),
-            Expr::Alt(vec![make_literal("a"), make_literal("b"),])
+            Expr::Alt { exprs: vec![make_literal("a" }, make_literal("b"),])
         );
     }
 
     #[test]
     fn group() {
-        assert_eq!(p("(a)"), Expr::Group(Box::new(make_literal("a"),)));
+        assert_eq!(p("(a)"), Expr::Group { expr: Box::new(make_literal("a" },)));
     }
 
     #[test]
     fn named_group() {
-        assert_eq!(p("(?'name'a)"), Expr::Group(Box::new(make_literal("a"),)));
-        assert_eq!(p("(?<name>a)"), Expr::Group(Box::new(make_literal("a"),)));
+        assert_eq!(p("(?'name'a)"), Expr::Group { expr: Box::new(make_literal("a" },)));
+        assert_eq!(p("(?<name>a)"), Expr::Group { expr: Box::new(make_literal("a" },)));
     }
 
     #[test]
@@ -1418,7 +1418,7 @@ mod tests {
         assert_eq!(
             p("(a){2}"),
             Expr::Repeat {
-                child: Box::new(Expr::Group(Box::new(make_literal("a")))),
+                child: Box::new(Expr::Group { expr: Box::new(make_literal("a" }))),
                 lo: 2,
                 hi: 2,
                 greedy: true
@@ -1508,7 +1508,7 @@ mod tests {
         // Invalid repeat syntax results in literal
         assert_eq!(
             p("a{"),
-            Expr::Concat(vec![make_literal("a"), make_literal("{"),])
+            Expr::Concat { exprs: vec![make_literal("a" }, make_literal("{"),])
         );
         assert_eq!(
             p("a{6"),
@@ -1554,8 +1554,8 @@ mod tests {
 
     #[test]
     fn delegate_zero() {
-        assert_eq!(p("\\b"), Expr::Assertion(Assertion::WordBoundary),);
-        assert_eq!(p("\\B"), Expr::Assertion(Assertion::NotWordBoundary),);
+        assert_eq!(p("\\b"), Expr::Assertion { assertion: Assertion::WordBoundary },);
+        assert_eq!(p("\\B"), Expr::Assertion { assertion: Assertion::NotWordBoundary },);
     }
 
     #[test]
@@ -1607,7 +1607,7 @@ mod tests {
         assert_eq!(
             p("(.)\\1"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Group { expr: Box::new(Expr::Any { newline: false } }),
                 Expr::Backref {
                     group: 1,
                     casei: false,
@@ -1621,7 +1621,7 @@ mod tests {
         assert_eq!(
             p("(?<i>.)\\k<i>"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Group { expr: Box::new(Expr::Any { newline: false } }),
                 Expr::Backref {
                     group: 1,
                     casei: false,
@@ -1635,8 +1635,8 @@ mod tests {
         assert_eq!(
             p(r"(a)(.)\k<-1>"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(make_literal("a"))),
-                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Group { expr: Box::new(make_literal("a" })),
+                Expr::Group { expr: Box::new(Expr::Any { newline: false } }),
                 Expr::Backref {
                     group: 2,
                     casei: false,
@@ -1647,12 +1647,12 @@ mod tests {
         assert_eq!(
             p(r"(a)\k<+1>(.)"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(make_literal("a"))),
+                Expr::Group { expr: Box::new(make_literal("a" })),
                 Expr::Backref {
                     group: 2,
                     casei: false,
                 },
-                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Group { expr: Box::new(Expr::Any { newline: false } }),
             ])
         );
 
@@ -1670,7 +1670,7 @@ mod tests {
         assert_eq!(
             p(r"()\k<1+3>"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Empty)),
+                Expr::Group { expr: Box::new(Expr::Empty {}  },
                 Expr::BackrefWithRelativeRecursionLevel {
                     group: 1,
                     relative_level: 3,
@@ -1682,7 +1682,7 @@ mod tests {
         assert_eq!(
             p(r"()\k<1-0>"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Empty)),
+                Expr::Group { expr: Box::new(Expr::Empty {}  },
                 Expr::BackrefWithRelativeRecursionLevel {
                     group: 1,
                     relative_level: 0,
@@ -1694,7 +1694,7 @@ mod tests {
         assert_eq!(
             p(r"(?<n>)\k<n+3>"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Empty)),
+                Expr::Group { expr: Box::new(Expr::Empty {}  },
                 Expr::BackrefWithRelativeRecursionLevel {
                     group: 1,
                     relative_level: 3,
@@ -1706,7 +1706,7 @@ mod tests {
         assert_eq!(
             p(r"(?<n>)\k<n-3>"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Empty)),
+                Expr::Group { expr: Box::new(Expr::Empty {}  },
                 Expr::BackrefWithRelativeRecursionLevel {
                     group: 1,
                     relative_level: -3,
@@ -1718,13 +1718,13 @@ mod tests {
         assert_eq!(
             p(r"\A(?<a>|.|(?:(?<b>.)\g<a>\k<b+0>))\z"),
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartText),
+                Expr::Assertion { assertion: Assertion::StartText },
                 Expr::Group(Box::new(Expr::Alt(vec![
-                    Expr::Empty,
+                    Expr::Empty {} 
                     Expr::Any { newline: false },
                     Expr::Concat(vec![
-                        Expr::Group(Box::new(Expr::Any { newline: false })),
-                        Expr::SubroutineCall(1),
+                        Expr::Group { expr: Box::new(Expr::Any { newline: false } }),
+                        Expr::SubroutineCall { group: 1 },
                         Expr::BackrefWithRelativeRecursionLevel {
                             group: 2,
                             relative_level: 0,
@@ -1732,7 +1732,7 @@ mod tests {
                         },
                     ])
                 ]))),
-                Expr::Assertion(Assertion::EndText)
+                Expr::Assertion { assertion: Assertion::EndText }
             ]),
         );
     }
@@ -1742,18 +1742,18 @@ mod tests {
         assert_eq!(
             p(r"(a)(.)\g<-1>"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(make_literal("a"))),
-                Expr::Group(Box::new(Expr::Any { newline: false })),
-                Expr::SubroutineCall(2),
+                Expr::Group { expr: Box::new(make_literal("a" })),
+                Expr::Group { expr: Box::new(Expr::Any { newline: false } }),
+                Expr::SubroutineCall { group: 2 },
             ])
         );
 
         assert_eq!(
             p(r"(a)\g<+1>(.)"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(make_literal("a"))),
-                Expr::SubroutineCall(2),
-                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Group { expr: Box::new(make_literal("a" })),
+                Expr::SubroutineCall { group: 2 },
+                Expr::Group { expr: Box::new(Expr::Any { newline: false } }),
             ])
         );
 
@@ -1768,19 +1768,19 @@ mod tests {
     fn lookaround() {
         assert_eq!(
             p("(?=a)"),
-            Expr::LookAround(Box::new(make_literal("a")), LookAhead)
+            Expr::LookAround { expr: Box::new(make_literal("a")), lookaround: LookAhead }
         );
         assert_eq!(
             p("(?!a)"),
-            Expr::LookAround(Box::new(make_literal("a")), LookAheadNeg)
+            Expr::LookAround { expr: Box::new(make_literal("a")), lookaround: LookAheadNeg }
         );
         assert_eq!(
             p("(?<=a)"),
-            Expr::LookAround(Box::new(make_literal("a")), LookBehind)
+            Expr::LookAround { expr: Box::new(make_literal("a")), lookaround: LookBehind }
         );
         assert_eq!(
             p("(?<!a)"),
-            Expr::LookAround(Box::new(make_literal("a")), LookBehindNeg)
+            Expr::LookAround { expr: Box::new(make_literal("a")), lookaround: LookBehindNeg }
         );
     }
 
@@ -1789,7 +1789,7 @@ mod tests {
         assert_eq!(
             p("(?:ab)c"),
             Expr::Concat(vec![
-                Expr::Concat(vec![make_literal("a"), make_literal("b"),]),
+                Expr::Concat { exprs: vec![make_literal("a" }, make_literal("b"),]),
                 make_literal("c"),
             ])
         );
@@ -1817,15 +1817,15 @@ mod tests {
 
     #[test]
     fn flag_multiline() {
-        assert_eq!(p("^"), Expr::Assertion(Assertion::StartText));
+        assert_eq!(p("^"), Expr::Assertion { assertion: Assertion::StartText });
         assert_eq!(
             p("(?m:^)"),
-            Expr::Assertion(Assertion::StartLine { crlf: false })
+            Expr::Assertion { assertion: Assertion::StartLine { crlf: false } }
         );
-        assert_eq!(p("$"), Expr::Assertion(Assertion::EndText));
+        assert_eq!(p("$"), Expr::Assertion { assertion: Assertion::EndText });
         assert_eq!(
             p("(?m:$)"),
-            Expr::Assertion(Assertion::EndLine { crlf: false })
+            Expr::Assertion { assertion: Assertion::EndLine { crlf: false } }
         );
     }
 
@@ -1865,8 +1865,8 @@ mod tests {
                     hi: usize::MAX,
                     greedy: true
                 },
-                Expr::LookAround(Box::new(make_literal("'")), LookAheadNeg),
-                Expr::Assertion(Assertion::WordBoundary),
+                Expr::LookAround { expr: Box::new(make_literal("'")), lookaround: LookAheadNeg },
+                Expr::Assertion { assertion: Assertion::WordBoundary },
             ])
         );
     }
@@ -1911,7 +1911,7 @@ mod tests {
 
     #[test]
     fn atomic_group() {
-        assert_eq!(p("(?>a)"), Expr::AtomicGroup(Box::new(make_literal("a"))));
+        assert_eq!(p("(?>a)"), Expr::AtomicGroup { expr: Box::new(make_literal("a" })));
     }
 
     #[test]
@@ -2072,7 +2072,7 @@ mod tests {
     fn keepout() {
         assert_eq!(
             p("a\\Kb"),
-            Expr::Concat(vec![make_literal("a"), Expr::KeepOut, make_literal("b"),])
+            Expr::Concat { exprs: vec![make_literal("a" }, Expr::KeepOut {}  make_literal("b"),])
         );
     }
 
@@ -2098,24 +2098,24 @@ mod tests {
             p("(h)?(?(1))"),
             Expr::Concat(vec![
                 Expr::Repeat {
-                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    child: Box::new(Expr::Group { expr: Box::new(make_literal("h" }))),
                     lo: 0,
                     hi: 1,
                     greedy: true
                 },
-                Expr::BackrefExistsCondition(1)
+                Expr::BackrefExistsCondition { group: 1 }
             ])
         );
         assert_eq!(
             p("(?<h>h)?(?('h'))"),
             Expr::Concat(vec![
                 Expr::Repeat {
-                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    child: Box::new(Expr::Group { expr: Box::new(make_literal("h" }))),
                     lo: 0,
                     hi: 1,
                     greedy: true
                 },
-                Expr::BackrefExistsCondition(1)
+                Expr::BackrefExistsCondition { group: 1 }
             ])
         );
     }
@@ -2205,13 +2205,13 @@ mod tests {
             p("(h)?(?(1)i|x)"),
             Expr::Concat(vec![
                 Expr::Repeat {
-                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    child: Box::new(Expr::Group { expr: Box::new(make_literal("h" }))),
                     lo: 0,
                     hi: 1,
                     greedy: true
                 },
                 Expr::Conditional {
-                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    condition: Box::new(Expr::BackrefExistsCondition { group: 1 }),
                     true_branch: Box::new(make_literal("i")),
                     false_branch: Box::new(make_literal("x")),
                 },
@@ -2222,15 +2222,15 @@ mod tests {
             p("(h)?(?(1)i)"),
             Expr::Concat(vec![
                 Expr::Repeat {
-                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    child: Box::new(Expr::Group { expr: Box::new(make_literal("h" }))),
                     lo: 0,
                     hi: 1,
                     greedy: true
                 },
                 Expr::Conditional {
-                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    condition: Box::new(Expr::BackrefExistsCondition { group: 1 }),
                     true_branch: Box::new(make_literal("i")),
-                    false_branch: Box::new(Expr::Empty),
+                    false_branch: Box::new(Expr::Empty {} ,
                 },
             ])
         );
@@ -2239,18 +2239,18 @@ mod tests {
             p("(h)?(?(1)ii|xy|z)"),
             Expr::Concat(vec![
                 Expr::Repeat {
-                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    child: Box::new(Expr::Group { expr: Box::new(make_literal("h" }))),
                     lo: 0,
                     hi: 1,
                     greedy: true
                 },
                 Expr::Conditional {
-                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    condition: Box::new(Expr::BackrefExistsCondition { group: 1 }),
                     true_branch: Box::new(Expr::Concat(
                         vec![make_literal("i"), make_literal("i"),]
                     )),
                     false_branch: Box::new(Expr::Alt(vec![
-                        Expr::Concat(vec![make_literal("x"), make_literal("y"),]),
+                        Expr::Concat { exprs: vec![make_literal("x" }, make_literal("y"),]),
                         make_literal("z"),
                     ])),
                 },
@@ -2261,18 +2261,18 @@ mod tests {
             p("(?<cap>h)?(?(<cap>)ii|xy|z)"),
             Expr::Concat(vec![
                 Expr::Repeat {
-                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    child: Box::new(Expr::Group { expr: Box::new(make_literal("h" }))),
                     lo: 0,
                     hi: 1,
                     greedy: true
                 },
                 Expr::Conditional {
-                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    condition: Box::new(Expr::BackrefExistsCondition { group: 1 }),
                     true_branch: Box::new(Expr::Concat(
                         vec![make_literal("i"), make_literal("i"),]
                     )),
                     false_branch: Box::new(Expr::Alt(vec![
-                        Expr::Concat(vec![make_literal("x"), make_literal("y"),]),
+                        Expr::Concat { exprs: vec![make_literal("x" }, make_literal("y"),]),
                         make_literal("z"),
                     ])),
                 },
@@ -2300,7 +2300,7 @@ mod tests {
         assert_eq!(
             p(r"^(?(\d)abc|\d!)$"),
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartText),
+                Expr::Assertion { assertion: Assertion::StartText },
                 Expr::Conditional {
                     condition: Box::new(Expr::Delegate {
                         inner: "\\d".to_string(),
@@ -2321,7 +2321,7 @@ mod tests {
                         make_literal("!"),
                     ])),
                 },
-                Expr::Assertion(Assertion::EndText),
+                Expr::Assertion { assertion: Assertion::EndText },
             ])
         );
 
@@ -2363,40 +2363,40 @@ mod tests {
         assert_eq!(
             p(r"(a)\g1"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(make_literal("a"))),
-                Expr::SubroutineCall(1)
+                Expr::Group { expr: Box::new(make_literal("a" })),
+                Expr::SubroutineCall { group: 1 }
             ])
         );
 
         assert_eq!(
             p(r"(a)\g<1>"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(make_literal("a"))),
-                Expr::SubroutineCall(1)
+                Expr::Group { expr: Box::new(make_literal("a" })),
+                Expr::SubroutineCall { group: 1 }
             ])
         );
 
         assert_eq!(
             p(r"(?<group_name>a)\g<group_name>"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(make_literal("a"))),
-                Expr::SubroutineCall(1)
+                Expr::Group { expr: Box::new(make_literal("a" })),
+                Expr::SubroutineCall { group: 1 }
             ])
         );
 
         assert_eq!(
             p(r"(?<group_name>a)\g'group_name'"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(make_literal("a"))),
-                Expr::SubroutineCall(1)
+                Expr::Group { expr: Box::new(make_literal("a" })),
+                Expr::SubroutineCall { group: 1 }
             ])
         );
 
         assert_eq!(
             p(r"(?<group_name>a)(?P>group_name)"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(make_literal("a"))),
-                Expr::SubroutineCall(1)
+                Expr::Group { expr: Box::new(make_literal("a" })),
+                Expr::SubroutineCall { group: 1 }
             ])
         );
     }
@@ -2406,20 +2406,20 @@ mod tests {
         assert_eq!(
             p(r"\g<name>(?<name>a)"),
             Expr::Concat(vec![
-                Expr::SubroutineCall(1),
-                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall { group: 1 },
+                Expr::Group { expr: Box::new(make_literal("a" })),
             ])
         );
 
         assert_eq!(
             p(r"\g<c>(?:a|b|(?<c>c)?)"),
             Expr::Concat(vec![
-                Expr::SubroutineCall(1),
+                Expr::SubroutineCall { group: 1 },
                 Expr::Alt(vec![
                     make_literal("a"),
                     make_literal("b"),
                     Expr::Repeat {
-                        child: Box::new(Expr::Group(Box::new(make_literal("c")))),
+                        child: Box::new(Expr::Group { expr: Box::new(make_literal("c" }))),
                         lo: 0,
                         hi: 1,
                         greedy: true
@@ -2432,15 +2432,15 @@ mod tests {
             p(r"(?<a>a)?\g<b>(?(<a>)(?<b>b)|c)"),
             Expr::Concat(vec![
                 Expr::Repeat {
-                    child: Box::new(Expr::Group(Box::new(make_literal("a")))),
+                    child: Box::new(Expr::Group { expr: Box::new(make_literal("a" }))),
                     lo: 0,
                     hi: 1,
                     greedy: true
                 },
-                Expr::SubroutineCall(2),
+                Expr::SubroutineCall { group: 2 },
                 Expr::Conditional {
-                    condition: Box::new(Expr::BackrefExistsCondition(1)),
-                    true_branch: Box::new(Expr::Group(Box::new(make_literal("b")))),
+                    condition: Box::new(Expr::BackrefExistsCondition { group: 1 }),
+                    true_branch: Box::new(Expr::Group { expr: Box::new(make_literal("b" }))),
                     false_branch: Box::new(make_literal("c")),
                 }
             ])
@@ -2449,8 +2449,8 @@ mod tests {
         assert_eq!(
             p(r"\g<1>(a)"),
             Expr::Concat(vec![
-                Expr::SubroutineCall(1),
-                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall { group: 1 },
+                Expr::Group { expr: Box::new(make_literal("a" })),
             ])
         );
     }
@@ -2460,20 +2460,20 @@ mod tests {
         assert_eq!(
             p(r"\A(?<a>|.|(?:(?<b>.)\g<a>\k<b>))\z"),
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartText,),
+                Expr::Assertion { assertion: Assertion::StartText, },
                 Expr::Group(Box::new(Expr::Alt(vec![
-                    Expr::Empty,
+                    Expr::Empty {} 
                     Expr::Any { newline: false },
                     Expr::Concat(vec![
-                        Expr::Group(Box::new(Expr::Any { newline: false },)),
-                        Expr::SubroutineCall(1,),
+                        Expr::Group { expr: Box::new(Expr::Any { newline: false }, }),
+                        Expr::SubroutineCall { group: 1, },
                         Expr::Backref {
                             group: 2,
                             casei: false,
                         },
                     ],),
                 ],),)),
-                Expr::Assertion(Assertion::EndText,),
+                Expr::Assertion { assertion: Assertion::EndText, },
             ],)
         );
     }
@@ -2511,7 +2511,7 @@ mod tests {
                     name: "wrong_name".to_string(),
                     ix: 2
                 },
-                Expr::Group(Box::new(make_literal("a"))),
+                Expr::Group { expr: Box::new(make_literal("a" })),
             ])
         );
     }
@@ -2591,13 +2591,13 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                Expr::Assertion { assertion: Assertion::StartLine { crlf: false } },
                 make_literal("h"),
                 make_literal("e"),
                 make_literal("l"),
                 make_literal("l"),
                 make_literal("o"),
-                Expr::Assertion(Assertion::EndLine { crlf: false })
+                Expr::Assertion { assertion: Assertion::EndLine { crlf: false } }
             ])
         );
     }
@@ -2612,13 +2612,13 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                Expr::Assertion { assertion: Assertion::StartLine { crlf: false } },
                 make_literal("h"),
                 make_literal("e"),
                 make_literal("l"),
                 make_literal("l"),
                 make_literal("o"),
-                Expr::Assertion(Assertion::EndLine { crlf: false })
+                Expr::Assertion { assertion: Assertion::EndLine { crlf: false } }
             ])
         );
     }
@@ -2698,13 +2698,13 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                Expr::Assertion { assertion: Assertion::StartLine { crlf: false } },
                 make_literal_case_insensitive("h", true),
                 make_literal_case_insensitive("e", true),
                 make_literal_case_insensitive("l", true),
                 make_literal_case_insensitive("l", true),
                 make_literal_case_insensitive("o", true),
-                Expr::Assertion(Assertion::EndLine { crlf: false })
+                Expr::Assertion { assertion: Assertion::EndLine { crlf: false } }
             ])
         );
     }
@@ -2720,13 +2720,13 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                Expr::Assertion { assertion: Assertion::StartLine { crlf: false } },
                 make_literal_case_insensitive("h", true),
                 make_literal_case_insensitive("e", true),
                 make_literal_case_insensitive("l", true),
                 make_literal_case_insensitive("l", true),
                 make_literal_case_insensitive("o", true),
-                Expr::Assertion(Assertion::EndLine { crlf: false })
+                Expr::Assertion { assertion: Assertion::EndLine { crlf: false } }
             ])
         );
     }

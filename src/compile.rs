@@ -117,7 +117,7 @@ impl Compiler {
             return self.compile_delegate(info);
         }
         match *info.expr {
-            Expr::Empty => (),
+            Expr::Empty {} {} => (),
             Expr::Literal { ref val, casei } => {
                 if !casei {
                     self.b.add(Insn::Lit(val.clone()));
@@ -131,14 +131,14 @@ impl Compiler {
             Expr::Any { newline: false } => {
                 self.b.add(Insn::AnyNoNL);
             }
-            Expr::Concat(_) => {
+            Expr::Concat { exprs: _ } => {
                 self.compile_concat(info, hard)?;
             }
-            Expr::Alt(_) => {
+            Expr::Alt { exprs: _ } => {
                 let count = info.children.len();
                 self.compile_alt(count, |compiler, i| compiler.visit(&info.children[i], hard))?;
             }
-            Expr::Group(_) => {
+            Expr::Group { expr: _ } => {
                 let group = info.start_group;
                 self.b.add(Insn::Save(group * 2));
                 self.visit(&info.children[0], hard)?;
@@ -147,7 +147,7 @@ impl Compiler {
             Expr::Repeat { lo, hi, greedy, .. } => {
                 self.compile_repeat(info, lo, hi, greedy, hard)?;
             }
-            Expr::LookAround(_, la) => {
+            Expr::LookAround { expr: _, lookaround: la } => {
                 self.compile_lookaround(info, la)?;
             }
             Expr::Backref { group, casei } => {
@@ -156,10 +156,10 @@ impl Compiler {
                     casei,
                 });
             }
-            Expr::BackrefExistsCondition(group) => {
+            Expr::BackrefExistsCondition { group: group } => {
                 self.b.add(Insn::BackrefExistsCondition(group));
             }
-            Expr::AtomicGroup(_) => {
+            Expr::AtomicGroup { expr: _ } => {
                 // TODO optimization: atomic insns are not needed if the
                 // child doesn't do any backtracking.
                 self.b.add(Insn::BeginAtomic);
@@ -170,19 +170,19 @@ impl Compiler {
                 // TODO: might want to have more specialized impls
                 self.compile_delegate(info)?;
             }
-            Expr::Assertion(assertion) => {
+            Expr::Assertion { assertion: assertion } => {
                 self.b.add(Insn::Assertion(assertion));
             }
-            Expr::KeepOut => {
+            Expr::KeepOut {} {} => {
                 self.b.add(Insn::Save(0));
             }
-            Expr::ContinueFromPreviousMatchEnd => {
+            Expr::ContinueFromPreviousMatchEnd {} {} => {
                 self.b.add(Insn::ContinueFromPreviousMatchEnd);
             }
             Expr::Conditional { .. } => {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
             }
-            Expr::SubroutineCall(_) => {
+            Expr::SubroutineCall { group: _ } => {
                 return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
                     "Subroutine Call".to_string(),
                 )));
@@ -394,7 +394,7 @@ impl Compiler {
             LookBehind => {
                 if let Info {
                     const_size: false,
-                    expr: &Expr::Alt(_),
+                    expr: &Expr::Alt { exprs: _ },
                     ..
                 } = inner
                 {
@@ -411,7 +411,7 @@ impl Compiler {
             LookBehindNeg => {
                 if let Info {
                     const_size: false,
-                    expr: &Expr::Alt(_),
+                    expr: &Expr::Alt { exprs: _ },
                     ..
                 } = inner
                 {

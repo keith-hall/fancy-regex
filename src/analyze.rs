@@ -50,7 +50,7 @@ impl<'a> Info<'a> {
     pub(crate) fn is_literal(&self) -> bool {
         match *self.expr {
             Expr::Literal { casei, .. } => !casei,
-            Expr::Concat(_) => self.children.iter().all(|child| child.is_literal()),
+            Expr::Concat { .. } => self.children.iter().all(|child| child.is_literal()),
             _ => false,
         }
     }
@@ -59,7 +59,7 @@ impl<'a> Info<'a> {
         match *self.expr {
             // could be more paranoid about checking casei
             Expr::Literal { ref val, .. } => buf.push_str(val),
-            Expr::Concat(_) => {
+            Expr::Concat { .. } => {
                 for child in &self.children {
                     child.push_literal(buf);
                 }
@@ -90,25 +90,25 @@ impl<'a> Analyzer<'a> {
         let mut const_size = false;
         let mut hard = false;
         match *expr {
-            Expr::Assertion(assertion) if assertion.is_hard() => {
+            Expr::Assertion { assertion, .. } if assertion.is_hard() => {
                 const_size = true;
                 hard = true;
             }
-            Expr::Empty | Expr::Assertion(_) => {
+            Expr::Empty {} { .. } | Expr::Assertion { .. } => {
                 const_size = true;
             }
             Expr::Any { .. } => {
                 min_size = 1;
                 const_size = true;
             }
-            Expr::Literal { ref val, casei } => {
+            Expr::Literal { ref val, casei, .. } => {
                 // right now each character in a literal gets its own node, that might change
                 min_size = 1;
                 const_size = literal_const_size(val, casei);
             }
-            Expr::Concat(ref v) => {
+            Expr::Concat { ref exprs, .. } => {
                 const_size = true;
-                for child in v {
+                for child in exprs {
                     let child_info = self.visit(child)?;
                     min_size += child_info.min_size;
                     const_size &= child_info.const_size;
@@ -116,13 +116,13 @@ impl<'a> Analyzer<'a> {
                     children.push(child_info);
                 }
             }
-            Expr::Alt(ref v) => {
-                let child_info = self.visit(&v[0])?;
+            Expr::Alt { ref exprs, .. } => {
+                let child_info = self.visit(&exprs[0])?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = child_info.hard;
                 children.push(child_info);
-                for child in &v[1..] {
+                for child in &exprs[1..] {
                     let child_info = self.visit(child)?;
                     const_size &= child_info.const_size && min_size == child_info.min_size;
                     min_size = min(min_size, child_info.min_size);
@@ -130,10 +130,10 @@ impl<'a> Analyzer<'a> {
                     children.push(child_info);
                 }
             }
-            Expr::Group(ref child) => {
+            Expr::Group { ref expr, .. } => {
                 let group = self.group_ix;
                 self.group_ix += 1;
-                let child_info = self.visit(child)?;
+                let child_info = self.visit(expr)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 // Store the group info for use by backrefs
@@ -150,8 +150,8 @@ impl<'a> Analyzer<'a> {
                 hard = child_info.hard | self.backrefs.contains(group);
                 children.push(child_info);
             }
-            Expr::LookAround(ref child, _) => {
-                let child_info = self.visit(child)?;
+            Expr::LookAround { ref expr, .. } => {
+                let child_info = self.visit(expr)?;
                 // min_size = 0
                 const_size = true;
                 hard = true;
@@ -186,22 +186,22 @@ impl<'a> Analyzer<'a> {
                 }
                 hard = true;
             }
-            Expr::AtomicGroup(ref child) => {
-                let child_info = self.visit(child)?;
+            Expr::AtomicGroup { ref expr, .. } => {
+                let child_info = self.visit(expr)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = true; // TODO: possibly could weaken
                 children.push(child_info);
             }
-            Expr::KeepOut => {
+            Expr::KeepOut {} { .. } => {
                 hard = true;
                 const_size = true;
             }
-            Expr::ContinueFromPreviousMatchEnd => {
+            Expr::ContinueFromPreviousMatchEnd {} { .. } => {
                 hard = true;
                 const_size = true;
             }
-            Expr::BackrefExistsCondition(_) => {
+            Expr::BackrefExistsCondition { .. } => {
                 hard = true;
                 const_size = true;
             }
@@ -209,6 +209,7 @@ impl<'a> Analyzer<'a> {
                 ref condition,
                 ref true_branch,
                 ref false_branch,
+                ..
             } => {
                 hard = true;
 
@@ -228,12 +229,12 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info_truth);
                 children.push(child_info_false);
             }
-            Expr::SubroutineCall(_) => {
+            Expr::SubroutineCall { .. } => {
                 return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
                     "Subroutine Call".to_string(),
                 )));
             }
-            Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
+            Expr::UnresolvedNamedSubroutineCall { ref name, ix, .. } => {
                 return Err(Error::CompileError(
                     CompileError::SubroutineCallTargetNotFound(name.to_string(), ix),
                 ));
@@ -300,11 +301,11 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
     use crate::Assertion;
 
     match root_expr {
-        Expr::Concat(ref children) => match children[0] {
-            Expr::Assertion(ref assertion) => *assertion == Assertion::StartText,
+        Expr::Concat { exprs, .. } => match &exprs[0] {
+            Expr::Assertion { assertion, .. } => *assertion == Assertion::StartText,
             _ => false,
         },
-        Expr::Assertion(ref assertion) => *assertion == Assertion::StartText,
+        Expr::Assertion { assertion, .. } => *assertion == Assertion::StartText,
         _ => false,
     }
 }
