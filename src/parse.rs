@@ -481,7 +481,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_numbered_backref(&mut self, ix: usize) -> Result<(usize, ExprWithPosition)> {
-        let start_ix = ix;
+        self.parse_numbered_backref_with_pos(ix, ix)
+    }
+
+    fn parse_numbered_backref_with_pos(&mut self, ix: usize, start_ix: usize) -> Result<(usize, ExprWithPosition)> {
         let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
         self.numeric_backrefs = true;
         self.backrefs.insert(group);
@@ -530,7 +533,7 @@ impl<'a> Parser<'a> {
         };
         let end = ix + 1 + codepoint_len(b);
         Ok(if b.is_ascii_digit() {
-            return self.parse_numbered_backref(ix + 1);
+            return self.parse_numbered_backref_with_pos(ix + 1, start_ix);
         } else if matches!(b, b'k') && !in_class {
             // Named backref: \k<name>
             if bytes.get(end) == Some(&b'\'') {
