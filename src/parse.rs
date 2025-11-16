@@ -45,6 +45,8 @@ pub struct ExprTree {
     pub named_groups: NamedGroups,
     pub(crate) contains_subroutines: bool,
     pub(crate) self_recursive: bool,
+    /// Positions in the input pattern string where each Expr starts, in the order they were parsed
+    pub positions: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -58,6 +60,7 @@ pub(crate) struct Parser<'a> {
     contains_subroutines: bool,
     has_unresolved_subroutines: bool,
     self_recursive: bool,
+    positions: Vec<usize>, // positions where each Expr starts in the input pattern
 }
 
 struct NamedBackrefOrSubroutine<'a> {
@@ -89,6 +92,7 @@ impl<'a> Parser<'a> {
             named_groups: p.named_groups,
             contains_subroutines: p.contains_subroutines,
             self_recursive: p.self_recursive,
+            positions: p.positions,
         })
     }
 
@@ -109,10 +113,17 @@ impl<'a> Parser<'a> {
             contains_subroutines: false,
             has_unresolved_subroutines: false,
             self_recursive: false,
+            positions: Vec::new(),
         }
     }
 
+    /// Helper to track the position where an Expr starts
+    fn track_position(&mut self, start_ix: usize) {
+        self.positions.push(start_ix);
+    }
+
     fn parse_re(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let start_ix = ix;
         let (ix, child) = self.parse_branch(ix, depth)?;
         let mut ix = self.optional_whitespace(ix)?;
         if self.re[ix..].starts_with('|') {
@@ -123,6 +134,7 @@ impl<'a> Parser<'a> {
                 children.push(child);
                 ix = self.optional_whitespace(next)?;
             }
+            self.track_position(start_ix);
             return Ok((ix, Expr::Alt(children)));
         }
         // can't have numeric backrefs and named backrefs
@@ -133,6 +145,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_branch(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let start_ix = ix;
         let mut children = Vec::new();
         let mut ix = ix;
         while ix < self.re.len() {
@@ -146,13 +159,20 @@ impl<'a> Parser<'a> {
             ix = next;
         }
         match children.len() {
-            0 => Ok((ix, Expr::Empty)),
+            0 => {
+                self.track_position(start_ix);
+                Ok((ix, Expr::Empty))
+            }
             1 => Ok((ix, children.pop().unwrap())),
-            _ => Ok((ix, Expr::Concat(children))),
+            _ => {
+                self.track_position(start_ix);
+                Ok((ix, Expr::Concat(children)))
+            }
         }
     }
 
     fn parse_piece(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let start_ix = ix;
         let (ix, child) = self.parse_atom(ix, depth)?;
         let mut ix = self.optional_whitespace(ix)?;
         if ix < self.re.len() {
@@ -186,6 +206,7 @@ impl<'a> Parser<'a> {
                 ix += 1;
             }
             greedy ^= self.flag(FLAG_SWAP_GREED);
+            self.track_position(start_ix);
             let mut node = Expr::Repeat {
                 child: Box::new(child),
                 lo,
@@ -194,6 +215,7 @@ impl<'a> Parser<'a> {
             };
             if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
                 ix += 1;
+                self.track_position(start_ix);
                 node = Expr::AtomicGroup(Box::new(node));
             }
             return Ok((ix, node));
@@ -257,40 +279,54 @@ impl<'a> Parser<'a> {
     fn parse_atom(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
         let ix = self.optional_whitespace(ix)?;
         if ix == self.re.len() {
+            self.track_position(ix);
             return Ok((ix, Expr::Empty));
         }
         match self.re.as_bytes()[ix] {
-            b'.' => Ok((
-                ix + 1,
-                Expr::Any {
-                    newline: self.flag(FLAG_DOTNL),
-                },
-            )),
-            b'^' => Ok((
-                ix + 1,
-                if self.flag(FLAG_MULTI) {
-                    // TODO: support crlf flag
-                    Expr::Assertion(Assertion::StartLine { crlf: false })
-                } else {
-                    Expr::Assertion(Assertion::StartText)
-                },
-            )),
-            b'$' => Ok((
-                ix + 1,
-                if self.flag(FLAG_MULTI) {
-                    // TODO: support crlf flag
-                    Expr::Assertion(Assertion::EndLine { crlf: false })
-                } else {
-                    Expr::Assertion(Assertion::EndText)
-                },
-            )),
+            b'.' => {
+                self.track_position(ix);
+                Ok((
+                    ix + 1,
+                    Expr::Any {
+                        newline: self.flag(FLAG_DOTNL),
+                    },
+                ))
+            }
+            b'^' => {
+                self.track_position(ix);
+                Ok((
+                    ix + 1,
+                    if self.flag(FLAG_MULTI) {
+                        // TODO: support crlf flag
+                        Expr::Assertion(Assertion::StartLine { crlf: false })
+                    } else {
+                        Expr::Assertion(Assertion::StartText)
+                    },
+                ))
+            }
+            b'$' => {
+                self.track_position(ix);
+                Ok((
+                    ix + 1,
+                    if self.flag(FLAG_MULTI) {
+                        // TODO: support crlf flag
+                        Expr::Assertion(Assertion::EndLine { crlf: false })
+                    } else {
+                        Expr::Assertion(Assertion::EndText)
+                    },
+                ))
+            }
             b'(' => self.parse_group(ix, depth),
             b'\\' => self.parse_escape(ix, false),
-            b'+' | b'*' | b'?' | b'|' | b')' => Ok((ix, Expr::Empty)),
+            b'+' | b'*' | b'?' | b'|' | b')' => {
+                self.track_position(ix);
+                Ok((ix, Expr::Empty))
+            }
             b'[' => self.parse_class(ix),
             b => {
                 // TODO: maybe want to match multiple codepoints?
                 let next = ix + codepoint_len(b);
+                self.track_position(ix);
                 Ok((
                     next,
                     Expr::Literal {
@@ -304,6 +340,7 @@ impl<'a> Parser<'a> {
 
     fn parse_named_backref(
         &mut self,
+        start_ix: usize,
         ix: usize,
         open: &str,
         close: &str,
@@ -317,6 +354,7 @@ impl<'a> Parser<'a> {
         } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
         if let Some(group) = group_ix {
             self.backrefs.insert(group);
+            self.track_position(start_ix);
             return Ok((
                 end,
                 if let Some(recursion_level) = recursion_level {
@@ -345,6 +383,7 @@ impl<'a> Parser<'a> {
 
     fn parse_named_subroutine_call(
         &mut self,
+        start_ix: usize,
         ix: usize,
         open: &str,
         close: &str,
@@ -364,12 +403,15 @@ impl<'a> Parser<'a> {
             if group == 0 {
                 self.self_recursive = true;
             }
+            self.track_position(start_ix);
             return Ok((end, Expr::SubroutineCall(group)));
         }
         if let Some(group_name) = group_name {
             // here the name was parsed but doesn't match a capture group we have already parsed
+            let name_string = group_name.to_string();
+            self.track_position(start_ix);
             let expr = Expr::UnresolvedNamedSubroutineCall {
-                name: group_name.to_string(),
+                name: name_string,
                 ix,
             };
             self.has_unresolved_subroutines = true;
@@ -436,6 +478,8 @@ impl<'a> Parser<'a> {
         let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
         self.numeric_backrefs = true;
         self.backrefs.insert(group);
+        // Position is at the backslash (ix - 1)
+        self.track_position(ix - 1);
         Ok((
             end,
             Expr::Backref {
@@ -452,6 +496,8 @@ impl<'a> Parser<'a> {
         if group == 0 {
             self.self_recursive = true;
         }
+        // Position is at the backslash (ix - 1)
+        self.track_position(ix - 1);
         Ok((end, Expr::SubroutineCall(group)))
     }
 
@@ -477,15 +523,19 @@ impl<'a> Parser<'a> {
         } else if matches!(b, b'k') && !in_class {
             // Named backref: \k<name>
             if bytes.get(end) == Some(&b'\'') {
-                return self.parse_named_backref(end, "'", "'", true);
+                return self.parse_named_backref(ix, end, "'", "'", true);
             } else {
-                return self.parse_named_backref(end, "<", ">", true);
+                return self.parse_named_backref(ix, end, "<", ">", true);
             }
         } else if b == b'A' && !in_class {
+            self.track_position(ix);
             (end, Expr::Assertion(Assertion::StartText))
         } else if b == b'z' && !in_class {
+            self.track_position(ix);
             (end, Expr::Assertion(Assertion::EndText))
         } else if b == b'Z' && !in_class {
+            self.track_position(ix);
+            // Note: Delegate inside is not tracked separately
             (
                 end,
                 Expr::LookAround(
@@ -505,6 +555,7 @@ impl<'a> Parser<'a> {
                     ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
                 ));
             }
+            self.track_position(ix);
             (end, Expr::Assertion(Assertion::WordBoundary))
         } else if b == b'B' && !in_class {
             if bytes.get(end) == Some(&b'{') {
@@ -514,8 +565,10 @@ impl<'a> Parser<'a> {
                     ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
                 ));
             }
+            self.track_position(ix);
             (end, Expr::Assertion(Assertion::NotWordBoundary))
         } else if b == b'<' && !in_class {
+            self.track_position(ix);
             let expr = if self.flag(FLAG_ONIGURUMA_MODE) {
                 make_literal("<")
             } else {
@@ -523,6 +576,7 @@ impl<'a> Parser<'a> {
             };
             (end, expr)
         } else if b == b'>' && !in_class {
+            self.track_position(ix);
             let expr = if self.flag(FLAG_ONIGURUMA_MODE) {
                 make_literal(">")
             } else {
@@ -530,6 +584,7 @@ impl<'a> Parser<'a> {
             };
             (end, expr)
         } else if matches!(b | 32, b'd' | b's' | b'w') {
+            self.track_position(ix);
             (
                 end,
                 Expr::Delegate {
@@ -539,6 +594,7 @@ impl<'a> Parser<'a> {
                 },
             )
         } else if (b | 32) == b'h' {
+            self.track_position(ix);
             let s = if b == b'h' {
                 "[0-9A-Fa-f]"
             } else {
@@ -553,11 +609,11 @@ impl<'a> Parser<'a> {
                 },
             )
         } else if b == b'x' {
-            return self.parse_hex(end, 2);
+            return self.parse_hex(ix, end, 2);
         } else if b == b'u' {
-            return self.parse_hex(end, 4);
+            return self.parse_hex(ix, end, 4);
         } else if b == b'U' {
-            return self.parse_hex(end, 8);
+            return self.parse_hex(ix, end, 8);
         } else if (b | 32) == b'p' && end != bytes.len() {
             let mut end = end;
             let b = bytes[end];
@@ -575,6 +631,7 @@ impl<'a> Parser<'a> {
                     end += codepoint_len(b);
                 }
             }
+            self.track_position(ix);
             (
                 end,
                 Expr::Delegate {
@@ -584,10 +641,13 @@ impl<'a> Parser<'a> {
                 },
             )
         } else if b == b'K' && !in_class {
+            self.track_position(ix);
             (end, Expr::KeepOut)
         } else if b == b'G' && !in_class {
+            self.track_position(ix);
             (end, Expr::ContinueFromPreviousMatchEnd)
         } else if b == b'O' && !in_class {
+            self.track_position(ix);
             (end, Expr::Any { newline: true })
         } else if b == b'g' && !in_class {
             if end == self.re.len() {
@@ -600,12 +660,13 @@ impl<'a> Parser<'a> {
             if b.is_ascii_digit() {
                 self.parse_numbered_subroutine_call(end)?
             } else if b == b'\'' {
-                self.parse_named_subroutine_call(end, "'", "'", true)?
+                self.parse_named_subroutine_call(ix, end, "'", "'", true)?
             } else {
-                self.parse_named_subroutine_call(end, "<", ">", true)?
+                self.parse_named_subroutine_call(ix, end, "<", ">", true)?
             }
         } else {
             // printable ASCII (including space, see issue #29)
+            self.track_position(ix);
             (
                 end,
                 make_literal(match b {
@@ -640,7 +701,8 @@ impl<'a> Parser<'a> {
     }
 
     // ix points after '\x', eg to 'A0' or '{12345}', or after `\u` or `\U`
-    fn parse_hex(&self, ix: usize, digits: usize) -> Result<(usize, Expr)> {
+    // start_ix points to the backslash
+    fn parse_hex(&mut self, start_ix: usize, ix: usize, digits: usize) -> Result<(usize, Expr)> {
         if ix >= self.re.len() {
             // Incomplete escape sequence
             return Err(Error::ParseError(ix, ParseError::InvalidHex));
@@ -677,6 +739,7 @@ impl<'a> Parser<'a> {
         if let Some(c) = char::from_u32(codepoint) {
             let mut inner = String::with_capacity(4);
             inner.push(c);
+            self.track_position(start_ix);
             Ok((
                 end,
                 Expr::Literal {
@@ -690,6 +753,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_class(&mut self, ix: usize) -> Result<(usize, Expr)> {
+        let start_ix = ix; // Position of '['
         let bytes = self.re.as_bytes();
         let mut ix = ix + 1; // skip opening '['
         let mut class = String::new();
@@ -751,6 +815,7 @@ impl<'a> Parser<'a> {
             };
             ix = end;
         }
+        self.track_position(start_ix);
         let class = Expr::Delegate {
             inner: class,
             size: 1,
@@ -761,6 +826,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_group(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let start_ix = ix; // Position of '('
         let depth = depth + 1;
         if depth >= MAX_RECURSION {
             return Err(Error::ParseError(ix, ParseError::RecursionExceeded));
@@ -809,13 +875,14 @@ impl<'a> Parser<'a> {
             }
         } else if self.re[ix..].starts_with("?P=") {
             // Backref using Python syntax: (?P=name)
-            return self.parse_named_backref(ix + 3, "", ")", false);
+            // ix - 1 is the opening paren '('
+            return self.parse_named_backref(ix - 1, ix + 3, "", ")", false);
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
             return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with("?P>") {
-            return self.parse_named_subroutine_call(ix + 3, "", ")", false);
+            return self.parse_named_subroutine_call(ix - 1, ix + 3, "", ")", false);
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -825,6 +892,7 @@ impl<'a> Parser<'a> {
         let ix = ix + skip;
         let (ix, child) = self.parse_re(ix, depth)?;
         let ix = self.check_for_close_paren(ix)?;
+        self.track_position(start_ix);
         let result = match (la, skip) {
             (Some(la), _) => Expr::LookAround(Box::new(child), la),
             (None, 2) => Expr::AtomicGroup(Box::new(child)),
@@ -848,6 +916,7 @@ impl<'a> Parser<'a> {
 
     // ix points to `?` in `(?`
     fn parse_flags(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let start_ix = ix - 1; // Position of '(' in '(?'
         let start = ix + 1;
 
         fn unknown_flag(re: &str, start: usize, end: usize) -> Error {
@@ -886,6 +955,7 @@ impl<'a> Parser<'a> {
                     if ix == start || neg && ix == start + 1 {
                         return Err(unknown_flag(self.re, start, ix));
                     }
+                    self.track_position(start_ix);
                     return Ok((ix + 1, Expr::Empty));
                 }
                 b':' => {
@@ -913,6 +983,7 @@ impl<'a> Parser<'a> {
 
     // ix points to after the last ( in (?(
     fn parse_conditional(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let start_ix = ix - 2; // Position of the first '(' in '(?('
         if ix >= self.re.len() {
             return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
         }
@@ -920,11 +991,11 @@ impl<'a> Parser<'a> {
         // get the character after the open paren
         let b = bytes[ix];
         let (next, condition) = if b == b'\'' {
-            self.parse_named_backref(ix, "'", "')", true)?
+            self.parse_named_backref(start_ix, ix, "'", "')", true)?
         } else if b == b'<' {
-            self.parse_named_backref(ix, "<", ">)", true)?
+            self.parse_named_backref(start_ix, ix, "<", ">)", true)?
         } else if b == b'+' || b == b'-' || b.is_ascii_digit() {
-            self.parse_named_backref(ix, "", ")", true)?
+            self.parse_named_backref(start_ix, ix, "", ")", true)?
         } else {
             let (next, condition) = self.parse_re(ix, depth)?;
             (self.check_for_close_paren(next)?, condition)
@@ -934,6 +1005,7 @@ impl<'a> Parser<'a> {
             // Backreference validity checker
             if let Expr::Backref { group, .. } = condition {
                 let after = self.check_for_close_paren(end)?;
+                self.track_position(start_ix);
                 return Ok((after, Expr::BackrefExistsCondition(group)));
             } else {
                 return Err(Error::ParseError(
@@ -967,6 +1039,7 @@ impl<'a> Parser<'a> {
         };
 
         let after = self.check_for_close_paren(end)?;
+        self.track_position(start_ix);
         Ok((
             after,
             if if_true == Expr::Empty && if_false == Expr::Empty {
