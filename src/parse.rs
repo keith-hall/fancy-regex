@@ -319,7 +319,7 @@ impl<'a> Parser<'a> {
             b'(' => self.parse_group(ix, depth),
             b'\\' => self.parse_escape(ix, false),
             b'+' | b'*' | b'?' | b'|' | b')' => {
-                self.track_position(ix);
+                // Don't track position for Empty - these are filtered out in parse_branch
                 Ok((ix, Expr::Empty))
             }
             b'[' => self.parse_class(ix),
@@ -2804,3 +2804,4 @@ mod tests {
         );
     }
 }
+

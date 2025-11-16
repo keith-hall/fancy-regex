@@ -92,17 +92,6 @@ struct Analyzer<'a> {
 
 impl<'a> Analyzer<'a> {
     fn visit(&mut self, expr: &'a Expr) -> Result<Info<'a>> {
-        // Get the position for this Expr
-        let start_ix = if self.position_ix < self.positions.len() {
-            let pos = self.positions[self.position_ix];
-            self.position_ix += 1;
-            pos
-        } else {
-            // If we run out of positions, use 0 as a fallback
-            // This shouldn't happen if the parser is working correctly
-            0
-        };
-        
         let start_group = self.group_ix;
         let mut children = Vec::new();
         let mut min_size = 0;
@@ -262,6 +251,17 @@ impl<'a> Analyzer<'a> {
                     "Backref at recursion level".to_string(),
                 )));
             }
+        };
+
+        // Get the position for this Expr AFTER visiting children (post-order)
+        let start_ix = if self.position_ix < self.positions.len() {
+            let pos = self.positions[self.position_ix];
+            self.position_ix += 1;
+            pos
+        } else {
+            // If we run out of positions, use 0 as a fallback
+            // This shouldn't happen if the parser is working correctly
+            0
         };
 
         Ok(Info {
