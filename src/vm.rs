@@ -127,6 +127,15 @@ impl CaptureGroupRange {
     pub fn end(&self) -> usize {
         self.1
     }
+
+    /// Converts this range to an Option, returning None if start equals end (no capture groups).
+    pub fn to_option_if_non_empty(self) -> Option<Self> {
+        if self.start() == self.end() {
+            None
+        } else {
+            Some(self)
+        }
+    }
 }
 
 #[derive(Clone)]

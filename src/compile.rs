@@ -493,11 +493,7 @@ impl Compiler {
                             cache_pool,
                             pattern: pattern.to_string(),
                             inner: forward_regex,
-                            capture_groups: if capture_groups.start() == capture_groups.end() {
-                                None
-                            } else {
-                                Some(capture_groups)
-                            },
+                            capture_groups: capture_groups.to_option_if_non_empty(),
                         }));
                     Ok(())
                 }
@@ -667,11 +663,7 @@ impl DelegateBuilder {
         Ok(Insn::Delegate(Delegate {
             inner: compiled,
             pattern: self.re.clone(),
-            capture_groups: if capture_groups.start() == capture_groups.end() {
-                None
-            } else {
-                Some(capture_groups)
-            },
+            capture_groups: capture_groups.to_option_if_non_empty(),
         }))
     }
 }
