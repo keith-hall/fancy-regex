@@ -459,8 +459,10 @@ impl Compiler {
                     let mut delegate_builder = DelegateBuilder::new();
                     delegate_builder.push(inner);
                     let pattern = &delegate_builder.re;
-                    let capture_groups = delegate_builder.capture_groups.expect("Expected at least one expression");
-                    
+                    let capture_groups = delegate_builder
+                        .capture_groups
+                        .expect("Expected at least one expression");
+
                     // Use reverse matching for variable-sized lookbehinds without fancy features
                     use regex_automata::nfa::thompson;
                     // Build a reverse DFA for the pattern
@@ -481,10 +483,10 @@ impl Compiler {
                         move || dfa.create_cache()
                     });
                     let cache_pool = Pool::new(create);
-                    
+
                     // Build the forward regex for capture group extraction
                     let forward_regex = compile_inner(&pattern, &self.options)?;
-                    
+
                     self.b
                         .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
                             dfa,
@@ -636,9 +638,9 @@ impl DelegateBuilder {
             self.capture_groups = Some(info.capture_groups);
         } else {
             // Update the end_group to the latest
-            self.capture_groups = self.capture_groups.map(|range| 
-                CaptureGroupRange(range.start(), info.end_group())
-            );
+            self.capture_groups = self
+                .capture_groups
+                .map(|range| CaptureGroupRange(range.start(), info.end_group()));
         }
 
         // Add expression. The precedence argument has to be 1 here to
@@ -656,7 +658,9 @@ impl DelegateBuilder {
     }
 
     fn build(&self, options: &RegexOptions) -> Result<Insn> {
-        let capture_groups = self.capture_groups.expect("Expected at least one expression");
+        let capture_groups = self
+            .capture_groups
+            .expect("Expected at least one expression");
 
         let compiled = compile_inner(&self.re, options)?;
 

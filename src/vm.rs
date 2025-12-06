@@ -849,13 +849,17 @@ pub(crate) fn run(
                         Ok(Some(match_result)) => {
                             // Update ix to the start position of the match
                             let match_start = match_result.offset();
-                            
+
                             if let Some(range) = capture_groups {
                                 // There are capture groups, need to search forward to populate them
-                                let forward_input = Input::new(s).span(match_start..ix).anchored(Anchored::Yes);
+                                let forward_input =
+                                    Input::new(s).span(match_start..ix).anchored(Anchored::Yes);
                                 inner_slots.resize((range.end() - range.start() + 1) * 2, None);
-                                
-                                if inner.search_slots(&forward_input, &mut inner_slots).is_some() {
+
+                                if inner
+                                    .search_slots(&forward_input, &mut inner_slots)
+                                    .is_some()
+                                {
                                     // Store capture group positions
                                     store_capture_groups(&mut state, &inner_slots, range);
                                     // Update ix to the start of the match (where the lookbehind matched)
