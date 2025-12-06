@@ -35,6 +35,7 @@ use alloc::collections::BTreeMap as Map;
 #[cfg(feature = "std")]
 use std::collections::HashMap as Map;
 
+/// Information about an expression node after analysis
 #[derive(Debug)]
 pub struct Info<'a> {
     pub(crate) start_group: usize,
@@ -43,7 +44,10 @@ pub struct Info<'a> {
     pub(crate) const_size: bool,
     pub(crate) hard: bool,
     pub(crate) expr: &'a Expr,
-    pub(crate) children: Vec<Info<'a>>,
+    /// Child expression information nodes
+    pub children: Vec<Info<'a>>,
+    /// Position in the input pattern string where this Expr starts
+    pub start_ix: usize,
 }
 
 impl<'a> Info<'a> {
@@ -80,6 +84,10 @@ struct Analyzer<'a> {
     /// Stores the analysis info for each group by group number
     // NOTE: uses a Map instead of a Vec because sometimes we start from capture group 1 othertimes 0
     group_info: Map<usize, SizeInfo>,
+    /// Positions where each Expr starts in the input pattern
+    positions: &'a [usize],
+    /// Current index in the positions array
+    position_ix: usize,
 }
 
 impl<'a> Analyzer<'a> {
@@ -245,6 +253,17 @@ impl<'a> Analyzer<'a> {
             }
         };
 
+        // Get the position for this Expr AFTER visiting children (post-order)
+        let start_ix = if self.position_ix < self.positions.len() {
+            let pos = self.positions[self.position_ix];
+            self.position_ix += 1;
+            pos
+        } else {
+            // If we run out of positions, use 0 as a fallback
+            // This shouldn't happen if the parser is working correctly
+            0
+        };
+
         Ok(Info {
             expr,
             children,
@@ -253,6 +272,7 @@ impl<'a> Analyzer<'a> {
             min_size,
             const_size,
             hard,
+            start_ix,
         })
     }
 }
@@ -271,6 +291,8 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         backrefs: &tree.backrefs,
         group_ix: start_group,
         group_info: Map::new(),
+        positions: &tree.positions,
+        position_ix: 0,
     };
 
     let analyzed = analyzer.visit(&tree.expr);

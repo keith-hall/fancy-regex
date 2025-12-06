@@ -687,6 +687,7 @@ mod tests {
             named_groups: Default::default(),
             contains_subroutines: false,
             self_recursive: false,
+            positions: vec![0, 0, 0, 0], // Alt, and three literals
         };
         let info = analyze(&tree, false).unwrap();
 
