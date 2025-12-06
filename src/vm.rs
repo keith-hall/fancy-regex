@@ -100,6 +100,31 @@ pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
 
+/// Represents a range of capture groups by storing the first and last group numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CaptureGroupRange(pub usize, pub usize);
+
+impl CaptureGroupRange {
+    /// Returns the start (first) group number.
+    pub fn start(&self) -> usize {
+        self.0
+    }
+
+    /// Returns the end (last) group number.
+    pub fn end(&self) -> usize {
+        self.1
+    }
+
+    /// Converts this range to an Option, returning None if start equals end (no capture groups).
+    pub fn to_option_if_non_empty(self) -> Option<Self> {
+        if self.start() == self.end() {
+            None
+        } else {
+            Some(self)
+        }
+    }
+}
+
 #[derive(Clone)]
 /// Delegate matching to the regex crate
 pub struct Delegate {
@@ -107,10 +132,8 @@ pub struct Delegate {
     pub inner: Regex,
     /// The regex pattern as a string
     pub pattern: String,
-    /// The first group number that this regex captures (if it contains groups)
-    pub start_group: usize,
-    /// The last group number
-    pub end_group: usize,
+    /// The range of capture groups. None if there are no capture groups.
+    pub capture_groups: Option<CaptureGroupRange>,
 }
 
 impl core::fmt::Debug for Delegate {
@@ -119,28 +142,44 @@ impl core::fmt::Debug for Delegate {
         let Self {
             inner: _,
             pattern,
-            start_group,
-            end_group,
+            capture_groups,
         } = self;
 
         f.debug_struct("Delegate")
             .field("pattern", pattern)
-            .field("start_group", start_group)
-            .field("end_group", end_group)
+            .field("capture_groups", capture_groups)
             .finish()
     }
 }
 
 #[cfg(feature = "variable-lookbehinds")]
-#[derive(Clone)]
 /// Delegate matching in reverse to regex-automata
 pub struct ReverseBackwardsDelegate {
     /// The regex pattern as a string which will be matched in reverse, in a backwards direction
     pub pattern: String,
-    /// The delegate regex to match backwards
-    pub(crate) dfa: regex_automata::hybrid::dfa::DFA,
-    /// Cache for DFA searches
-    pub(crate) cache: core::cell::RefCell<regex_automata::hybrid::dfa::Cache>,
+    /// The delegate regex to match backwards (wrapped in Arc for efficient cloning)
+    pub(crate) dfa: Arc<regex_automata::hybrid::dfa::DFA>,
+    /// Cache pool for DFA searches
+    pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
+    /// The forward regex for capture group extraction
+    pub(crate) capture_group_extraction_inner: Option<Regex>,
+    /// The range of capture groups. None if there are no capture groups.
+    pub capture_groups: Option<CaptureGroupRange>,
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+impl Clone for ReverseBackwardsDelegate {
+    fn clone(&self) -> Self {
+        let dfa_for_closure = Arc::clone(&self.dfa);
+        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
+        Self {
+            pattern: self.pattern.clone(),
+            cache_pool: Pool::new(create),
+            dfa: Arc::clone(&self.dfa),
+            capture_group_extraction_inner: self.capture_group_extraction_inner.clone(),
+            capture_groups: self.capture_groups,
+        }
+    }
 }
 
 #[cfg(feature = "variable-lookbehinds")]
@@ -150,11 +189,14 @@ impl core::fmt::Debug for ReverseBackwardsDelegate {
         let Self {
             pattern,
             dfa: _,
-            cache: _,
+            cache_pool: _,
+            capture_group_extraction_inner: _,
+            capture_groups,
         } = self;
 
         f.debug_struct("ReverseBackwardsDelegate")
             .field("pattern", pattern)
+            .field("capture_groups", capture_groups)
             .finish()
     }
 }
@@ -520,6 +562,29 @@ fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool 
     re.find(&s[ix..end]).is_some()
 }
 
+/// Helper function to store capture group positions from inner_slots into state.
+/// This is used by both Delegate and BackwardsDelegate instructions.
+#[inline]
+fn store_capture_groups(
+    state: &mut State,
+    inner_slots: &[Option<NonMaxUsize>],
+    range: CaptureGroupRange,
+) {
+    let start_group = range.start();
+    let end_group = range.end();
+    for i in 0..(end_group - start_group) {
+        let slot = (start_group + i) * 2;
+        if let Some(start) = inner_slots[(i + 1) * 2] {
+            let end = inner_slots[(i + 1) * 2 + 1].unwrap();
+            state.save(slot, start.get());
+            state.save(slot + 1, end.get());
+        } else {
+            state.save(slot, usize::MAX);
+            state.save(slot + 1, usize::MAX);
+        }
+    }
+}
+
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(prog, s, pos, OPTION_TRACE, &RegexOptions::default())
@@ -770,17 +835,46 @@ pub(crate) fn run(
                 #[cfg(feature = "variable-lookbehinds")]
                 Insn::BackwardsDelegate(ReverseBackwardsDelegate {
                     ref dfa,
-                    ref cache,
+                    ref cache_pool,
                     pattern: _,
+                    ref capture_group_extraction_inner,
+                    capture_groups,
                 }) => {
                     // Use regex-automata to search backwards from current position
-                    let mut cache = cache.borrow_mut();
+                    let mut cache_guard = cache_pool.get();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
 
-                    let found_match = matches!(dfa.try_search_rev(&mut cache, &input), Ok(Some(_)));
+                    match dfa.try_search_rev(&mut cache_guard, &input) {
+                        Ok(Some(match_result)) => {
+                            // Update ix to the start position of the match
+                            let match_start = match_result.offset();
 
-                    if !found_match {
-                        break 'fail;
+                            if let Some(inner) = capture_group_extraction_inner {
+                                if let Some(range) = capture_groups {
+                                    // There are capture groups, need to search forward to populate them
+                                    let forward_input =
+                                        Input::new(s).span(match_start..ix).anchored(Anchored::Yes);
+                                    inner_slots.resize((range.end() - range.start() + 1) * 2, None);
+
+                                    if inner
+                                        .search_slots(&forward_input, &mut inner_slots)
+                                        .is_some()
+                                    {
+                                        // Store capture group positions
+                                        store_capture_groups(&mut state, &inner_slots, range);
+                                    } else {
+                                        break 'fail;
+                                    }
+                                } else {
+                                    // No groups, just update ix to the match start
+                                    ix = match_start;
+                                }
+                            } else {
+                                // No groups, just update ix to the match start
+                                ix = match_start;
+                            }
+                        }
+                        _ => break 'fail,
                     }
                 }
                 Insn::BeginAtomic => {
@@ -794,33 +888,23 @@ pub(crate) fn run(
                 Insn::Delegate(Delegate {
                     ref inner,
                     pattern: _,
-                    start_group,
-                    end_group,
+                    capture_groups,
                 }) => {
                     let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
-                    if start_group == end_group {
+                    if let Some(range) = capture_groups {
+                        // Has capture groups, need to extract them
+                        inner_slots.resize((range.end() - range.start() + 1) * 2, None);
+                        if inner.search_slots(&input, &mut inner_slots).is_some() {
+                            store_capture_groups(&mut state, &inner_slots, range);
+                            ix = inner_slots[1].unwrap().get();
+                        } else {
+                            break 'fail;
+                        }
+                    } else {
                         // No groups, so we can use faster methods
                         match inner.search_half(&input) {
                             Some(m) => ix = m.offset(),
                             _ => break 'fail,
-                        }
-                    } else {
-                        inner_slots.resize((end_group - start_group + 1) * 2, None);
-                        if inner.search_slots(&input, &mut inner_slots).is_some() {
-                            for i in 0..(end_group - start_group) {
-                                let slot = (start_group + i) * 2;
-                                if let Some(start) = inner_slots[(i + 1) * 2] {
-                                    let end = inner_slots[(i + 1) * 2 + 1].unwrap();
-                                    state.save(slot, start.get());
-                                    state.save(slot + 1, end.get());
-                                } else {
-                                    state.save(slot, usize::MAX);
-                                    state.save(slot + 1, usize::MAX);
-                                }
-                            }
-                            ix = inner_slots[1].unwrap().get();
-                        } else {
-                            break 'fail;
                         }
                     }
                 }

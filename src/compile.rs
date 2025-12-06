@@ -21,16 +21,20 @@
 //! Compilation of regexes to VM.
 
 use alloc::string::{String, ToString};
+#[cfg(feature = "variable-lookbehinds")]
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
+#[cfg(feature = "variable-lookbehinds")]
+use regex_automata::util::pool::Pool;
 #[cfg(all(test, feature = "std"))]
 use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::analyze::Info;
 #[cfg(feature = "variable-lookbehinds")]
-use crate::vm::ReverseBackwardsDelegate;
-use crate::vm::{Delegate, Insn, Prog};
+use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
+use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
 
@@ -140,7 +144,7 @@ impl Compiler {
                 self.inside_alternation = inside_alternation;
             }
             Expr::Group(_) => {
-                let group = info.start_group;
+                let group = info.start_group();
                 self.b.add(Insn::Save(group * 2));
                 self.visit(&info.children[0], hard)?;
                 self.b.add(Insn::Save(group * 2 + 1));
@@ -464,6 +468,10 @@ impl Compiler {
                     let mut delegate_builder = DelegateBuilder::new();
                     delegate_builder.push(inner);
                     let pattern = &delegate_builder.re;
+                    let capture_groups = delegate_builder
+                        .capture_groups
+                        .expect("Expected at least one expression");
+
                     // Use reverse matching for variable-sized lookbehinds without fancy features
                     use regex_automata::nfa::thompson;
                     // Build a reverse DFA for the pattern
@@ -479,12 +487,27 @@ impl Compiler {
                         }
                     };
 
-                    let cache = core::cell::RefCell::new(dfa.create_cache());
+                    let dfa = Arc::new(dfa);
+                    let create: CachePoolFn = alloc::boxed::Box::new({
+                        let dfa = Arc::clone(&dfa);
+                        move || dfa.create_cache()
+                    });
+                    let cache_pool = Pool::new(create);
+
+                    // Build the forward regex for capture group extraction
+                    let forward_regex = if inner.start_group() != inner.end_group() {
+                        Some(compile_inner(&pattern, &self.options)?)
+                    } else {
+                        None
+                    };
+
                     self.b
                         .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
                             dfa,
-                            cache,
+                            cache_pool,
                             pattern: pattern.to_string(),
+                            capture_group_extraction_inner: forward_regex,
+                            capture_groups: capture_groups.to_option_if_non_empty(),
                         }));
                     Ok(())
                 }
@@ -575,7 +598,7 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
-    let mut c = Compiler::new(info.end_group);
+    let mut c = Compiler::new(info.end_group());
     if !anchored {
         // add instructions as if \O*? was used at the start of the expression
         // so that we bump the haystack index by one when failing to match at the current position
@@ -585,12 +608,12 @@ pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
         c.b.add(Insn::Any);
         c.b.add(Insn::Jmp(current_pc));
     }
-    if info.start_group == 1 {
+    if info.start_group() == 1 {
         // add implicit capture group 0 begin
         c.b.add(Insn::Save(0));
     }
     c.visit(info, false)?;
-    if info.start_group == 1 {
+    if info.start_group() == 1 {
         // add implicit capture group 0 end
         c.b.add(Insn::Save(1));
     }
@@ -602,8 +625,7 @@ struct DelegateBuilder {
     re: String,
     min_size: usize,
     const_size: bool,
-    start_group: Option<usize>,
-    end_group: usize,
+    capture_groups: Option<CaptureGroupRange>,
 }
 
 impl DelegateBuilder {
@@ -612,8 +634,7 @@ impl DelegateBuilder {
             re: String::new(),
             min_size: 0,
             const_size: true,
-            start_group: None,
-            end_group: 0,
+            capture_groups: None,
         }
     }
 
@@ -623,10 +644,14 @@ impl DelegateBuilder {
 
         self.min_size += info.min_size;
         self.const_size &= info.const_size;
-        if self.start_group.is_none() {
-            self.start_group = Some(info.start_group);
+        if self.capture_groups.is_none() {
+            self.capture_groups = Some(info.capture_groups);
+        } else {
+            // Update the end_group to the latest
+            self.capture_groups = self
+                .capture_groups
+                .map(|range| CaptureGroupRange(range.start(), info.end_group()));
         }
-        self.end_group = info.end_group;
 
         // Add expression. The precedence argument has to be 1 here to
         // ensure correct grouping in these cases:
@@ -643,16 +668,16 @@ impl DelegateBuilder {
     }
 
     fn build(&self, options: &RegexOptions) -> Result<Insn> {
-        let start_group = self.start_group.expect("Expected at least one expression");
-        let end_group = self.end_group;
+        let capture_groups = self
+            .capture_groups
+            .expect("Expected at least one expression");
 
         let compiled = compile_inner(&self.re, options)?;
 
         Ok(Insn::Delegate(Delegate {
             inner: compiled,
             pattern: self.re.clone(),
-            start_group,
-            end_group,
+            capture_groups: capture_groups.to_option_if_non_empty(),
         }))
     }
 }
@@ -821,12 +846,42 @@ mod tests {
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
-        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache: _ }) if pattern == "ab+");
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "ab+");
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);
     }
 
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_lookbehind_with_required_feature_captures() {
+        let prog = compile_prog(r"(?<=a(b+))x");
+
+        assert_eq!(prog.len(), 5, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Save(2));
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: ref inner, capture_groups: Some(CaptureGroupRange(0, 1)) }) if pattern == "a(b+)" && inner.is_some());
+        assert_matches!(prog[2], Restore(2));
+        assert_matches!(prog[3], Lit(ref l) if l == "x");
+        assert_matches!(prog[4], End);
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_lookbehind_with_required_feature_backref_captures() {
+        // currently hard variable lookbehinds are unsupported.
+        // the backref to a capture group inside the variable lookbehind makes the capture group hard
+        let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(CompileError::LookBehindNotConst)
+        );
+    }
+
+>>>>>>> 2395bf2 (create CaptureGroupRange struct to replace/encapsulate start_group and end_group fields)
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
         let info = analyze(&tree, true).unwrap();
