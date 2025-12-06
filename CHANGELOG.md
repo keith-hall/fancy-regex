@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [Unreleased]
+### Changed
+- **Performance improvement**: Wrapped `Prog` in `Arc` to make `Regex` cloning ~38x faster. This significantly improves performance when cloning regex instances for use in multiple threads. The `Clone` trait has been removed from internal `Insn` and `Prog` types as they are no longer cloned directly.
+
 ## [0.16.2] - 2025-09-19
 ### Added
 - Add an "oniguruma mode" flag to control whether `\<` and `\>` are treated as literals or word-boundary assertions. (#186)
