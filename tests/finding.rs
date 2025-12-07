@@ -460,10 +460,10 @@ fn g_with_lookahead_before() {
     let text = "123abc";
     
     // Lookahead doesn't consume, so \G should still be at position 0
-    assert_eq!(find(r"(?=\d)\G\d+", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"(?=\d)\G\d+", text), Some((0, 3)));
     
     // Lookahead fails, so whole match fails
-    assert_eq!(find(r"(?=[a-z])\G\d+", "123abc"), None);
+    assert_eq!(find(r"(?=[a-z])\G\d+", text), None);
 }
 
 #[test]
@@ -472,10 +472,10 @@ fn g_with_negative_lookahead_before() {
     let text = "123abc";
     
     // Negative lookahead passes (not a letter), \G continues
-    assert_eq!(find(r"(?![a-z])\G\d+", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"(?![a-z])\G\d+", text), Some((0, 3)));
     
     // Negative lookahead fails (is a digit), match fails
-    assert_eq!(find(r"(?!\d)\G\d+", "123abc"), None);
+    assert_eq!(find(r"(?!\d)\G\d+", text), None);
 }
 
 #[test]
@@ -484,10 +484,10 @@ fn g_in_alternation() {
     let text = "123abc";
     
     // First branch with \G should match
-    assert_eq!(find(r"\G\d+|xyz", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"\G\d+|xyz", text), Some((0, 3)));
     
     // Second branch should also work when first fails
-    assert_eq!(find(r"\Gxyz|\d+", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"\Gxyz|\d+", text), Some((0, 3)));
 }
 
 #[test]
@@ -497,7 +497,7 @@ fn g_fails_when_not_at_continue_position() {
     
     // Starting match at position 0, but there's a space, so \G at position 0 followed by \d
     // should not match because we'd need to skip the space
-    assert_eq!(find(r"\G\d+", " 123"), None);
+    assert_eq!(find(r"\G\d+", text), None);
 }
 
 #[test]
@@ -506,7 +506,7 @@ fn g_in_group_at_start() {
     let text = "123abc";
     
     // Group doesn't change the position, \G should work
-    assert_eq!(find(r"(\G\d+)", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"(\G\d+)", text), Some((0, 3)));
 }
 
 #[test]
@@ -515,7 +515,7 @@ fn g_with_optional_before() {
     let text = "123abc";
     
     // Optional that matches nothing doesn't advance position, \G should work
-    assert_eq!(find(r"x?\G\d+", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"x?\G\d+", text), Some((0, 3)));
 }
 
 #[test]
@@ -524,10 +524,10 @@ fn g_after_zero_width_assertion() {
     let text = "123abc";
     
     // Start-of-string anchor doesn't consume, \G continues
-    assert_eq!(find(r"^\G\d+", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"^\G\d+", text), Some((0, 3)));
     
     // Word boundary before \G
-    assert_eq!(find(r"\b\G\d+", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"\b\G\d+", text), Some((0, 3)));
 }
 
 #[test]
@@ -536,7 +536,7 @@ fn g_with_alternation_containing_zero_width() {
     let text = "123abc";
     
     // Both branches have zero-width before \G
-    assert_eq!(find(r"(?:^|\b)\G\d+", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"(?:^|\b)\G\d+", text), Some((0, 3)));
 }
 
 #[test]
@@ -556,7 +556,7 @@ fn g_in_nested_alternation() {
     let text = "123abc";
     
     // Nested alternation with \G in inner branch
-    assert_eq!(find(r"(?:\G\d+|xyz)|abc", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"(?:\G\d+|xyz)|abc", text), Some((0, 3)));
 }
 
 #[test]
@@ -565,7 +565,7 @@ fn g_with_multiple_lookaheads() {
     let text = "123abc";
     
     // Both lookaheads pass, \G continues
-    assert_eq!(find(r"(?=\d)(?=1)\G\d+", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"(?=\d)(?=1)\G\d+", text), Some((0, 3)));
 }
 
 #[test]
@@ -587,5 +587,5 @@ fn g_with_atomic_group() {
     let text = "123abc";
     
     // Atomic group doesn't affect \G position checking
-    assert_eq!(find(r"(?>\G)\d+", "123abc"), Some((0, 3)));
+    assert_eq!(find(r"(?>\G)\d+", text), Some((0, 3)));
 }
