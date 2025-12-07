@@ -71,6 +71,7 @@
 
 use alloc::collections::BTreeSet;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex;
@@ -78,6 +79,18 @@ use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
+
+#[cfg(feature = "variable-lookbehinds")]
+use regex_automata::util::pool::Pool;
+
+#[cfg(feature = "variable-lookbehinds")]
+pub(crate) type CachePoolFn = alloc::boxed::Box<
+    dyn Fn() -> regex_automata::hybrid::dfa::Cache
+        + Send
+        + Sync
+        + core::panic::UnwindSafe
+        + core::panic::RefUnwindSafe,
+>;
 
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;

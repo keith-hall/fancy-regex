@@ -183,7 +183,7 @@ impl Compiler {
             }
             Expr::ContinueFromPreviousMatchEnd => {
                 self.b.add(Insn::ContinueFromPreviousMatchEnd {
-                    at_start: info.start_group == 1
+                    at_start: info.start_group() == 1
                         && info.min_pos_in_group == 0
                         && !self.inside_alternation,
                 });
@@ -462,7 +462,7 @@ impl Compiler {
             if inner.const_size {
                 self.b.add(Insn::GoBack(inner.min_size));
                 self.visit(inner, false)
-            } else if !inner.hard && inner.start_group == inner.end_group {
+            } else if !inner.hard {
                 #[cfg(feature = "variable-lookbehinds")]
                 {
                     let mut delegate_builder = DelegateBuilder::new();
@@ -881,7 +881,6 @@ mod tests {
         );
     }
 
->>>>>>> 2395bf2 (create CaptureGroupRange struct to replace/encapsulate start_group and end_group fields)
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
         let info = analyze(&tree, true).unwrap();

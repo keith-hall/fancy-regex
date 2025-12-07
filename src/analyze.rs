@@ -635,7 +635,7 @@ mod tests {
         // prove we are looking at the position of the d after capture group 1
         assert_matches!(info.children[2].expr, Expr::Literal { val, casei: false } if val == "d");
         assert_eq!(info.children[2].min_pos_in_group, 3);
-        assert_eq!(info.children[2].start_group, 2);
+        assert_eq!(info.children[2].start_group(), 2);
         assert_eq!(info.children[2].min_size, 1);
 
         // prove we are looking at the position of the e in capture group 2
