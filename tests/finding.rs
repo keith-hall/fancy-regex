@@ -574,8 +574,63 @@ fn continue_from_previous_match_in_find_iter_basic() {
 #[test]
 fn continue_from_previous_match_with_atomic_group() {
     // Pattern: atomic group with \G
-    let text = "123abc";
-    
     // Atomic group doesn't affect \G position checking
     assert_eq!(find(r"(?>\G)\d+", "123abc"), Some((0, 3)));
+}
+
+#[test]
+fn find_iter_alternation_with_continue_from_previous_match() {
+    // Test that \G in alternation doesn't cause overzealous early bailout
+    // Pattern: abc|\G1
+    // The alternation allows matching "abc" at any position,
+    // while \G1 only matches "1" at the continuation position
+    let text = "1hello abc1";
+    
+    let regex = common::regex(r"abc|\G1");
+    let matches: Vec<_> = regex.find_iter(text).collect();
+    
+    // Expected matches:
+    // 1. "1" at position 0 (via \G1 branch at start)
+    // 2. "abc" at position 7 (via abc branch)
+    // 3. "1" at position 10 (via \G1 branch continuing from previous match end)
+    assert_eq!(matches.len(), 3);
+    assert_eq!((matches[0].as_ref().unwrap().start(), matches[0].as_ref().unwrap().end()), (0, 1));
+    assert_eq!((matches[1].as_ref().unwrap().start(), matches[1].as_ref().unwrap().end()), (7, 10));
+    assert_eq!((matches[2].as_ref().unwrap().start(), matches[2].as_ref().unwrap().end()), (10, 11));
+}
+
+#[test]
+fn find_iter_alternation_with_continue_from_previous_match_reversed() {
+    // Test with \G branch first in alternation: \G\d+|abc
+    // This ensures the optimization doesn't incorrectly bail out
+    let text = "123abc456";
+    
+    let regex = common::regex(r"\G\d+|abc");
+    let matches: Vec<_> = regex.find_iter(text).collect();
+    
+    // Expected matches:
+    // 1. "123" at position 0 (via \G\d+ branch at start)
+    // 2. "abc" at position 3 (via abc branch continuing from previous match end)
+    // 3. "456" at position 6 (via \G\d+ branch continuing from previous match end)
+    assert_eq!(matches.len(), 3);
+    assert_eq!((matches[0].as_ref().unwrap().start(), matches[0].as_ref().unwrap().end()), (0, 3));
+    assert_eq!((matches[1].as_ref().unwrap().start(), matches[1].as_ref().unwrap().end()), (3, 6));
+    assert_eq!((matches[2].as_ref().unwrap().start(), matches[2].as_ref().unwrap().end()), (6, 9));
+}
+
+#[test]
+fn find_iter_alternation_with_continue_from_previous_match_complex() {
+    // Test with more complex alternation: \G\w+|[0-9]+
+    // This tests that non-\G branches can match at non-continuation positions
+    let text = "abc 123 def";
+    
+    let regex = common::regex(r"\G\w+|[0-9]+");
+    let matches: Vec<_> = regex.find_iter(text).collect();
+    
+    // Expected matches:
+    // 1. "abc" at position 0 (via \G\w+ branch at start)
+    // 2. "123" at position 4 (via [0-9]+ branch - non-continuation position)
+    assert_eq!(matches.len(), 2);
+    assert_eq!((matches[0].as_ref().unwrap().start(), matches[0].as_ref().unwrap().end()), (0, 3));
+    assert_eq!((matches[1].as_ref().unwrap().start(), matches[1].as_ref().unwrap().end()), (4, 7));
 }
