@@ -7,7 +7,7 @@ to prevent catastrophic backtracking.
 
 Certain regex patterns with nested quantifiers can cause exponential time complexity
 when matching against inputs that don't match. For example, the pattern `(a+)+b` with
-input `"aaa...aaac"` (many 'a's followed by 'c' instead of 'b') causes the regex
+input `"aaaaaac"` (multiple 'a's followed by 'c' instead of 'b') causes the regex
 engine to explore an exponential number of ways to partition the 'a's.
 
 ## The Solution: State Deduplication

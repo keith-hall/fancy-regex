@@ -1017,16 +1017,15 @@ mod tests {
 
     impl Arbitrary for Operation {
         fn arbitrary(g: &mut Gen) -> Self {
+            let choices = [0usize, 1, 2, 3, 4];
             match g.choose(&[0, 1, 2]) {
-                Some(0) => Operation::Push(
-                    *g.choose(&[0usize, 1, 2, 3, 4]).unwrap(),
-                    *g.choose(&[0usize, 1, 2, 3, 4]).unwrap(),
-                ),
+                Some(0) => {
+                    let pc = *g.choose(&choices).unwrap();
+                    let ix = *g.choose(&choices).unwrap();
+                    Operation::Push(pc, ix)
+                }
                 Some(1) => Operation::Pop,
-                _ => Operation::Save(
-                    *g.choose(&[0usize, 1, 2, 3, 4]).unwrap(),
-                    usize::arbitrary(g),
-                ),
+                _ => Operation::Save(*g.choose(&choices).unwrap(), usize::arbitrary(g)),
             }
         }
     }
