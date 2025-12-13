@@ -92,8 +92,9 @@ fn atomic_group() {
 
 #[test]
 fn backtrack_limit() {
+    // Test that the backtrack limit is still enforced even with state deduplication
     let re = RegexBuilder::new("(?i)(a|b|ab)*(?>c)")
-        .backtrack_limit(100_000)
+        .backtrack_limit(5_000)
         .build()
         .unwrap();
     let s = "abababababababababababababababababababababababababababab";
@@ -103,6 +104,17 @@ fn backtrack_limit() {
         Some(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded)) => {}
         _ => panic!("Expected RuntimeError::BacktrackLimitExceeded"),
     }
+    
+    // Test that state deduplication prevents catastrophic backtracking
+    // With state deduplication, a limit of 10,000 should be enough
+    let re_with_dedup = RegexBuilder::new("(?i)(a|b|ab)*(?>c)")
+        .backtrack_limit(10_000)
+        .build()
+        .unwrap();
+    let result_with_dedup = re_with_dedup.is_match(s);
+    // This should succeed (not match, but not error) thanks to state deduplication
+    assert!(result_with_dedup.is_ok());
+    assert_eq!(result_with_dedup.unwrap(), false);
 }
 
 #[test]
