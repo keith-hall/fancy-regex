@@ -315,6 +315,12 @@ struct Save {
 
 /// Represents a unique state in the VM for deduplication purposes.
 /// Two states are considered equivalent if they have the same PC, IX, and saves.
+///
+/// Note: Cloning the saves vector for each state key has a performance cost, especially
+/// for patterns with many capture groups. However, this is necessary to correctly identify
+/// duplicate states. The benefit of preventing catastrophic backtracking generally outweighs
+/// this cost. Future optimizations could use a more efficient hashing strategy or only
+/// track a subset of the saves vector.
 #[cfg(feature = "std")]
 #[derive(Clone, Eq, PartialEq)]
 struct StateKey {
@@ -908,7 +914,6 @@ pub(crate) fn run(
 
             if state.visited_states.contains(&state_key) {
                 // State already visited, continue popping until we find an unvisited state
-                #[cfg(feature = "std")]
                 if option_flags & OPTION_TRACE != 0 {
                     println!("Skipping duplicate state: pc={}, ix={}", newpc, newix);
                 }
