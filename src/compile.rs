@@ -595,7 +595,17 @@ pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
         c.b.add(Insn::Save(1));
     }
     c.b.add(Insn::End);
-    Ok(c.b.build())
+
+    #[cfg(feature = "std")]
+    {
+        let mut prog = c.b.build();
+        prog.enable_deduplication = info.needs_deduplication;
+        Ok(prog)
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        Ok(c.b.build())
+    }
 }
 
 struct DelegateBuilder {

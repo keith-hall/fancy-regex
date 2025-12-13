@@ -45,6 +45,9 @@ pub struct Info<'a> {
     pub(crate) hard: bool,
     pub(crate) expr: &'a Expr,
     pub(crate) children: Vec<Info<'a>>,
+    /// Whether this pattern might benefit from state deduplication to prevent catastrophic backtracking.
+    /// True for patterns with backreferences, nested quantifiers, or complex alternations.
+    pub(crate) needs_deduplication: bool,
 }
 
 impl<'a> Info<'a> {
@@ -90,6 +93,7 @@ impl<'a> Analyzer<'a> {
         let mut min_size = 0;
         let mut const_size = false;
         let mut hard = false;
+        let mut needs_deduplication = false;
         match *expr {
             Expr::Assertion(assertion) if assertion.is_hard() => {
                 const_size = true;
@@ -115,6 +119,7 @@ impl<'a> Analyzer<'a> {
                     min_size += child_info.min_size;
                     const_size &= child_info.const_size;
                     hard |= child_info.hard;
+                    needs_deduplication |= child_info.needs_deduplication;
                     pos_in_group += child_info.min_size;
                     children.push(child_info);
                 }
@@ -124,13 +129,19 @@ impl<'a> Analyzer<'a> {
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = child_info.hard;
+                needs_deduplication = child_info.needs_deduplication;
                 children.push(child_info);
                 for child in &v[1..] {
                     let child_info = self.visit(child, min_pos_in_group)?;
                     const_size &= child_info.const_size && min_size == child_info.min_size;
                     min_size = min(min_size, child_info.min_size);
                     hard |= child_info.hard;
+                    needs_deduplication |= child_info.needs_deduplication;
                     children.push(child_info);
+                }
+                // Alternations with multiple branches can cause backtracking issues
+                if v.len() > 1 {
+                    needs_deduplication = true;
                 }
             }
             Expr::Group(ref child) => {
@@ -139,6 +150,7 @@ impl<'a> Analyzer<'a> {
                 let child_info = self.visit(child, 0)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
+                needs_deduplication = child_info.needs_deduplication;
                 // Store the group info for use by backrefs
                 self.group_info.insert(
                     group,
@@ -151,6 +163,10 @@ impl<'a> Analyzer<'a> {
                 // group. E.g. with `(x|xy)\1` and input `xyxy`, `x` matches but then the backref
                 // doesn't, so we have to backtrack and try `xy`.
                 hard = child_info.hard | self.backrefs.contains(group);
+                // Groups with backreferences benefit from deduplication
+                if self.backrefs.contains(group) {
+                    needs_deduplication = true;
+                }
                 children.push(child_info);
             }
             Expr::LookAround(ref child, _) => {
@@ -159,6 +175,7 @@ impl<'a> Analyzer<'a> {
                 // min_size = 0
                 const_size = true;
                 hard = true;
+                needs_deduplication |= child_info.needs_deduplication;
                 children.push(child_info);
             }
             Expr::Repeat {
@@ -168,6 +185,16 @@ impl<'a> Analyzer<'a> {
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
                 hard = child_info.hard;
+                needs_deduplication = child_info.needs_deduplication;
+                // Detect nested quantifiers - a major source of catastrophic backtracking
+                // Check if the child contains a repeat or alternation
+                if matches!(*child_info.expr, Expr::Repeat { .. } | Expr::Alt(_)) {
+                    needs_deduplication = true;
+                }
+                // Unbounded or high upper bound repeats with complex children benefit from deduplication
+                if hi > 10 && (child_info.hard || !child_info.const_size) {
+                    needs_deduplication = true;
+                }
                 children.push(child_info);
             }
             Expr::Delegate { size, .. } => {
@@ -189,12 +216,15 @@ impl<'a> Analyzer<'a> {
                     const_size = group_const_size;
                 }
                 hard = true;
+                // Backreferences are a primary cause of catastrophic backtracking
+                needs_deduplication = true;
             }
             Expr::AtomicGroup(ref child) => {
                 let child_info = self.visit(child, min_pos_in_group)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = true; // TODO: possibly could weaken
+                needs_deduplication |= child_info.needs_deduplication;
                 children.push(child_info);
             }
             Expr::KeepOut => {
@@ -231,6 +261,10 @@ impl<'a> Analyzer<'a> {
                     // if the condition's size plus the truth branch's size is equal to the false branch's size then it's const size
                     && child_info_condition.min_size + child_info_truth.min_size == child_info_false.min_size;
 
+                needs_deduplication = child_info_condition.needs_deduplication
+                    | child_info_truth.needs_deduplication
+                    | child_info_false.needs_deduplication;
+
                 children.push(child_info_condition);
                 children.push(child_info_truth);
                 children.push(child_info_false);
@@ -261,6 +295,7 @@ impl<'a> Analyzer<'a> {
             const_size,
             hard,
             min_pos_in_group,
+            needs_deduplication,
         })
     }
 }
