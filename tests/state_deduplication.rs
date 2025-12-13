@@ -28,17 +28,20 @@ fn catastrophic_backtracking_pattern_with_backrefs() {
     // Pattern known for catastrophic backtracking: (a+)(a+)\1\2
     // Without state deduplication, this would take exponential time
     let re = Regex::new(r"(a+)(a+)\1\2").unwrap();
-    
+
     // Test with a string of 30 'a's
     let text = "a".repeat(30);
-    
+
     let start = Instant::now();
     let result = re.is_match(&text);
     let duration = start.elapsed();
-    
+
     // Should complete quickly (under 1 second) thanks to state deduplication
-    assert!(duration < Duration::from_secs(1), 
-            "Regex took too long: {:?}", duration);
+    assert!(
+        duration < Duration::from_secs(1),
+        "Regex took too long: {:?}",
+        duration
+    );
     assert!(result.is_ok());
 }
 
@@ -50,17 +53,20 @@ fn catastrophic_backtracking_alternation_pattern() {
         .backtrack_limit(100_000)
         .build()
         .unwrap();
-    
+
     // String that doesn't match (ends with 'ac' not 'bc')
     let text = "ab".repeat(25) + "ac";
-    
+
     let start = Instant::now();
     let result = re.is_match(&text);
     let duration = start.elapsed();
-    
+
     // Should complete quickly thanks to state deduplication
-    assert!(duration < Duration::from_secs(1), 
-            "Regex took too long: {:?}", duration);
+    assert!(
+        duration < Duration::from_secs(1),
+        "Regex took too long: {:?}",
+        duration
+    );
     assert!(result.is_ok());
     assert!(!result.unwrap());
 }
@@ -72,17 +78,20 @@ fn catastrophic_backtracking_nested_quantifiers() {
         .backtrack_limit(50_000)
         .build()
         .unwrap();
-    
+
     // String that doesn't match (no 'c')
     let text = "a".repeat(15) + &"b".repeat(15);
-    
+
     let start = Instant::now();
     let result = re.is_match(&text);
     let duration = start.elapsed();
-    
+
     // Should complete quickly thanks to state deduplication
-    assert!(duration < Duration::from_secs(1), 
-            "Regex took too long: {:?}", duration);
+    assert!(
+        duration < Duration::from_secs(1),
+        "Regex took too long: {:?}",
+        duration
+    );
     // This should not error due to state deduplication
     assert!(result.is_ok());
 }
@@ -91,13 +100,13 @@ fn catastrophic_backtracking_nested_quantifiers() {
 fn state_deduplication_allows_reasonable_matches() {
     // Verify that state deduplication doesn't break normal matching
     let re = Regex::new(r"(a+)(a+)\1\2").unwrap();
-    
+
     // This should match: "aaa" + "a" + "aaa" + "a" = "aaaaaaaa"
     assert!(re.is_match("aaaaaaaa").unwrap());
-    
+
     // This should also match (finds "aaaaaaaa" at the start)
     assert!(re.is_match("aaaaaaaab").unwrap());
-    
+
     // This should not match
     assert!(!re.is_match("aaa").unwrap());
 }
@@ -106,10 +115,10 @@ fn state_deduplication_allows_reasonable_matches() {
 fn state_deduplication_with_captures() {
     // Verify that captures work correctly with state deduplication
     let re = Regex::new(r"(a+)(a+)\1\2").unwrap();
-    
+
     let text = "aaaaaaaa";
     let caps = re.captures(text).unwrap();
-    
+
     assert!(caps.is_some());
     let caps = caps.unwrap();
     assert_eq!(caps.get(0).map(|m| m.as_str()), Some("aaaaaaaa"));
@@ -121,29 +130,38 @@ fn state_deduplication_with_captures() {
 fn state_deduplication_performance_comparison() {
     // Compare performance with and without excessive backtracking
     let pattern = r"(?i)(a|b|ab)*(?>c)";
-    
+
     // With a low backtrack limit, this should error
     let re_low_limit = RegexBuilder::new(pattern)
         .backtrack_limit(1_000)
         .build()
         .unwrap();
-    
+
     let text = "ab".repeat(27);
     let result_low = re_low_limit.is_match(&text);
-    assert!(result_low.is_err(), "Expected backtrack limit error with low limit");
-    
+    assert!(
+        result_low.is_err(),
+        "Expected backtrack limit error with low limit"
+    );
+
     // With a higher limit, state deduplication should make it succeed
     let re_high_limit = RegexBuilder::new(pattern)
         .backtrack_limit(10_000)
         .build()
         .unwrap();
-    
+
     let start = Instant::now();
     let result_high = re_high_limit.is_match(&text);
     let duration = start.elapsed();
-    
-    assert!(duration < Duration::from_secs(1), 
-            "Regex took too long: {:?}", duration);
-    assert!(result_high.is_ok(), "Expected success due to state deduplication");
+
+    assert!(
+        duration < Duration::from_secs(1),
+        "Regex took too long: {:?}",
+        duration
+    );
+    assert!(
+        result_high.is_ok(),
+        "Expected success due to state deduplication"
+    );
     assert!(!result_high.unwrap(), "Expected no match");
 }

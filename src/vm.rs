@@ -68,6 +68,24 @@
 //! 4. `Lit("b")` doesn't match at IX 1 (`"b" != "c"`), so the thread fails
 //! 5. We continue with the previously saved thread at PC 4 and IX 0 (backtracking)
 //! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
+//!
+//! ## State Deduplication Optimization
+//!
+//! When the `std` feature is enabled, the VM implements a novel optimization called "state
+//! deduplication" to mitigate catastrophic backtracking. This works by tracking visited states
+//! (combinations of PC, IX, and saved values) and skipping duplicate states during backtracking.
+//!
+//! Two states are considered equivalent if they have the same:
+//! - Program Counter (PC): instruction to execute next
+//! - String Index (IX): position in the input string
+//! - Saved values: capture groups and other state
+//!
+//! When backtracking, if we encounter a state we've already explored, we skip it and continue
+//! to the next backtrack point. This prevents the exponential explosion of backtracking in
+//! patterns like `(a+)(a+)\1\2` or `(a|b|ab)*bc` when they don't match.
+//!
+//! This optimization is particularly effective for patterns that exhibit catastrophic backtracking
+//! behavior, reducing runtime from exponential to polynomial complexity in many cases.
 
 use alloc::collections::BTreeSet;
 use alloc::string::String;
@@ -878,7 +896,7 @@ pub(crate) fn run(
         }
 
         let (newpc, newix) = state.pop();
-        
+
         // State deduplication: check if we've already visited this state
         #[cfg(feature = "std")]
         {
@@ -887,7 +905,7 @@ pub(crate) fn run(
                 ix: newix,
                 saves: state.saves.clone(),
             };
-            
+
             if state.visited_states.contains(&state_key) {
                 // State already visited, continue popping until we find an unvisited state
                 #[cfg(feature = "std")]
@@ -901,15 +919,15 @@ pub(crate) fn run(
                 }
                 continue;
             }
-            
+
             state.visited_states.insert(state_key);
         }
-        
+
         backtrack_count += 1;
         if backtrack_count > options.backtrack_limit {
             return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
         }
-        
+
         pc = newpc;
         ix = newix;
     }

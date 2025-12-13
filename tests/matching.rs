@@ -104,7 +104,7 @@ fn backtrack_limit() {
         Some(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded)) => {}
         _ => panic!("Expected RuntimeError::BacktrackLimitExceeded"),
     }
-    
+
     // Test that state deduplication prevents catastrophic backtracking
     // With state deduplication, a limit of 10,000 should be enough
     let re_with_dedup = RegexBuilder::new("(?i)(a|b|ab)*(?>c)")
