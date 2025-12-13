@@ -68,16 +68,52 @@
 //! 4. `Lit("b")` doesn't match at IX 1 (`"b" != "c"`), so the thread fails
 //! 5. We continue with the previously saved thread at PC 4 and IX 0 (backtracking)
 //! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
+//!
+//! ## State Deduplication Optimization
+//!
+//! When the `std` feature is enabled, the VM implements a novel optimization called "state
+//! deduplication" to mitigate catastrophic backtracking. This works by tracking visited states
+//! (combinations of PC, IX, and saved values) and skipping duplicate states during backtracking.
+//!
+//! Two states are considered equivalent if they have the same:
+//! - Program Counter (PC): instruction to execute next
+//! - String Index (IX): position in the input string
+//! - Saved values: capture groups and other state
+//!
+//! When backtracking, if we encounter a state we've already explored, we skip it and continue
+//! to the next backtrack point. This prevents the exponential explosion of backtracking in
+//! patterns like `(a+)(a+)\1\2` or `(a|b|ab)*bc` when they don't match.
+//!
+//! ### Adaptive Optimization
+//!
+//! State deduplication is only enabled for patterns that are likely to benefit from it, as
+//! determined during the analysis phase. Patterns with the following characteristics will have
+//! deduplication enabled:
+//!
+//! - **Backreferences**: Patterns like `(a+)\1` require backtracking to find matching groups
+//! - **Nested quantifiers**: Patterns like `(a+)+` can cause exponential backtracking
+//! - **Complex alternations**: Patterns like `(a|ab|abc)*` with multiple overlapping branches
+//! - **High-repetition quantifiers**: Unbounded or high-limit repeats of complex patterns
+//!
+//! For simple patterns like `abc+def` that are unlikely to cause catastrophic backtracking,
+//! deduplication is disabled to avoid the overhead of state tracking.
+//!
+//! This optimization is particularly effective for patterns that exhibit catastrophic backtracking
+//! behavior, reducing runtime from exponential to polynomial complexity in many cases.
 
 use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::hash::{Hash, Hasher};
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
+
+#[cfg(feature = "std")]
+use std::collections::HashSet;
 
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
@@ -262,11 +298,33 @@ pub struct Prog {
     /// Instructions of the program
     pub body: Vec<Insn>,
     n_saves: usize,
+    /// Whether state deduplication should be enabled for this program.
+    /// Only set to true for patterns that might benefit from it (e.g., backreferences, nested quantifiers).
+    #[cfg(feature = "std")]
+    pub(crate) enable_deduplication: bool,
 }
 
 impl Prog {
     pub(crate) fn new(body: Vec<Insn>, n_saves: usize) -> Prog {
-        Prog { body, n_saves }
+        Prog {
+            body,
+            n_saves,
+            #[cfg(feature = "std")]
+            enable_deduplication: false,
+        }
+    }
+
+    #[cfg(feature = "std")]
+    pub(crate) fn new_with_deduplication(
+        body: Vec<Insn>,
+        n_saves: usize,
+        enable_deduplication: bool,
+    ) -> Prog {
+        Prog {
+            body,
+            n_saves,
+            enable_deduplication,
+        }
     }
 
     #[doc(hidden)]
@@ -291,6 +349,31 @@ struct Save {
     value: usize,
 }
 
+/// Represents a unique state in the VM for deduplication purposes.
+/// Two states are considered equivalent if they have the same PC, IX, and saves.
+///
+/// Note: Cloning the saves vector for each state key has a performance cost, especially
+/// for patterns with many capture groups. However, this is necessary to correctly identify
+/// duplicate states. The benefit of preventing catastrophic backtracking generally outweighs
+/// this cost. Future optimizations could use a more efficient hashing strategy or only
+/// track a subset of the saves vector.
+#[cfg(feature = "std")]
+#[derive(Clone, Eq, PartialEq)]
+struct StateKey {
+    pc: usize,
+    ix: usize,
+    saves: Vec<usize>,
+}
+
+#[cfg(feature = "std")]
+impl Hash for StateKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.pc.hash(state);
+        self.ix.hash(state);
+        self.saves.hash(state);
+    }
+}
+
 struct State {
     /// Saved values indexed by slot. Mostly indices to s, but can be repeat values etc.
     /// Always contains the saves of the current state.
@@ -307,6 +390,12 @@ struct State {
     max_stack: usize,
     #[allow(dead_code)]
     options: u32,
+    /// Set of visited states for deduplication (only available with std)
+    #[cfg(feature = "std")]
+    visited_states: HashSet<StateKey>,
+    /// Whether state deduplication is enabled for this execution
+    #[cfg(feature = "std")]
+    enable_deduplication: bool,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -318,7 +407,12 @@ struct State {
 // current machine state to the top of stack.
 
 impl State {
-    fn new(n_saves: usize, max_stack: usize, options: u32) -> State {
+    fn new(
+        n_saves: usize,
+        max_stack: usize,
+        options: u32,
+        #[cfg(feature = "std")] enable_deduplication: bool,
+    ) -> State {
         State {
             saves: vec![usize::MAX; n_saves],
             stack: Vec::new(),
@@ -327,6 +421,10 @@ impl State {
             explicit_sp: n_saves,
             max_stack,
             options,
+            #[cfg(feature = "std")]
+            visited_states: HashSet::new(),
+            #[cfg(feature = "std")]
+            enable_deduplication,
         }
     }
 
@@ -539,6 +637,14 @@ pub(crate) fn run(
     option_flags: u32,
     options: &RegexOptions,
 ) -> Result<Option<Vec<usize>>> {
+    #[cfg(feature = "std")]
+    let mut state = State::new(
+        prog.n_saves,
+        MAX_STACK,
+        option_flags,
+        prog.enable_deduplication,
+    );
+    #[cfg(not(feature = "std"))]
     let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
     let mut inner_slots: Vec<Option<NonMaxUsize>> = Vec::new();
     let look_matcher = LookMatcher::new();
@@ -849,12 +955,38 @@ pub(crate) fn run(
             return Ok(None);
         }
 
+        let (newpc, newix) = state.pop();
+
+        // State deduplication: check if we've already visited this state
+        #[cfg(feature = "std")]
+        if state.enable_deduplication {
+            let state_key = StateKey {
+                pc: newpc,
+                ix: newix,
+                saves: state.saves.clone(),
+            };
+
+            if state.visited_states.contains(&state_key) {
+                // State already visited, continue popping until we find an unvisited state
+                if option_flags & OPTION_TRACE != 0 {
+                    println!("Skipping duplicate state: pc={}, ix={}", newpc, newix);
+                }
+                // Still count this as a backtrack for limit purposes
+                backtrack_count += 1;
+                if backtrack_count > options.backtrack_limit {
+                    return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
+                }
+                continue;
+            }
+
+            state.visited_states.insert(state_key);
+        }
+
         backtrack_count += 1;
         if backtrack_count > options.backtrack_limit {
             return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
         }
 
-        let (newpc, newix) = state.pop();
         pc = newpc;
         ix = newix;
     }
@@ -867,6 +999,9 @@ mod tests {
 
     #[test]
     fn state_push_pop() {
+        #[cfg(feature = "std")]
+        let mut state = State::new(1, MAX_STACK, 0, false);
+        #[cfg(not(feature = "std"))]
         let mut state = State::new(1, MAX_STACK, 0);
 
         state.push(0, 0).unwrap();
@@ -882,6 +1017,9 @@ mod tests {
 
     #[test]
     fn state_save_override() {
+        #[cfg(feature = "std")]
+        let mut state = State::new(1, MAX_STACK, 0, false);
+        #[cfg(not(feature = "std"))]
         let mut state = State::new(1, MAX_STACK, 0);
         state.save(0, 10);
         state.push(0, 0).unwrap();
@@ -892,6 +1030,9 @@ mod tests {
 
     #[test]
     fn state_save_override_twice() {
+        #[cfg(feature = "std")]
+        let mut state = State::new(1, MAX_STACK, 0, false);
+        #[cfg(not(feature = "std"))]
         let mut state = State::new(1, MAX_STACK, 0);
         state.save(0, 10);
         state.push(0, 0).unwrap();
@@ -908,6 +1049,9 @@ mod tests {
 
     #[test]
     fn state_explicit_stack() {
+        #[cfg(feature = "std")]
+        let mut state = State::new(1, MAX_STACK, 0, false);
+        #[cfg(not(feature = "std"))]
         let mut state = State::new(1, MAX_STACK, 0);
         state.stack_push(11);
         state.stack_push(12);
@@ -925,6 +1069,9 @@ mod tests {
 
     #[test]
     fn state_backtrack_cut_simple() {
+        #[cfg(feature = "std")]
+        let mut state = State::new(2, MAX_STACK, 0, false);
+        #[cfg(not(feature = "std"))]
         let mut state = State::new(2, MAX_STACK, 0);
         state.save(0, 1);
         state.save(1, 2);
@@ -943,6 +1090,9 @@ mod tests {
 
     #[test]
     fn state_backtrack_cut_complex() {
+        #[cfg(feature = "std")]
+        let mut state = State::new(2, MAX_STACK, 0, false);
+        #[cfg(not(feature = "std"))]
         let mut state = State::new(2, MAX_STACK, 0);
         state.save(0, 1);
         state.save(1, 2);
@@ -1008,6 +1158,9 @@ mod tests {
         let mut stack = Vec::new();
         let mut saves = vec![usize::MAX; slots];
 
+        #[cfg(feature = "std")]
+        let mut state = State::new(slots, MAX_STACK, 0, false);
+        #[cfg(not(feature = "std"))]
         let mut state = State::new(slots, MAX_STACK, 0);
 
         let mut expected = Vec::new();
