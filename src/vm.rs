@@ -73,11 +73,15 @@ use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::hash::{Hash, Hasher};
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
+
+#[cfg(feature = "std")]
+use std::collections::HashSet;
 
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
@@ -291,6 +295,25 @@ struct Save {
     value: usize,
 }
 
+/// Represents a unique state in the VM for deduplication purposes.
+/// Two states are considered equivalent if they have the same PC, IX, and saves.
+#[cfg(feature = "std")]
+#[derive(Clone, Eq, PartialEq)]
+struct StateKey {
+    pc: usize,
+    ix: usize,
+    saves: Vec<usize>,
+}
+
+#[cfg(feature = "std")]
+impl Hash for StateKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.pc.hash(state);
+        self.ix.hash(state);
+        self.saves.hash(state);
+    }
+}
+
 struct State {
     /// Saved values indexed by slot. Mostly indices to s, but can be repeat values etc.
     /// Always contains the saves of the current state.
@@ -307,6 +330,9 @@ struct State {
     max_stack: usize,
     #[allow(dead_code)]
     options: u32,
+    /// Set of visited states for deduplication (only available with std)
+    #[cfg(feature = "std")]
+    visited_states: HashSet<StateKey>,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -327,6 +353,8 @@ impl State {
             explicit_sp: n_saves,
             max_stack,
             options,
+            #[cfg(feature = "std")]
+            visited_states: HashSet::new(),
         }
     }
 
@@ -849,12 +877,39 @@ pub(crate) fn run(
             return Ok(None);
         }
 
+        let (newpc, newix) = state.pop();
+        
+        // State deduplication: check if we've already visited this state
+        #[cfg(feature = "std")]
+        {
+            let state_key = StateKey {
+                pc: newpc,
+                ix: newix,
+                saves: state.saves.clone(),
+            };
+            
+            if state.visited_states.contains(&state_key) {
+                // State already visited, continue popping until we find an unvisited state
+                #[cfg(feature = "std")]
+                if option_flags & OPTION_TRACE != 0 {
+                    println!("Skipping duplicate state: pc={}, ix={}", newpc, newix);
+                }
+                // Still count this as a backtrack for limit purposes
+                backtrack_count += 1;
+                if backtrack_count > options.backtrack_limit {
+                    return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
+                }
+                continue;
+            }
+            
+            state.visited_states.insert(state_key);
+        }
+        
         backtrack_count += 1;
         if backtrack_count > options.backtrack_limit {
             return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
         }
-
-        let (newpc, newix) = state.pop();
+        
         pc = newpc;
         ix = newix;
     }
