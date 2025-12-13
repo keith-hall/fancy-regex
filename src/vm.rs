@@ -79,6 +79,9 @@ use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
 
+#[cfg(feature = "std")]
+use std::collections::HashSet;
+
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
 use crate::Assertion;
@@ -307,6 +310,9 @@ struct State {
     max_stack: usize,
     #[allow(dead_code)]
     options: u32,
+    /// Cache of (pc, ix) pairs already on the stack to prevent catastrophic backtracking
+    #[cfg(feature = "std")]
+    state_cache: HashSet<(usize, usize)>,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -327,15 +333,29 @@ impl State {
             explicit_sp: n_saves,
             max_stack,
             options,
+            #[cfg(feature = "std")]
+            state_cache: HashSet::new(),
         }
     }
 
     // push a backtrack branch
     fn push(&mut self, pc: usize, ix: usize) -> Result<()> {
+        #[cfg(feature = "std")]
+        {
+            // Check if this state is already on the stack to prevent catastrophic backtracking
+            if self.state_cache.contains(&(pc, ix)) {
+                // This state would lead to redundant exploration, skip it
+                self.trace_state_skip(pc, ix);
+                return Ok(());
+            }
+        }
+        
         if self.stack.len() < self.max_stack {
             let nsave = self.nsave;
             self.stack.push(Branch { pc, ix, nsave });
             self.nsave = 0;
+            #[cfg(feature = "std")]
+            self.state_cache.insert((pc, ix));
             self.trace_stack("push");
             Ok(())
         } else {
@@ -351,6 +371,8 @@ impl State {
         }
         let Branch { pc, ix, nsave } = self.stack.pop().unwrap();
         self.nsave = nsave;
+        #[cfg(feature = "std")]
+        self.state_cache.remove(&(pc, ix));
         self.trace_stack("pop");
         (pc, ix)
     }
@@ -449,6 +471,13 @@ impl State {
                 oldsave_ix += 1;
             }
         }
+        #[cfg(feature = "std")]
+        {
+            // Remove discarded branches from state cache
+            for branch in &self.stack[count..] {
+                self.state_cache.remove(&(branch.pc, branch.ix));
+            }
+        }
         self.stack.truncate(count);
         self.oldsave.truncate(oldsave_ix);
         self.nsave = oldsave_ix - oldsave_start;
@@ -460,6 +489,15 @@ impl State {
         #[cfg(feature = "std")]
         if self.options & OPTION_TRACE != 0 {
             println!("stack after {}: {:?}", operation, self.stack);
+        }
+    }
+
+    #[inline]
+    #[allow(unused_variables)]
+    fn trace_state_skip(&self, pc: usize, ix: usize) {
+        #[cfg(feature = "std")]
+        if self.options & OPTION_TRACE != 0 {
+            println!("skipping duplicate state: pc={}, ix={}", pc, ix);
         }
     }
 }
@@ -972,20 +1010,22 @@ mod tests {
 
     #[derive(Clone, Debug)]
     enum Operation {
-        Push,
+        Push(usize, usize), // (pc, ix)
         Pop,
         Save(usize, usize),
     }
 
     impl Arbitrary for Operation {
         fn arbitrary(g: &mut Gen) -> Self {
+            let choices = [0usize, 1, 2, 3, 4];
             match g.choose(&[0, 1, 2]) {
-                Some(0) => Operation::Push,
+                Some(0) => {
+                    let pc = *g.choose(&choices).unwrap();
+                    let ix = *g.choose(&choices).unwrap();
+                    Operation::Push(pc, ix)
+                }
                 Some(1) => Operation::Pop,
-                _ => Operation::Save(
-                    *g.choose(&[0usize, 1, 2, 3, 4]).unwrap(),
-                    usize::arbitrary(g),
-                ),
+                _ => Operation::Save(*g.choose(&choices).unwrap(), usize::arbitrary(g)),
             }
         }
     }
@@ -1015,11 +1055,14 @@ mod tests {
 
         for operation in operations {
             match operation {
-                Operation::Push => {
-                    // We're not checking pc and ix later, so don't bother
-                    // putting in random values.
-                    stack.push((0, 0, saves.clone()));
-                    state.push(0, 0).unwrap();
+                Operation::Push(pc, ix) => {
+                    let before_count = state.backtrack_count();
+                    stack.push((pc, ix, saves.clone()));
+                    state.push(pc, ix).unwrap();
+                    // If the push was skipped due to deduplication, also skip the reference push
+                    if state.backtrack_count() == before_count {
+                        stack.pop();
+                    }
                 }
                 Operation::Pop => {
                     // Note that because we generate the operations randomly
@@ -1027,7 +1070,9 @@ mod tests {
                     // if the stack was empty.
                     if let Some((_, _, previous_saves)) = stack.pop() {
                         saves = previous_saves;
-                        state.pop();
+                        if state.backtrack_count() > 0 {
+                            state.pop();
+                        }
                     }
                 }
                 Operation::Save(slot, value) => {

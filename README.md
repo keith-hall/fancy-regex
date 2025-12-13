@@ -121,6 +121,28 @@ also gets an easy context; everything else is generated in a hard
 context. So, conceptually, hard context flows from right to left, and
 from parents to children.
 
+### State Deduplication for Catastrophic Backtracking Prevention
+
+To mitigate catastrophic backtracking in patterns that use backtracking,
+fancy-regex implements a novel state deduplication optimization. The VM
+maintains a cache of `(pc, ix)` pairs (program counter and input index)
+that are currently on the backtrack stack. Before pushing a new backtrack
+state, the VM checks if an identical state is already on the stack.
+
+If a duplicate state is detected, the push is skipped. This prevents
+exponential blowup in patterns like `(a+)+b` where the same position in
+the program and input would be explored multiple times with different
+capture states. While this optimization may prevent finding all possible
+capture group combinations, it ensures that:
+
+1. A match will still be found if one exists
+2. The matching process completes in reasonable time
+3. The backtrack limit is less likely to be exceeded
+
+This approach is complementary to the existing backtrack limit
+mechanism and provides an additional layer of protection against
+catastrophic backtracking patterns.
+
 ## Current status
 
 Still in development, though the basic ideas are in place. Currently,
