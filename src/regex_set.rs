@@ -23,17 +23,18 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::parse::ExprTree;
 use crate::{Captures, Expr, Match, Regex, Result};
 
 /// A set of regular expressions that can be matched simultaneously, returning the first match.
 ///
-/// `RegexSet` takes multiple regex patterns in priority order and combines them into a single
-/// optimized regex. When matching against text, it returns which pattern matched first according
-/// to the priority order.
+/// `RegexSet` takes multiple regex patterns in priority order and combines them into optimized
+/// regex expressions. Patterns are analyzed and grouped into "easy" (can be delegated to NFA)
+/// and "hard" (requiring backtracking VM) sets for better performance.
 ///
-/// This is more efficient than evaluating each regex separately because the compiler and VM can
-/// optimize the combined pattern, especially when patterns share common prefixes or can be
-/// delegated to the underlying NFA engine.
+/// The easy patterns are evaluated first. If an easy pattern matches at the start position and
+/// has higher priority than all hard patterns, the result is returned without evaluating hard
+/// patterns.
 ///
 /// # Example
 ///
@@ -51,10 +52,26 @@ use crate::{Captures, Expr, Match, Regex, Result};
 /// ```
 #[derive(Clone, Debug)]
 pub struct RegexSet {
-    inner: Regex,
+    /// Combined regex for easy patterns (can be delegated to NFA)
+    easy_regex: Option<Regex>,
+    /// Combined regex for hard patterns (requires VM)
+    hard_regex: Option<Regex>,
+    /// Total number of patterns
     pattern_count: usize,
-    /// Starting capture group for each pattern (used to identify which pattern matched)
-    pattern_group_starts: Vec<usize>,
+    /// Information about each pattern
+    pattern_info: Vec<PatternInfo>,
+}
+
+#[derive(Clone, Debug)]
+struct PatternInfo {
+    /// Original pattern index (0-based)
+    pattern_index: usize,
+    /// Whether this pattern is "hard" (requires backtracking VM)
+    is_hard: bool,
+    /// Starting capture group in the combined easy or hard regex
+    group_start: usize,
+    /// Lowest index of any hard pattern (for short-circuit check)
+    first_hard_pattern_idx: Option<usize>,
 }
 
 /// Result of a `RegexSet` match operation.
@@ -89,113 +106,70 @@ impl RegexSet {
     
     fn new_impl(patterns: &[&str], options: &crate::RegexOptions) -> Result<RegexSet> {
         if patterns.is_empty() {
-            // Create a regex that never matches
             return Ok(RegexSet {
-                inner: Regex::new("(?!)")?,
+                easy_regex: None,
+                hard_regex: None,
                 pattern_count: 0,
-                pattern_group_starts: Vec::new(),
+                pattern_info: Vec::new(),
             });
         }
 
-        // Parse each pattern to build Expr trees with adjusted group numbers
-        let mut pattern_group_starts = Vec::with_capacity(patterns.len());
-        let mut current_group = 0;
-        let mut adjusted_exprs = Vec::with_capacity(patterns.len());
-        let mut combined_backrefs = bit_set::BitSet::new();
-        let mut combined_named_groups = crate::parse::NamedGroups::default();
-        
-        for pattern in patterns {
-            let mut tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
-            pattern_group_starts.push(current_group);
+        // First pass: analyze each pattern to determine if it's hard or easy
+        let mut analyzed_patterns = Vec::with_capacity(patterns.len());
+        for (pattern_idx, pattern) in patterns.iter().enumerate() {
+            let tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
             
-            // Count capture groups in this pattern (excluding group 0)
-            let group_count = count_groups(&tree.expr);
+            // Analyze to determine if hard (clone the tree to avoid borrowing issues)
+            use crate::analyze::analyze;
+            let tree_for_analysis = tree.clone();
+            let info = analyze(&tree_for_analysis, false)?;
             
-            // Adjust backreferences in the pattern to account for the wrapper group
-            // and previous patterns' groups
-            adjust_group_numbers(&mut tree.expr, current_group + 1);
-            
-            // Merge backrefs from this pattern (after adjusting)
-            for backref in tree.backrefs.iter() {
-                combined_backrefs.insert(backref + current_group + 1);
-            }
-            
-            // Merge named groups (adjusting their indices)
-            for (name, &idx) in tree.named_groups.iter() {
-                combined_named_groups.insert(name.clone(), idx + current_group + 1);
-            }
-            
-            adjusted_exprs.push(tree.expr);
-            
-            // Each pattern will be wrapped in a group, and we need to account for
-            // all the groups in the pattern
-            current_group += 1 + group_count;
+            analyzed_patterns.push((pattern_idx, *pattern, tree, info.hard));
         }
 
-        // Build the combined expression as an alternation of wrapped patterns
-        let mut alt_children = Vec::with_capacity(patterns.len());
-        for expr in adjusted_exprs {
-            // Wrap each pattern in a capture group
-            alt_children.push(Expr::Group(Box::new(expr)));
+        // Find first hard pattern index
+        let first_hard_pattern_idx = analyzed_patterns
+            .iter()
+            .find(|(_, _, _, is_hard)| *is_hard)
+            .map(|(idx, _, _, _)| *idx);
+
+        // Separate into easy and hard patterns, maintaining their order
+        let mut easy_patterns = Vec::new();
+        let mut hard_patterns = Vec::new();
+        
+        for (pattern_idx, pattern, tree, is_hard) in analyzed_patterns {
+            if is_hard {
+                hard_patterns.push((pattern_idx, pattern, tree));
+            } else {
+                easy_patterns.push((pattern_idx, pattern, tree));
+            }
         }
-        
-        let combined_expr = if alt_children.len() == 1 {
-            alt_children.into_iter().next().unwrap()
+
+        // Build pattern_info vec
+        let mut pattern_info = Vec::with_capacity(patterns.len());
+
+        // Build combined regex for easy patterns
+        let easy_regex = if !easy_patterns.is_empty() {
+            Some(build_combined_regex(&easy_patterns, options, &mut pattern_info, false, first_hard_pattern_idx)?)
         } else {
-            Expr::Alt(alt_children)
+            None
         };
-        
-        // Create an ExprTree for the combined expression
-        let combined_tree = crate::parse::ExprTree {
-            expr: combined_expr,
-            backrefs: combined_backrefs,
-            named_groups: combined_named_groups,
-            contains_subroutines: false,
-            self_recursive: false,
-        };
-        
-        // Now compile using the same logic as Regex::new_options
-        use alloc::sync::Arc;
-        use crate::analyze::{analyze, can_compile_as_anchored};
-        use crate::compile::compile;
-        use crate::optimize::optimize;
-        use crate::RegexImpl;
-        
-        let mut tree = combined_tree;
-        let requires_capture_group_fixup = optimize(&mut tree);
-        let info = analyze(&tree, requires_capture_group_fixup)?;
-        
-        let inner = if !info.hard {
-            // Easy case - delegate to regex crate
-            let mut re_cooked = String::new();
-            tree.expr.to_str(&mut re_cooked, 0);
-            let inner_re = crate::compile::compile_inner(&re_cooked, options)?;
-            Regex {
-                inner: RegexImpl::Wrap {
-                    inner: inner_re,
-                    options: options.clone(),
-                    explicit_capture_group_0: requires_capture_group_fixup,
-                    debug_pattern: re_cooked,
-                },
-                named_groups: Arc::new(tree.named_groups),
-            }
+
+        // Build combined regex for hard patterns
+        let hard_regex = if !hard_patterns.is_empty() {
+            Some(build_combined_regex(&hard_patterns, options, &mut pattern_info, true, first_hard_pattern_idx)?)
         } else {
-            // Hard case - use VM
-            let prog = compile(&info, can_compile_as_anchored(&tree.expr))?;
-            Regex {
-                inner: RegexImpl::Fancy {
-                    prog: Arc::new(prog),
-                    n_groups: info.end_group(),
-                    options: options.clone(),
-                },
-                named_groups: Arc::new(tree.named_groups),
-            }
+            None
         };
-        
+
+        // Sort pattern_info by original pattern index to maintain priority order
+        pattern_info.sort_by_key(|pi| pi.pattern_index);
+
         Ok(RegexSet {
-            inner,
+            easy_regex,
+            hard_regex,
             pattern_count: patterns.len(),
-            pattern_group_starts,
+            pattern_info,
         })
     }
 
@@ -224,7 +198,7 @@ impl RegexSet {
     /// assert!(!set.is_match("!!!").unwrap());
     /// ```
     pub fn is_match(&self, text: &str) -> Result<bool> {
-        self.inner.is_match(text)
+        Ok(self.matches(text)?.pattern().is_some())
     }
 
     /// Returns information about which pattern matched the text.
@@ -246,28 +220,88 @@ impl RegexSet {
     /// assert!(!result.matched(1)); // Pattern 1 didn't match (pattern 0 took precedence)
     /// ```
     pub fn matches(&self, text: &str) -> Result<SetMatches> {
-        match self.inner.captures(text)? {
-            None => Ok(SetMatches {
-                pattern_index: None,
-                match_location: None,
-            }),
-            Some(captures) => {
-                // Find which wrapper group matched (which pattern)
-                for (pattern_idx, &group_start) in self.pattern_group_starts.iter().enumerate() {
-                    // The wrapper group is at group_start + 1 (group 0 is entire match)
-                    if let Some(m) = captures.get(group_start + 1) {
-                        return Ok(SetMatches {
-                            pattern_index: Some(pattern_idx),
-                            match_location: Some((m.start(), m.end())),
-                        });
+        // Try easy patterns first
+        if let Some(ref easy_regex) = self.easy_regex {
+            if let Some(captures) = easy_regex.captures(text)? {
+                // Find which pattern matched in easy regex
+                for info in &self.pattern_info {
+                    if !info.is_hard {
+                        if let Some(m) = captures.get(info.group_start + 1) {
+                            // Check if we can short-circuit: the match is at position 0
+                            // and there are no hard patterns with higher priority
+                            let can_short_circuit = m.start() == 0
+                                && (info.first_hard_pattern_idx.is_none()
+                                    || info.pattern_index < info.first_hard_pattern_idx.unwrap());
+
+                            if can_short_circuit {
+                                // No need to check hard patterns
+                                return Ok(SetMatches {
+                                    pattern_index: Some(info.pattern_index),
+                                    match_location: Some((m.start(), m.end())),
+                                });
+                            }
+                            
+                            // Can't short-circuit, will need to check hard patterns too
+                            break;
+                        }
                     }
                 }
-                // This shouldn't happen if we matched
-                Ok(SetMatches {
-                    pattern_index: None,
-                    match_location: None,
-                })
             }
+        }
+
+        // Need to check both easy and hard patterns to find the highest priority match
+        let mut best_match: Option<(usize, usize, usize)> = None; // (pattern_idx, start, end)
+
+        // Check easy patterns
+        if let Some(ref easy_regex) = self.easy_regex {
+            if let Some(captures) = easy_regex.captures(text)? {
+                for info in &self.pattern_info {
+                    if !info.is_hard {
+                        if let Some(m) = captures.get(info.group_start + 1) {
+                            best_match = Some((info.pattern_index, m.start(), m.end()));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check hard patterns
+        if let Some(ref hard_regex) = self.hard_regex {
+            if let Some(captures) = hard_regex.captures(text)? {
+                for info in &self.pattern_info {
+                    if info.is_hard {
+                        if let Some(m) = captures.get(info.group_start + 1) {
+                            // Check if this hard match beats the easy match
+                            if let Some((best_idx, best_start, _)) = best_match {
+                                // Hard pattern wins if:
+                                // 1. It matches earlier in the text, OR
+                                // 2. It matches at the same position but has lower index (higher priority)
+                                if m.start() < best_start
+                                    || (m.start() == best_start && info.pattern_index < best_idx)
+                                {
+                                    best_match = Some((info.pattern_index, m.start(), m.end()));
+                                }
+                            } else {
+                                best_match = Some((info.pattern_index, m.start(), m.end()));
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some((pattern_idx, start, end)) = best_match {
+            Ok(SetMatches {
+                pattern_index: Some(pattern_idx),
+                match_location: Some((start, end)),
+            })
+        } else {
+            Ok(SetMatches {
+                pattern_index: None,
+                match_location: None,
+            })
         }
     }
 
@@ -285,17 +319,13 @@ impl RegexSet {
     /// assert_eq!(mat.as_str(), "2024");
     /// ```
     pub fn find<'t>(&self, text: &'t str) -> Result<Option<(usize, Match<'t>)>> {
-        match self.inner.captures(text)? {
-            None => Ok(None),
-            Some(captures) => {
-                // Find which wrapper group matched (which pattern)
-                for (pattern_idx, &group_start) in self.pattern_group_starts.iter().enumerate() {
-                    if let Some(m) = captures.get(group_start + 1) {
-                        return Ok(Some((pattern_idx, m)));
-                    }
-                }
-                Ok(None)
-            }
+        let result = self.matches(text)?;
+        if let (Some(pattern_idx), Some((start, end))) =
+            (result.pattern_index, result.match_location)
+        {
+            Ok(Some((pattern_idx, Match::new(text, start, end))))
+        } else {
+            Ok(None)
         }
     }
 
@@ -324,19 +354,144 @@ impl RegexSet {
     /// assert_eq!(captures.get(0).unwrap().as_str(), "2024-12-15");
     /// ```
     pub fn captures<'t>(&self, text: &'t str) -> Result<Option<(usize, Captures<'t>)>> {
-        match self.inner.captures(text)? {
-            None => Ok(None),
-            Some(captures) => {
-                // Find which wrapper group matched (which pattern)
-                for (pattern_idx, &group_start) in self.pattern_group_starts.iter().enumerate() {
-                    if captures.get(group_start + 1).is_some() {
-                        return Ok(Some((pattern_idx, captures)));
-                    }
+        // Similar to matches(), but returns full captures
+        let matches_result = self.matches(text)?;
+        
+        if matches_result.pattern_index.is_none() {
+            return Ok(None);
+        }
+        
+        let pattern_idx = matches_result.pattern_index.unwrap();
+        let info = &self.pattern_info[pattern_idx];
+        
+        // Get captures from the appropriate regex
+        if info.is_hard {
+            if let Some(ref hard_regex) = self.hard_regex {
+                if let Some(captures) = hard_regex.captures(text)? {
+                    return Ok(Some((pattern_idx, captures)));
                 }
-                Ok(None)
+            }
+        } else {
+            if let Some(ref easy_regex) = self.easy_regex {
+                if let Some(captures) = easy_regex.captures(text)? {
+                    return Ok(Some((pattern_idx, captures)));
+                }
             }
         }
+        
+        Ok(None)
     }
+}
+
+/// Helper function to build a combined regex from a set of patterns
+fn build_combined_regex(
+    patterns: &[(usize, &str, ExprTree)],
+    options: &crate::RegexOptions,
+    pattern_info: &mut Vec<PatternInfo>,
+    is_hard: bool,
+    first_hard_pattern_idx: Option<usize>,
+) -> Result<Regex> {
+    use alloc::sync::Arc;
+    use crate::analyze::{analyze, can_compile_as_anchored};
+    use crate::compile::compile;
+    use crate::optimize::optimize;
+    use crate::RegexImpl;
+
+    let mut current_group = 0;
+    let mut adjusted_exprs = Vec::with_capacity(patterns.len());
+    let mut combined_backrefs = bit_set::BitSet::new();
+    let mut combined_named_groups = crate::parse::NamedGroups::default();
+
+    for (pattern_idx, _pattern, tree) in patterns {
+        let mut tree_clone = tree.clone();
+        
+        // Count capture groups in this pattern (excluding group 0)
+        let group_count = count_groups(&tree_clone.expr);
+        
+        // Record pattern info
+        pattern_info.push(PatternInfo {
+            pattern_index: *pattern_idx,
+            is_hard,
+            group_start: current_group,
+            first_hard_pattern_idx,
+        });
+        
+        // Adjust backreferences in the pattern to account for the wrapper group
+        // and previous patterns' groups
+        adjust_group_numbers(&mut tree_clone.expr, current_group + 1);
+        
+        // Merge backrefs from this pattern (after adjusting)
+        for backref in tree_clone.backrefs.iter() {
+            combined_backrefs.insert(backref + current_group + 1);
+        }
+        
+        // Merge named groups (adjusting their indices)
+        for (name, &idx) in tree_clone.named_groups.iter() {
+            combined_named_groups.insert(name.clone(), idx + current_group + 1);
+        }
+        
+        adjusted_exprs.push(tree_clone.expr);
+        
+        // Each pattern will be wrapped in a group, and we need to account for
+        // all the groups in the pattern
+        current_group += 1 + group_count;
+    }
+
+    // Build the combined expression as an alternation of wrapped patterns
+    let mut alt_children = Vec::with_capacity(patterns.len());
+    for expr in adjusted_exprs {
+        // Wrap each pattern in a capture group
+        alt_children.push(Expr::Group(Box::new(expr)));
+    }
+    
+    let combined_expr = if alt_children.len() == 1 {
+        alt_children.into_iter().next().unwrap()
+    } else {
+        Expr::Alt(alt_children)
+    };
+    
+    // Create an ExprTree for the combined expression
+    let combined_tree = ExprTree {
+        expr: combined_expr,
+        backrefs: combined_backrefs,
+        named_groups: combined_named_groups,
+        contains_subroutines: false,
+        self_recursive: false,
+    };
+    
+    // Now compile using the same logic as Regex::new_options
+    let mut tree = combined_tree;
+    let requires_capture_group_fixup = optimize(&mut tree);
+    let info = analyze(&tree, requires_capture_group_fixup)?;
+    
+    let inner = if !info.hard {
+        // Easy case - delegate to regex crate
+        let mut re_cooked = String::new();
+        tree.expr.to_str(&mut re_cooked, 0);
+        let inner_re = crate::compile::compile_inner(&re_cooked, options)?;
+        Regex {
+            inner: RegexImpl::Wrap {
+                inner: inner_re,
+                options: options.clone(),
+                explicit_capture_group_0: requires_capture_group_fixup,
+                debug_pattern: re_cooked,
+            },
+            named_groups: Arc::new(tree.named_groups),
+        }
+    } else {
+        // Hard case - use VM
+        let prog = compile(&info, can_compile_as_anchored(&tree.expr))?;
+        Regex {
+            inner: RegexImpl::Fancy {
+                prog: Arc::new(prog),
+                n_groups: info.end_group(),
+                options: options.clone(),
+            },
+            named_groups: Arc::new(tree.named_groups),
+        }
+    };
+    
+    Ok(inner)
 }
 
 /// Count the number of capture groups in an expression (excluding group 0)
