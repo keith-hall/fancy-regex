@@ -589,7 +589,7 @@ impl RegexOptions {
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
         let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
 
-        insensitive | multiline | whitespace | dotnl | unicode | unicode | oniguruma_mode
+        insensitive | multiline | whitespace | dotnl | unicode | oniguruma_mode
     }
 }
 
