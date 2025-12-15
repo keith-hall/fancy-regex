@@ -221,6 +221,7 @@ mod expand;
 mod optimize;
 mod parse;
 mod parse_flags;
+mod regex_set;
 mod replacer;
 mod vm;
 
@@ -234,6 +235,7 @@ use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
+pub use crate::regex_set::{RegexSet, SetMatches};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 
 const MAX_RECURSION: usize = 64;
@@ -587,7 +589,7 @@ impl RegexOptions {
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
         let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
 
-        insensitive | multiline | whitespace | dotnl | unicode | unicode | oniguruma_mode
+        insensitive | multiline | whitespace | dotnl | unicode | oniguruma_mode
     }
 }
 
