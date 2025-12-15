@@ -50,6 +50,24 @@ r(#*)".*?"\1
 There is no NFA that can express this simple and useful pattern. Yet,
 a backtracking implementation handles it efficiently.
 
+## Example: Matching multiple patterns with RegexSet
+
+```rust
+use fancy_regex::RegexSet;
+
+let set = RegexSet::new(&[
+    r"\d+",           // Match numbers
+    r"\w+@\w+\.\w+",  // Match email addresses  
+    r"https?://\S+",  // Match URLs
+]).unwrap();
+
+let text = "Contact: user@example.com or visit https://example.com";
+let matches = set.matches(text).unwrap();
+
+// Returns which pattern matched first (in this case, pattern 1 - the email)
+assert_eq!(matches.matched_pattern(), Some(1));
+```
+
 This package is one of the first that handles both cases well. The
 exponential blowup case above is run in 258ns. Thus, it should be a
 very appealing alternative for applications that require both richness
