@@ -1389,6 +1389,271 @@ impl TryFrom<String> for Regex {
     }
 }
 
+/// A builder for a `RegexSet` to allow configuring options.
+#[derive(Debug)]
+pub struct RegexSetBuilder {
+    patterns: Vec<String>,
+    options: RegexOptions,
+}
+
+/// A compiled set of regular expressions.
+///
+/// RegexSet allows matching multiple regex patterns against a single text efficiently.
+/// When a match is found, it returns information about which pattern(s) matched.
+/// Patterns are evaluated in priority order - the first pattern has the highest priority.
+///
+/// # Example
+///
+/// ```rust
+/// use fancy_regex::RegexSet;
+///
+/// let set = RegexSet::new(&[r"\d+", r"\w+", r"foo"]).unwrap();
+/// let matches = set.matches("foo123").unwrap();
+/// 
+/// // Pattern 0 (r"\d+") doesn't match at position 0
+/// // Pattern 1 (r"\w+") matches "foo123" at position 0 - this is returned as first match
+/// assert_eq!(matches.matched_pattern(), Some(1));
+/// ```
+#[derive(Clone)]
+pub struct RegexSet {
+    /// The compiled regexes
+    regexes: Vec<Regex>,
+    /// Original patterns for reference
+    patterns: Vec<String>,
+}
+
+/// Information about which pattern in a RegexSet matched.
+#[derive(Debug, Clone)]
+pub struct SetMatches {
+    /// Index of the pattern that matched (if any)
+    pattern_index: Option<usize>,
+}
+
+impl RegexSetBuilder {
+    /// Create a new regex set builder with a collection of patterns.
+    ///
+    /// If any pattern is invalid, the call to `build` will fail later.
+    pub fn new<I, S>(patterns: I) -> Self
+    where
+        S: AsRef<str>,
+        I: IntoIterator<Item = S>,
+    {
+        let patterns: Vec<String> = patterns.into_iter().map(|s| s.as_ref().to_string()).collect();
+        RegexSetBuilder {
+            patterns,
+            options: RegexOptions::default(),
+        }
+    }
+
+    /// Build the `RegexSet`.
+    ///
+    /// Returns an [`Error`](enum.Error.html) if any pattern could not be parsed.
+    pub fn build(&self) -> Result<RegexSet> {
+        RegexSet::new_with_options(&self.patterns, self.options.clone())
+    }
+
+    /// Override default case insensitive flag.
+    ///
+    /// Default is false.
+    pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
+        self.options.syntaxc = self.options.syntaxc.case_insensitive(yes);
+        self
+    }
+
+    /// Enable multi-line mode.
+    pub fn multi_line(&mut self, yes: bool) -> &mut Self {
+        self.options.syntaxc = self.options.syntaxc.multi_line(yes);
+        self
+    }
+
+    /// Allow ignore whitespace.
+    pub fn ignore_whitespace(&mut self, yes: bool) -> &mut Self {
+        self.options.syntaxc = self.options.syntaxc.ignore_whitespace(yes);
+        self
+    }
+
+    /// Enable or disable the "dot matches any character" flag.
+    pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
+        self.options.syntaxc = self.options.syntaxc.dot_matches_new_line(yes);
+        self
+    }
+
+    /// Enable or disable the Unicode flag (`u`) by default.
+    pub fn unicode_mode(&mut self, yes: bool) -> &mut Self {
+        self.options.syntaxc = self.options.syntaxc.unicode(yes);
+        self
+    }
+
+    /// Limit for how many times backtracking should be attempted.
+    ///
+    /// Default is `1_000_000` (1 million).
+    pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
+        self.options.backtrack_limit = limit;
+        self
+    }
+
+    /// Set the approximate size limit of the compiled regular expression.
+    pub fn delegate_size_limit(&mut self, limit: usize) -> &mut Self {
+        self.options.delegate_size_limit = Some(limit);
+        self
+    }
+
+    /// Set the approximate size of the cache used by the DFA.
+    pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
+        self.options.delegate_dfa_size_limit = Some(limit);
+        self
+    }
+}
+
+impl RegexSet {
+    /// Parse and compile a set of regex patterns with default options.
+    ///
+    /// Returns an [`Error`](enum.Error.html) if any pattern could not be parsed.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use fancy_regex::RegexSet;
+    ///
+    /// let set = RegexSet::new(&[r"\d+", r"\w+"]).unwrap();
+    /// assert!(set.is_match("hello").unwrap());
+    /// ```
+    pub fn new<I, S>(patterns: I) -> Result<RegexSet>
+    where
+        S: AsRef<str>,
+        I: IntoIterator<Item = S>,
+    {
+        let patterns: Vec<String> = patterns.into_iter().map(|s| s.as_ref().to_string()).collect();
+        Self::new_with_options(&patterns, RegexOptions::default())
+    }
+
+    fn new_with_options(patterns: &[String], options: RegexOptions) -> Result<RegexSet> {
+        if patterns.is_empty() {
+            return Err(Error::CompileError(Box::new(CompileError::InvalidInput(
+                "RegexSet must contain at least one pattern".to_string(),
+            ))));
+        }
+
+        // Compile each pattern individually
+        let mut regexes = Vec::with_capacity(patterns.len());
+        for pattern in patterns {
+            let options_for_pattern = RegexOptions {
+                pattern: pattern.clone(),
+                ..options.clone()
+            };
+            regexes.push(Regex::new_options(options_for_pattern)?);
+        }
+
+        Ok(RegexSet {
+            regexes,
+            patterns: patterns.to_vec(),
+        })
+    }
+
+    /// Check if any regex in the set matches the input text.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use fancy_regex::RegexSet;
+    ///
+    /// let set = RegexSet::new(&[r"\d+", r"foo"]).unwrap();
+    /// assert!(set.is_match("foo").unwrap());
+    /// assert!(set.is_match("123").unwrap());
+    /// assert!(!set.is_match("bar").unwrap());
+    /// ```
+    pub fn is_match(&self, text: &str) -> Result<bool> {
+        for regex in &self.regexes {
+            if regex.is_match(text)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Find which pattern in the set matches the input text first.
+    ///
+    /// Returns `SetMatches` which indicates which pattern matched.
+    /// If no pattern matches, returns `None` for the pattern index.
+    /// When multiple patterns match, returns the one with the lowest index (highest priority).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use fancy_regex::RegexSet;
+    ///
+    /// let set = RegexSet::new(&[r"\d+", r"\w+", r"foo"]).unwrap();
+    /// let matches = set.matches("foo123").unwrap();
+    /// 
+    /// // Pattern 1 (r"\w+") matches first at position 0
+    /// assert_eq!(matches.matched_pattern(), Some(1));
+    /// ```
+    pub fn matches(&self, text: &str) -> Result<SetMatches> {
+        // Find the pattern that matches earliest in the text with highest priority
+        let mut best_match: Option<(usize, Match)> = None;
+
+        for (pattern_idx, regex) in self.regexes.iter().enumerate() {
+            if let Some(current_match) = regex.find(text)? {
+                match &best_match {
+                    None => {
+                        // First match found
+                        best_match = Some((pattern_idx, current_match));
+                    }
+                    Some((_, prev_match)) if current_match.start() < prev_match.start() => {
+                        // This match starts earlier - replace the best match
+                        best_match = Some((pattern_idx, current_match));
+                    }
+                    // If current match starts at same position or later, keep the previous match
+                    // (priority order - lower index wins at same position)
+                    Some(_) => continue,
+                }
+            }
+        }
+
+        Ok(SetMatches {
+            pattern_index: best_match.map(|(idx, _)| idx),
+        })
+    }
+
+    /// Returns the number of patterns in the set.
+    pub fn len(&self) -> usize {
+        self.regexes.len()
+    }
+
+    /// Returns true if the set contains no patterns.
+    pub fn is_empty(&self) -> bool {
+        self.regexes.is_empty()
+    }
+
+    /// Returns the patterns used to construct this RegexSet.
+    pub fn patterns(&self) -> Vec<&str> {
+        self.patterns.iter().map(|s| s.as_str()).collect()
+    }
+}
+
+impl SetMatches {
+    /// Returns the index of the pattern that matched, if any.
+    ///
+    /// Returns `None` if no pattern matched.
+    pub fn matched_pattern(&self) -> Option<usize> {
+        self.pattern_index
+    }
+
+    /// Returns true if any pattern matched.
+    pub fn matched_any(&self) -> bool {
+        self.pattern_index.is_some()
+    }
+}
+
+impl fmt::Debug for RegexSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegexSet")
+            .field("patterns", &self.patterns)
+            .field("count", &self.regexes.len())
+            .finish()
+    }
+}
+
 impl<'t> Match<'t> {
     /// Returns the starting byte offset of the match in the text.
     #[inline]

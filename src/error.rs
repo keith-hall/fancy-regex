@@ -82,6 +82,8 @@ pub enum CompileError {
     FeatureNotYetSupported(String),
     /// Subroutine call to non-existent group
     SubroutineCallTargetNotFound(String, usize),
+    /// Invalid input (e.g., empty pattern set)
+    InvalidInput(String),
 }
 
 /// An error as the result of executing a regex.
@@ -149,6 +151,7 @@ impl fmt::Display for CompileError {
             CompileError::SubroutineCallTargetNotFound(s, ix) => {
                 write!(f, "Subroutine call target not found at position {}: {}", ix, s)
             }
+            CompileError::InvalidInput(s) => write!(f, "Invalid input: {}", s),
         }
     }
 }
