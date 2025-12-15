@@ -71,7 +71,8 @@ fn test_captures_with_groups() {
         r"\w+",
     ]).unwrap();
     
-    let (pattern_idx, captures) = set.captures("Date: 2024-12-15").unwrap().unwrap();
+    // Use text where the date pattern matches first
+    let (pattern_idx, captures) = set.captures("2024-12-15 is the date").unwrap().unwrap();
     assert_eq!(pattern_idx, 0);
     
     // Group 0 is the entire match

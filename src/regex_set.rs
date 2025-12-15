@@ -84,6 +84,10 @@ impl RegexSet {
     /// let set = RegexSet::new(&[r"\d+", r"\w+"]).unwrap();
     /// ```
     pub fn new(patterns: &[&str]) -> Result<RegexSet> {
+        Self::new_impl(patterns, &crate::RegexOptions::default())
+    }
+    
+    fn new_impl(patterns: &[&str], options: &crate::RegexOptions) -> Result<RegexSet> {
         if patterns.is_empty() {
             // Create a regex that never matches
             return Ok(RegexSet {
@@ -93,37 +97,101 @@ impl RegexSet {
             });
         }
 
-        // Parse each pattern to count capture groups and build the combined pattern
+        // Parse each pattern to build Expr trees with adjusted group numbers
         let mut pattern_group_starts = Vec::with_capacity(patterns.len());
         let mut current_group = 0;
-        let mut trees = Vec::with_capacity(patterns.len());
+        let mut adjusted_exprs = Vec::with_capacity(patterns.len());
+        let mut combined_backrefs = bit_set::BitSet::new();
+        let mut combined_named_groups = crate::parse::NamedGroups::default();
         
         for pattern in patterns {
-            let tree = Expr::parse_tree(pattern)?;
+            let mut tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
             pattern_group_starts.push(current_group);
             
             // Count capture groups in this pattern (excluding group 0)
             let group_count = count_groups(&tree.expr);
-            trees.push(tree);
+            
+            // Adjust backreferences in the pattern to account for the wrapper group
+            // and previous patterns' groups
+            adjust_group_numbers(&mut tree.expr, current_group + 1);
+            
+            // Merge backrefs from this pattern (after adjusting)
+            for backref in tree.backrefs.iter() {
+                combined_backrefs.insert(backref + current_group + 1);
+            }
+            
+            // Merge named groups (adjusting their indices)
+            for (name, &idx) in tree.named_groups.iter() {
+                combined_named_groups.insert(name.clone(), idx + current_group + 1);
+            }
+            
+            adjusted_exprs.push(tree.expr);
             
             // Each pattern will be wrapped in a group, and we need to account for
             // all the groups in the pattern
             current_group += 1 + group_count;
         }
 
-        // Now build the combined expression by wrapping each in a group and using alternation
-        // For simplicity, we'll use string concatenation but adjust group numbers
-        let mut combined = String::new();
-        for (i, pattern) in patterns.iter().enumerate() {
-            if i > 0 {
-                combined.push('|');
-            }
-            combined.push('(');
-            combined.push_str(pattern);
-            combined.push(')');
+        // Build the combined expression as an alternation of wrapped patterns
+        let mut alt_children = Vec::with_capacity(patterns.len());
+        for expr in adjusted_exprs {
+            // Wrap each pattern in a capture group
+            alt_children.push(Expr::Group(Box::new(expr)));
         }
-
-        let inner = Regex::new(&combined)?;
+        
+        let combined_expr = if alt_children.len() == 1 {
+            alt_children.into_iter().next().unwrap()
+        } else {
+            Expr::Alt(alt_children)
+        };
+        
+        // Create an ExprTree for the combined expression
+        let combined_tree = crate::parse::ExprTree {
+            expr: combined_expr,
+            backrefs: combined_backrefs,
+            named_groups: combined_named_groups,
+            contains_subroutines: false,
+            self_recursive: false,
+        };
+        
+        // Now compile using the same logic as Regex::new_options
+        use alloc::sync::Arc;
+        use crate::analyze::{analyze, can_compile_as_anchored};
+        use crate::compile::compile;
+        use crate::optimize::optimize;
+        use crate::RegexImpl;
+        
+        let mut tree = combined_tree;
+        let requires_capture_group_fixup = optimize(&mut tree);
+        let info = analyze(&tree, requires_capture_group_fixup)?;
+        
+        let inner = if !info.hard {
+            // Easy case - delegate to regex crate
+            let mut re_cooked = String::new();
+            tree.expr.to_str(&mut re_cooked, 0);
+            let inner_re = crate::compile::compile_inner(&re_cooked, options)?;
+            Regex {
+                inner: RegexImpl::Wrap {
+                    inner: inner_re,
+                    options: options.clone(),
+                    explicit_capture_group_0: requires_capture_group_fixup,
+                    debug_pattern: re_cooked,
+                },
+                named_groups: Arc::new(tree.named_groups),
+            }
+        } else {
+            // Hard case - use VM
+            let prog = compile(&info, can_compile_as_anchored(&tree.expr))?;
+            Regex {
+                inner: RegexImpl::Fancy {
+                    prog: Arc::new(prog),
+                    n_groups: info.end_group(),
+                    options: options.clone(),
+                },
+                named_groups: Arc::new(tree.named_groups),
+            }
+        };
+        
         Ok(RegexSet {
             inner,
             pattern_count: patterns.len(),
@@ -248,7 +316,8 @@ impl RegexSet {
     ///     r"\w+",
     /// ]).unwrap();
     ///
-    /// let (pattern_idx, captures) = set.captures("Date: 2024-12-15").unwrap().unwrap();
+    /// // Use text where date appears first
+    /// let (pattern_idx, captures) = set.captures("2024-12-15 is the date").unwrap().unwrap();
     /// assert_eq!(pattern_idx, 0);
     ///
     /// // Get the entire match
@@ -296,6 +365,47 @@ fn count_groups_in_children(expr: &Expr) -> usize {
             false_branch,
         } => count_groups(condition) + count_groups(true_branch) + count_groups(false_branch),
         _ => 0,
+    }
+}
+
+/// Adjust backreference and group numbers in an expression tree
+/// to account for wrapper groups and previous patterns.
+/// `offset` is the number of groups to add to backreferences.
+fn adjust_group_numbers(expr: &mut Expr, offset: usize) {
+    match expr {
+        Expr::Backref { group, .. } => {
+            *group += offset;
+        }
+        Expr::BackrefWithRelativeRecursionLevel { group, .. } => {
+            *group += offset;
+        }
+        Expr::BackrefExistsCondition(group) => {
+            *group += offset;
+        }
+        Expr::SubroutineCall(group) => {
+            *group += offset;
+        }
+        Expr::Group(child)
+        | Expr::LookAround(child, _)
+        | Expr::AtomicGroup(child)
+        | Expr::Repeat { child, .. } => {
+            adjust_group_numbers(child, offset);
+        }
+        Expr::Concat(children) | Expr::Alt(children) => {
+            for child in children {
+                adjust_group_numbers(child, offset);
+            }
+        }
+        Expr::Conditional {
+            condition,
+            true_branch,
+            false_branch,
+        } => {
+            adjust_group_numbers(condition, offset);
+            adjust_group_numbers(true_branch, offset);
+            adjust_group_numbers(false_branch, offset);
+        }
+        _ => {}
     }
 }
 
