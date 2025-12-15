@@ -44,3 +44,7 @@ regex = "1.10"
 [[bench]]
 name = "bench"
 harness = false
+
+[[bench]]
+name = "regex_set"
+harness = false
