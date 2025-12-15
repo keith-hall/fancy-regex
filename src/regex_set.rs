@@ -119,12 +119,12 @@ impl RegexSet {
         for (pattern_idx, pattern) in patterns.iter().enumerate() {
             let tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
             
-            // Analyze to determine if hard (clone the tree to avoid borrowing issues)
+            // Analyze to determine if hard
+            // Note: We analyze before moving tree, as analyze() borrows the tree
             use crate::analyze::analyze;
-            let tree_for_analysis = tree.clone();
-            let info = analyze(&tree_for_analysis, false)?;
+            let is_hard = analyze(&tree, false)?.hard;
             
-            analyzed_patterns.push((pattern_idx, *pattern, tree, info.hard));
+            analyzed_patterns.push((pattern_idx, *pattern, tree, is_hard));
         }
 
         // Find first hard pattern index
