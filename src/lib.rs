@@ -1529,7 +1529,7 @@ impl RegexSet {
 
     fn new_with_options(patterns: &[String], options: RegexOptions) -> Result<RegexSet> {
         if patterns.is_empty() {
-            return Err(Error::CompileError(Box::new(CompileError::FeatureNotYetSupported(
+            return Err(Error::CompileError(Box::new(CompileError::InvalidInput(
                 "RegexSet must contain at least one pattern".to_string(),
             ))));
         }
@@ -1594,22 +1594,18 @@ impl RegexSet {
 
         for (pattern_idx, regex) in self.regexes.iter().enumerate() {
             if let Some(current_match) = regex.find(text)? {
-                match best_match {
+                match &best_match {
                     None => {
                         // First match found
                         best_match = Some((pattern_idx, current_match));
                     }
-                    Some((_, ref prev_match)) => {
-                        // Compare positions
-                        if current_match.start() < prev_match.start() {
-                            // This match starts earlier
-                            best_match = Some((pattern_idx, current_match));
-                        } else if current_match.start() == prev_match.start() {
-                            // Same position - priority order wins (lower index = higher priority)
-                            // Since we iterate in order, we keep the first one (lower index)
-                            // So do nothing
-                        }
+                    Some((_, prev_match)) if current_match.start() < prev_match.start() => {
+                        // This match starts earlier - replace the best match
+                        best_match = Some((pattern_idx, current_match));
                     }
+                    // If current match starts at same position or later, keep the previous match
+                    // (priority order - lower index wins at same position)
+                    Some(_) => continue,
                 }
             }
         }

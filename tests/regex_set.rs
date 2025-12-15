@@ -93,8 +93,8 @@ fn regex_set_len() {
 
 #[test]
 fn regex_set_empty_error() {
-    let empty: Vec<&str> = vec![];
-    let result = RegexSet::new(&empty);
+    let empty_patterns: Vec<&str> = vec![];
+    let result = RegexSet::new(&empty_patterns);
     assert!(result.is_err());
 }
 
