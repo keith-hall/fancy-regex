@@ -221,6 +221,7 @@ mod expand;
 mod optimize;
 mod parse;
 mod parse_flags;
+mod regexset;
 mod replacer;
 mod vm;
 
@@ -234,6 +235,7 @@ use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
+pub use crate::regexset::{RegexSet, RegexSetBuilder, SetMatch};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 
 const MAX_RECURSION: usize = 64;
@@ -1415,7 +1417,7 @@ impl<'t> Match<'t> {
     }
 
     /// Creates a new match from the given text and byte offsets.
-    fn new(text: &'t str, start: usize, end: usize) -> Match<'t> {
+    pub(crate) fn new(text: &'t str, start: usize, end: usize) -> Match<'t> {
         Match { text, start, end }
     }
 }
