@@ -441,18 +441,28 @@ impl RegexSet {
                     Some(existing) => Some(Self::choose_best_of_two(existing, current_match)),
                 };
 
-                // Early termination: if we found a match at the current position
-                // and this is the highest priority pattern, we can stop
-                if best_match.as_ref().unwrap().start() == pos
-                    && easy_pattern.index < best_match.as_ref().unwrap().pattern
-                {
-                    // Check if all higher priority patterns have been checked
-                    let all_higher_checked = (0..easy_pattern.index).all(|i| {
-                        !self.easy_patterns.iter().any(|ep| ep.index == i)
-                            && !self.hard_patterns.iter().any(|hp| hp.index == i)
-                    });
-                    if all_higher_checked {
-                        break;
+                // Early termination optimization:
+                // If we found a match at the starting position and it's from the highest priority
+                // pattern we've checked so far, and all patterns with even higher priority have
+                // been checked, we can stop searching.
+                if let Some(ref m) = best_match {
+                    if m.start() == pos {
+                        // Match at start position - check if we can terminate early
+                        let best_pattern_idx = m.pattern();
+                        
+                        // Check if all higher priority patterns (lower indices) have been checked
+                        let all_higher_checked = (0..best_pattern_idx).all(|i| {
+                            // Pattern i must either be in easy_patterns or hard_patterns and
+                            // have been processed already
+                            let in_easy = self.easy_patterns.iter()
+                                .any(|ep| ep.index == i && ep.index <= easy_pattern.index);
+                            let in_hard = self.hard_patterns.iter().any(|hp| hp.index == i);
+                            in_easy || in_hard
+                        });
+                        
+                        if all_higher_checked {
+                            break;
+                        }
                     }
                 }
             }
@@ -470,8 +480,9 @@ impl RegexSet {
             return Ok(None);
         }
 
-        // We need to own the text to pass it to threads safely
-        let text_owned = text.to_string();
+        // Use Arc<str> to share the text across threads without copying
+        let text_arc: Arc<str> = Arc::from(text);
+        // Store results as (start, pattern_index, end) to avoid lifetime issues with Match<'t>
         let best_match: Arc<Mutex<Option<(usize, usize, usize)>>> = Arc::new(Mutex::new(None));
 
         // Process hard patterns in chunks based on max_threads
@@ -480,82 +491,94 @@ impl RegexSet {
 
             for hard_pattern in chunk {
                 let best_match = Arc::clone(&best_match);
-                let text_owned = text_owned.clone();
+                let text_arc = Arc::clone(&text_arc);
                 let prog = Arc::clone(&hard_pattern.prog);
                 let options = hard_pattern.options.clone();
                 let index = hard_pattern.index;
 
-                let handle = thread::spawn(move || {
+                let handle = thread::spawn(move || -> Result<()> {
                     // Check if we can early terminate
                     {
                         let current_best = best_match.lock().unwrap();
-                        if let Some((_, pattern, start)) = *current_best {
+                        if let Some((start, pattern, _)) = *current_best {
                             if start == pos && pattern < index {
                                 // A higher priority pattern already matched at this position
-                                return;
+                                return Ok(());
                             }
                         }
                     }
 
                     // Execute the VM to find a match
-                    if let Ok(Some(saves)) = vm::run(&prog, &text_owned, pos, 0, &options) {
-                        let mut best = best_match.lock().unwrap();
-                        let new_match = (saves[0], index, saves[1]);
-                        *best = match *best {
-                            None => Some(new_match),
-                            Some((start_a, pattern_a, end_a)) => {
-                                let (start_b, pattern_b, end_b) = new_match;
-                                // Choose by position first (lower is better)
-                                match start_a.cmp(&start_b) {
-                                    core::cmp::Ordering::Less => Some((start_a, pattern_a, end_a)),
-                                    core::cmp::Ordering::Greater => Some((start_b, pattern_b, end_b)),
-                                    // If positions are equal, choose by priority (lower index is better)
-                                    core::cmp::Ordering::Equal => {
-                                        if pattern_a < pattern_b {
+                    match vm::run(&prog, &text_arc, pos, 0, &options) {
+                        Ok(Some(saves)) => {
+                            let mut best = best_match.lock().unwrap();
+                            let new_match = (saves[0], index, saves[1]);
+                            *best = match *best {
+                                None => Some(new_match),
+                                Some((start_a, pattern_a, end_a)) => {
+                                    let (start_b, pattern_b, end_b) = new_match;
+                                    // Choose by position first (lower is better)
+                                    match start_a.cmp(&start_b) {
+                                        core::cmp::Ordering::Less => {
                                             Some((start_a, pattern_a, end_a))
-                                        } else {
+                                        }
+                                        core::cmp::Ordering::Greater => {
                                             Some((start_b, pattern_b, end_b))
+                                        }
+                                        // If positions are equal, choose by priority (lower index is better)
+                                        core::cmp::Ordering::Equal => {
+                                            if pattern_a < pattern_b {
+                                                Some((start_a, pattern_a, end_a))
+                                            } else {
+                                                Some((start_b, pattern_b, end_b))
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        };
+                            };
+                            Ok(())
+                        }
+                        Ok(None) => Ok(()),
+                        Err(e) => Err(e),
                     }
                 });
 
                 chunk_handles.push(handle);
             }
 
-            // Wait for this chunk to complete
+            // Wait for this chunk to complete and collect any errors
             for handle in chunk_handles {
-                let _ = handle.join();
+                match handle.join() {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => return Err(e), // Propagate VM errors
+                    Err(e) => {
+                        // Thread panicked - this is a serious issue
+                        return Err(crate::Error::RuntimeError(
+                            crate::RuntimeError::BacktrackLimitExceeded,
+                        ));
+                    }
+                }
             }
 
-            // Check if we can stop early
+            // Early termination: check if we can stop searching
+            // If we found a match at the current position and all higher priority patterns
+            // have been checked (either already matched or checked in previous chunks)
             let current_best = best_match.lock().unwrap();
             if let Some((start, pattern, _)) = *current_best {
                 if start == pos {
-                    // We found a match at the current position
                     // Check if all higher priority patterns have been checked
-                    let all_higher_checked = (0..pattern).all(|i| {
-                        self.hard_patterns.iter().any(|hp| {
-                            hp.index == i
-                                && self
-                                    .hard_patterns
-                                    .iter()
-                                    .position(|p| p.index == hp.index)
-                                    .map(|pos_in_list| {
-                                        pos_in_list
-                                            < chunk
-                                                .iter()
-                                                .position(|p| p.index == pattern)
-                                                .unwrap_or(0)
-                                                + chunk.len()
-                                    })
-                                    .unwrap_or(false)
-                        })
-                    });
-                    if all_higher_checked {
+                    let highest_priority_in_remaining = self
+                        .hard_patterns
+                        .iter()
+                        .skip(chunk.len())
+                        .map(|hp| hp.index)
+                        .min();
+
+                    // If all remaining patterns have lower priority, we can stop
+                    if highest_priority_in_remaining
+                        .map(|min_idx| min_idx > pattern)
+                        .unwrap_or(true)
+                    {
                         break;
                     }
                 }
@@ -574,16 +597,21 @@ impl RegexSet {
         let mut best_match: Option<SetMatch<'t>> = None;
 
         for hard_pattern in &self.hard_patterns {
-            // Check if we can early terminate
+            // Early termination: if we found a match at the starting position with a pattern
+            // that has higher priority than the current one, and all patterns with even higher
+            // priority than the match have been checked, we can stop
             if let Some(ref m) = best_match {
-                if m.start() == pos && m.pattern < hard_pattern.index {
-                    // A higher priority pattern already matched at this position
-                    // and all higher priority patterns have been checked
-                    let all_higher_checked = (0..m.pattern).all(|i| {
-                        self.hard_patterns
+                if m.start() == pos && m.pattern() < hard_pattern.index {
+                    // Check if all higher priority patterns have been checked
+                    let all_higher_checked = (0..m.pattern()).all(|i| {
+                        // Pattern must have been checked (exists in easy or hard patterns before current position)
+                        let in_easy = self.easy_patterns.iter().any(|ep| ep.index == i);
+                        let in_hard_before = self
+                            .hard_patterns
                             .iter()
                             .take_while(|hp| hp.index != hard_pattern.index)
-                            .any(|hp| hp.index == i)
+                            .any(|hp| hp.index == i);
+                        in_easy || in_hard_before
                     });
                     if all_higher_checked {
                         break;
