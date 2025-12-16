@@ -551,7 +551,7 @@ impl RegexSet {
                 match handle.join() {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => return Err(e), // Propagate VM errors
-                    Err(e) => {
+                    Err(_e) => {
                         // Thread panicked - this is a serious issue
                         return Err(crate::Error::RuntimeError(
                             crate::RuntimeError::BacktrackLimitExceeded,
@@ -746,5 +746,77 @@ mod tests {
         let m = result.unwrap();
         assert_eq!(m.as_str(), "pattern");
         assert_eq!(m.pattern(), 2);
+    }
+
+    #[test]
+    fn test_lookahead_pattern() {
+        let set = RegexSet::new(&[r"\w+(?=!)", "test"]).unwrap();
+        let text = "test! example";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.as_str(), "test");
+        assert_eq!(m.pattern(), 0);
+        assert_eq!(m.start(), 0);
+        assert_eq!(m.end(), 4);
+    }
+
+    #[test]
+    fn test_empty_pattern_list() {
+        let patterns: Vec<&str> = vec![];
+        let set = RegexSet::new(&patterns).unwrap();
+        let text = "hello world";
+        let result = set.find(text).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_single_pattern() {
+        let set = RegexSet::new(&["foo"]).unwrap();
+        let text = "hello foo world";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.pattern(), 0);
+        assert_eq!(m.as_str(), "foo");
+    }
+
+    #[test]
+    fn test_find_from_pos() {
+        let set = RegexSet::new(&["foo", "bar"]).unwrap();
+        let text = "foo bar foo";
+        
+        // Find from position 0
+        let result = set.find_from_pos(text, 0).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.as_str(), "foo");
+        assert_eq!(m.start(), 0);
+        
+        // Find from position 4 (after first "foo")
+        let result = set.find_from_pos(text, 4).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.as_str(), "bar");
+        assert_eq!(m.start(), 4);
+        
+        // Find from position 8 (after "bar")
+        let result = set.find_from_pos(text, 8).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.as_str(), "foo");
+        assert_eq!(m.start(), 8);
+    }
+
+    #[test]
+    fn test_overlapping_patterns() {
+        let set = RegexSet::new(&["abc", "abcd", "ab"]).unwrap();
+        let text = "abcd";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        // All match at position 0, highest priority (index 0) wins
+        assert_eq!(m.pattern(), 0);
+        assert_eq!(m.as_str(), "abc");
     }
 }
