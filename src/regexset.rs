@@ -19,6 +19,67 @@
 // THE SOFTWARE.
 
 //! RegexSet for matching multiple patterns with priority ordering
+//!
+//! This module provides a `RegexSet` type that can match multiple regular expression patterns
+//! against a text and return the first match based on position and priority order.
+//!
+//! # Example
+//!
+//! ```
+//! use fancy_regex::RegexSet;
+//!
+//! let set = RegexSet::new(&["foo", "bar", "baz"]).unwrap();
+//! let text = "hello bar world";
+//! let result = set.find(text).unwrap();
+//!
+//! assert!(result.is_some());
+//! let m = result.unwrap();
+//! assert_eq!(m.pattern(), 1); // pattern "bar" matched
+//! assert_eq!(m.as_str(), "bar");
+//! ```
+//!
+//! # Priority-based Matching
+//!
+//! When multiple patterns match at different positions, the match with the lowest starting
+//! position is returned. When multiple patterns match at the same position, the pattern with
+//! the lowest index (highest priority) is returned.
+//!
+//! ```
+//! use fancy_regex::RegexSet;
+//!
+//! let set = RegexSet::new(&["foo", "f"]).unwrap();
+//! let text = "foo";
+//! let result = set.find(text).unwrap();
+//!
+//! // Both patterns match at position 0, but "foo" has higher priority (lower index)
+//! assert_eq!(result.unwrap().pattern(), 0);
+//! ```
+//!
+//! # Mixed Easy and Hard Patterns
+//!
+//! `RegexSet` automatically classifies patterns as "easy" (can be delegated to the fast
+//! `regex-automata` engine) or "hard" (require backtracking VM execution). Easy patterns
+//! are matched efficiently using `regex-automata`, while hard patterns with features like
+//! backreferences and lookaround are executed using the VM.
+//!
+//! With the `std` feature enabled, hard patterns are searched in parallel using multiple
+//! threads for better performance.
+//!
+//! ```
+//! use fancy_regex::RegexSet;
+//!
+//! // Mix of easy and hard patterns
+//! let set = RegexSet::new(&[
+//!     r"simple",           // easy pattern
+//!     r"(\w+)\1",          // hard pattern (backreference)
+//!     r"easy",             // easy pattern
+//! ]).unwrap();
+//!
+//! let text = "foofoo easy simple";
+//! let result = set.find(text).unwrap().unwrap();
+//! assert_eq!(result.as_str(), "foofoo");
+//! assert_eq!(result.pattern(), 1);
+//! ```
 
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -33,6 +94,33 @@ use crate::vm::{self, Prog};
 use crate::{Expr, Match, RegexOptions, Result};
 
 /// A builder for constructing a RegexSet
+///
+/// # Example
+///
+/// ```
+/// use fancy_regex::RegexSetBuilder;
+///
+/// let set = RegexSetBuilder::new(&["foo", "bar"])
+///     .build()
+///     .unwrap();
+///
+/// let result = set.find("foobar").unwrap().unwrap();
+/// assert_eq!(result.as_str(), "foo");
+/// ```
+///
+/// With the `std` feature, you can configure the maximum number of threads:
+///
+/// ```
+/// # #[cfg(feature = "std")]
+/// # {
+/// use fancy_regex::RegexSetBuilder;
+///
+/// let set = RegexSetBuilder::new(&[r"(\w+)\1", r"easy"])
+///     .max_threads(8)
+///     .build()
+///     .unwrap();
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct RegexSetBuilder {
     patterns: Vec<String>,
@@ -76,6 +164,55 @@ impl RegexSetBuilder {
 }
 
 /// A set of compiled regular expressions for matching with priority ordering
+///
+/// `RegexSet` matches multiple patterns against a text and returns the first match
+/// based on position and priority order. Patterns are specified in priority order,
+/// with the first pattern having the highest priority.
+///
+/// # Matching Behavior
+///
+/// When searching for matches:
+/// 1. The match with the lowest starting position in the haystack wins
+/// 2. If multiple patterns match at the same position, the pattern with the
+///    lowest index (highest priority) wins
+/// 3. Easy patterns (without backreferences/lookaround) are matched using the
+///    fast `regex-automata` engine
+/// 4. Hard patterns (with backreferences/lookaround) are matched using the VM
+///
+/// # Threading
+///
+/// With the `std` feature enabled, hard patterns are searched in parallel using
+/// multiple threads for better performance. The number of threads can be configured
+/// using `RegexSetBuilder::max_threads()`. Without the `std` feature, patterns are
+/// searched sequentially.
+///
+/// # Example
+///
+/// ```
+/// use fancy_regex::RegexSet;
+///
+/// let set = RegexSet::new(&["foo", "bar", "baz"]).unwrap();
+///
+/// let result = set.find("hello bar world").unwrap().unwrap();
+/// assert_eq!(result.pattern(), 1);
+/// assert_eq!(result.as_str(), "bar");
+/// assert_eq!(result.start(), 6);
+/// assert_eq!(result.end(), 9);
+/// ```
+///
+/// # Priority Example
+///
+/// ```
+/// use fancy_regex::RegexSet;
+///
+/// let set = RegexSet::new(&["bar", "foo"]).unwrap();
+/// let text = "foobar";
+///
+/// // "foo" appears first in the text, so it matches even though "bar" has higher priority
+/// let result = set.find(text).unwrap().unwrap();
+/// assert_eq!(result.as_str(), "foo");
+/// assert_eq!(result.pattern(), 1);
+/// ```
 #[derive(Debug)]
 pub struct RegexSet {
     /// Patterns indexed by their priority (index 0 is highest priority)
@@ -112,6 +249,22 @@ struct HardPattern {
 }
 
 /// Result of a RegexSet match operation
+///
+/// Contains information about which pattern matched and the match details.
+///
+/// # Example
+///
+/// ```
+/// use fancy_regex::RegexSet;
+///
+/// let set = RegexSet::new(&["foo", "bar"]).unwrap();
+/// let result = set.find("hello bar").unwrap().unwrap();
+///
+/// assert_eq!(result.pattern(), 1);
+/// assert_eq!(result.as_str(), "bar");
+/// assert_eq!(result.start(), 6);
+/// assert_eq!(result.end(), 9);
+/// ```
 #[derive(Debug, Clone)]
 pub struct SetMatch<'t> {
     /// The index of the matching pattern
