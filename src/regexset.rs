@@ -217,13 +217,24 @@ impl RegexSetBuilder {
 pub struct RegexSet {
     /// Patterns indexed by their priority (index 0 is highest priority)
     patterns: Vec<String>,
-    /// Easy patterns that can be delegated to regex-automata
+    /// Easy patterns that can be delegated to regex-automata (kept for fallback)
     easy_patterns: Vec<EasyPattern>,
+    /// Combined regex for easy patterns (if possible to combine)
+    combined_easy_regex: Option<CombinedEasyRegex>,
     /// Hard patterns that need VM execution
     hard_patterns: Vec<HardPattern>,
     #[cfg(feature = "std")]
     /// Maximum number of threads for parallel hard pattern searching
     max_threads: usize,
+}
+
+#[derive(Debug)]
+struct CombinedEasyRegex {
+    /// The combined regex with alternations: (pattern0)|(pattern1)|...
+    regex: RaRegex,
+    /// Mapping from capture group index to pattern index
+    /// For each pattern i, group_to_pattern[i] gives the original pattern index
+    group_to_pattern: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -328,6 +339,9 @@ pub struct SetMatches<'r, 't> {
     text: &'t str,
     last_end: usize,
     last_match: Option<usize>,
+    /// Cache of matches from hard patterns to avoid recomputation
+    /// Format: (pattern_index, start, end)
+    match_cache: Vec<(usize, usize, usize)>,
 }
 
 impl<'r, 't> SetMatches<'r, 't> {
@@ -360,7 +374,12 @@ impl<'r, 't> Iterator for SetMatches<'r, 't> {
             0
         };
 
-        let mat = match self.set.find_from_pos_internal(self.text, self.last_end, option_flags) {
+        let mat = match self.set.find_from_pos_internal(
+            self.text,
+            self.last_end,
+            option_flags,
+            &mut self.match_cache,
+        ) {
             Err(error) => {
                 self.last_end = self.text.len() + 1;
                 return Some(Err(error));
@@ -459,13 +478,64 @@ impl RegexSet {
             }
         }
 
+        // Build combined regex for easy patterns
+        let combined_easy_regex = if !easy_patterns.is_empty() {
+            Self::build_combined_easy_regex(&easy_patterns, &base_options)?
+        } else {
+            None
+        };
+
         Ok(RegexSet {
             patterns: patterns.to_vec(),
             easy_patterns,
+            combined_easy_regex,
             hard_patterns,
             #[cfg(feature = "std")]
             max_threads,
         })
+    }
+
+    fn build_combined_easy_regex(
+        easy_patterns: &[EasyPattern],
+        base_options: &RegexOptions,
+    ) -> Result<Option<CombinedEasyRegex>> {
+        if easy_patterns.is_empty() {
+            return Ok(None);
+        }
+
+        // Check if any pattern has explicit_capture_group_0 (lookahead optimization)
+        // In this case, we can't combine them as the combined pattern wouldn't work correctly
+        let has_lookahead = easy_patterns.iter().any(|p| p.explicit_capture_group_0);
+        if has_lookahead {
+            // Fall back to not using combined regex
+            return Ok(None);
+        }
+
+        // Build pattern: (pattern0)|(pattern1)|...
+        let mut combined_pattern = String::new();
+        let mut group_to_pattern = Vec::new();
+
+        for (i, easy_pattern) in easy_patterns.iter().enumerate() {
+            if i > 0 {
+                combined_pattern.push('|');
+            }
+            combined_pattern.push('(');
+            // Get the pattern string from the options
+            combined_pattern.push_str(&easy_pattern.options.pattern);
+            combined_pattern.push(')');
+            group_to_pattern.push(easy_pattern.index);
+        }
+
+        // Try to compile, but fall back to None if it fails
+        let regex = match compile_inner(&combined_pattern, base_options) {
+            Ok(r) => r,
+            Err(_) => return Ok(None), // Fall back to individual matching
+        };
+
+        Ok(Some(CombinedEasyRegex {
+            regex,
+            group_to_pattern,
+        }))
     }
 
     /// Returns the patterns in the set
@@ -507,6 +577,7 @@ impl RegexSet {
             text,
             last_end: 0,
             last_match: None,
+            match_cache: Vec::new(),
         }
     }
 
@@ -522,7 +593,8 @@ impl RegexSet {
 
     /// Find the first match starting from the given position
     pub fn find_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<SetMatch<'t>>> {
-        self.find_from_pos_internal(text, pos, 0)
+        let mut cache = Vec::new();
+        self.find_from_pos_internal(text, pos, 0, &mut cache)
     }
 
     fn find_from_pos_internal<'t>(
@@ -530,12 +602,13 @@ impl RegexSet {
         text: &'t str,
         pos: usize,
         option_flags: u32,
+        match_cache: &mut Vec<(usize, usize, usize)>,
     ) -> Result<Option<SetMatch<'t>>> {
         // Find the best easy match
         let easy_match = self.find_easy_match(text, pos, option_flags);
 
         // Find the best hard match
-        let hard_match = self.find_hard_match(text, pos, option_flags)?;
+        let hard_match = self.find_hard_match(text, pos, option_flags, match_cache)?;
 
         // Return the better of the two matches
         Ok(Self::choose_best_match(easy_match, hard_match))
@@ -547,6 +620,34 @@ impl RegexSet {
         pos: usize,
         _option_flags: u32,
     ) -> Option<SetMatch<'t>> {
+        // Try combined regex first if available
+        if let Some(combined) = self.combined_easy_regex.as_ref() {
+            // Use the combined regex
+            let mut locations = combined.regex.create_captures();
+            combined
+                .regex
+                .captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+
+            if !locations.is_match() {
+                return None;
+            }
+
+            // Find which capture group matched
+            for (group_idx, &pattern_idx) in combined.group_to_pattern.iter().enumerate() {
+                // Group indices start at 1 (group 0 is the whole match)
+                let group_num = group_idx + 1;
+                if let Some(group) = locations.get_group(group_num) {
+                    return Some(SetMatch {
+                        pattern: pattern_idx,
+                        match_: Match::new(text, group.start, group.end),
+                    });
+                }
+            }
+
+            return None;
+        }
+
+        // Fall back to individual matching
         let mut best_match: Option<SetMatch<'t>> = None;
 
         for easy_pattern in &self.easy_patterns {
@@ -590,17 +691,19 @@ impl RegexSet {
                     if m.start() == pos {
                         // Match at start position - check if we can terminate early
                         let best_pattern_idx = m.pattern();
-                        
+
                         // Check if all higher priority patterns (lower indices) have been checked
                         let all_higher_checked = (0..best_pattern_idx).all(|i| {
                             // Pattern i must either be in easy_patterns or hard_patterns and
                             // have been processed already
-                            let in_easy = self.easy_patterns.iter()
+                            let in_easy = self
+                                .easy_patterns
+                                .iter()
                                 .any(|ep| ep.index == i && ep.index <= easy_pattern.index);
                             let in_hard = self.hard_patterns.iter().any(|hp| hp.index == i);
                             in_easy || in_hard
                         });
-                        
+
                         if all_higher_checked {
                             break;
                         }
@@ -618,6 +721,7 @@ impl RegexSet {
         text: &'t str,
         pos: usize,
         option_flags: u32,
+        match_cache: &mut Vec<(usize, usize, usize)>,
     ) -> Result<Option<SetMatch<'t>>> {
         use std::sync::{Arc, Mutex};
         use std::thread;
@@ -626,10 +730,38 @@ impl RegexSet {
             return Ok(None);
         }
 
+        // Invalidate cache entries before current position
+        match_cache.retain(|(start, _, _)| *start >= pos);
+
+        // Check cache for reusable matches
+        let mut best_from_cache: Option<(usize, usize, usize)> = None;
+        for &(start, pattern, end) in match_cache.iter() {
+            if start >= pos {
+                best_from_cache = match best_from_cache {
+                    None => Some((start, pattern, end)),
+                    Some((best_start, best_pattern, best_end)) => {
+                        match start.cmp(&best_start) {
+                            core::cmp::Ordering::Less => Some((start, pattern, end)),
+                            core::cmp::Ordering::Greater => Some((best_start, best_pattern, best_end)),
+                            core::cmp::Ordering::Equal => {
+                                if pattern < best_pattern {
+                                    Some((start, pattern, end))
+                                } else {
+                                    Some((best_start, best_pattern, best_end))
+                                }
+                            }
+                        }
+                    }
+                };
+            }
+        }
+
         // Use Arc<str> to share the text across threads without copying
         let text_arc: Arc<str> = Arc::from(text);
         // Store results as (start, pattern_index, end) to avoid lifetime issues with Match<'t>
-        let best_match: Arc<Mutex<Option<(usize, usize, usize)>>> = Arc::new(Mutex::new(None));
+        let best_match: Arc<Mutex<Option<(usize, usize, usize)>>> =
+            Arc::new(Mutex::new(best_from_cache));
+        let new_matches: Arc<Mutex<Vec<(usize, usize, usize)>>> = Arc::new(Mutex::new(Vec::new()));
 
         // Process hard patterns in chunks based on max_threads
         for chunk in self.hard_patterns.chunks(self.max_threads.max(1)) {
@@ -637,6 +769,7 @@ impl RegexSet {
 
             for hard_pattern in chunk {
                 let best_match = Arc::clone(&best_match);
+                let new_matches = Arc::clone(&new_matches);
                 let text_arc = Arc::clone(&text_arc);
                 let prog = Arc::clone(&hard_pattern.prog);
                 let options = hard_pattern.options.clone();
@@ -657,8 +790,12 @@ impl RegexSet {
                     // Execute the VM to find a match
                     match vm::run(&prog, &text_arc, pos, option_flags, &options) {
                         Ok(Some(saves)) => {
-                            let mut best = best_match.lock().unwrap();
                             let new_match = (saves[0], index, saves[1]);
+                            
+                            // Store in new matches for cache
+                            new_matches.lock().unwrap().push(new_match);
+                            
+                            let mut best = best_match.lock().unwrap();
                             *best = match *best {
                                 None => Some(new_match),
                                 Some((start_a, pattern_a, end_a)) => {
@@ -731,6 +868,9 @@ impl RegexSet {
             }
         }
 
+        // Add new matches to cache
+        match_cache.extend(new_matches.lock().unwrap().drain(..));
+
         let result = best_match.lock().unwrap();
         Ok(result.map(|(start, pattern, end)| SetMatch {
             pattern,
@@ -744,8 +884,25 @@ impl RegexSet {
         text: &'t str,
         pos: usize,
         option_flags: u32,
+        match_cache: &mut Vec<(usize, usize, usize)>,
     ) -> Result<Option<SetMatch<'t>>> {
+        // Invalidate cache entries before current position
+        match_cache.retain(|(start, _, _)| *start >= pos);
+
+        // Check cache for reusable matches
         let mut best_match: Option<SetMatch<'t>> = None;
+        for &(start, pattern, end) in match_cache.iter() {
+            if start >= pos {
+                let cached_match = SetMatch {
+                    pattern,
+                    match_: Match::new(text, start, end),
+                };
+                best_match = match best_match {
+                    None => Some(cached_match),
+                    Some(existing) => Some(Self::choose_best_of_two(existing, cached_match)),
+                };
+            }
+        }
 
         for hard_pattern in &self.hard_patterns {
             // Early termination: if we found a match at the starting position with a pattern
@@ -778,6 +935,9 @@ impl RegexSet {
                     pattern: hard_pattern.index,
                     match_: Match::new(text, saves[0], saves[1]),
                 };
+
+                // Add to cache
+                match_cache.push((saves[0], hard_pattern.index, saves[1]));
 
                 best_match = match best_match {
                     None => Some(current_match),
