@@ -89,5 +89,20 @@ fn main() {
         println!();
     }
 
+    // Example 8: Using the iterator API
+    println!("Example 8: Using iterator API to find all matches");
+    let set = RegexSet::new(&["foo", "bar"]).unwrap();
+    let text = "foo bar foo bar";
+    let matches: Vec<_> = set.matches(text)
+        .map(|m| m.unwrap())
+        .collect();
+    println!("  Text: '{}'", text);
+    println!("  Found {} matches:", matches.len());
+    for (i, m) in matches.iter().enumerate() {
+        println!("    Match {}: pattern {} matched '{}' at position {}", 
+                 i, m.pattern(), m.as_str(), m.start());
+    }
+    println!();
+
     println!("=== All examples complete ===");
 }
