@@ -234,6 +234,8 @@ struct EasyPattern {
     regex: RaRegex,
     /// Options used for compilation
     options: RegexOptions,
+    /// Whether this pattern requires extracting capture group 1 for the match boundaries
+    explicit_capture_group_0: bool,
 }
 
 #[derive(Debug)]
@@ -345,6 +347,7 @@ impl RegexSet {
                     index,
                     regex,
                     options,
+                    explicit_capture_group_0: requires_capture_group_fixup,
                 });
             } else {
                 // Hard pattern - needs VM execution
@@ -406,27 +409,42 @@ impl RegexSet {
         let mut best_match: Option<SetMatch<'t>> = None;
 
         for easy_pattern in &self.easy_patterns {
-            if let Some(m) = easy_pattern
-                .regex
-                .search(&RaInput::new(text).span(pos..text.len()))
-            {
-                let current_match = SetMatch {
-                    pattern: easy_pattern.index,
-                    match_: Match::new(text, m.start(), m.end()),
-                };
+            let current_match = if !easy_pattern.explicit_capture_group_0 {
+                // Simple case: use search() directly
+                easy_pattern
+                    .regex
+                    .search(&RaInput::new(text).span(pos..text.len()))
+                    .map(|m| SetMatch {
+                        pattern: easy_pattern.index,
+                        match_: Match::new(text, m.start(), m.end()),
+                    })
+            } else {
+                // Pattern has trailing lookahead: extract capture group 1 for match boundaries
+                let mut locations = easy_pattern.regex.create_captures();
+                easy_pattern
+                    .regex
+                    .captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+                if locations.is_match() {
+                    let group1 = locations.get_group(1).unwrap();
+                    Some(SetMatch {
+                        pattern: easy_pattern.index,
+                        match_: Match::new(text, group1.start, group1.end),
+                    })
+                } else {
+                    None
+                }
+            };
 
+            if let Some(current_match) = current_match {
                 best_match = match best_match {
                     None => Some(current_match),
-                    Some(existing) => {
-                        Some(Self::choose_best_of_two(existing, current_match))
-                    }
+                    Some(existing) => Some(Self::choose_best_of_two(existing, current_match)),
                 };
 
                 // Early termination: if we found a match at the current position
                 // and this is the highest priority pattern, we can stop
                 if best_match.as_ref().unwrap().start() == pos
-                    && easy_pattern.index
-                        < best_match.as_ref().unwrap().pattern
+                    && easy_pattern.index < best_match.as_ref().unwrap().pattern
                 {
                     // Check if all higher priority patterns have been checked
                     let all_higher_checked = (0..easy_pattern.index).all(|i| {
