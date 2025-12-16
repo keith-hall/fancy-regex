@@ -1190,4 +1190,40 @@ mod tests {
         assert_eq!(matches[0].as_str(), "aaa");
         assert_eq!(matches[1].as_str(), "b");
     }
+
+    #[test]
+    fn test_combined_easy_regex() {
+        // Test that multiple easy patterns work efficiently with combined regex
+        let set = RegexSet::new(&["foo", "bar", "baz"]).unwrap();
+        let text = "foo baz bar foo";
+        let matches: Vec<_> = set.matches(text)
+            .map(|m| m.unwrap())
+            .collect();
+        
+        assert_eq!(matches.len(), 4);
+        assert_eq!(matches[0].as_str(), "foo");
+        assert_eq!(matches[0].pattern(), 0);
+        assert_eq!(matches[1].as_str(), "baz");
+        assert_eq!(matches[1].pattern(), 2);
+        assert_eq!(matches[2].as_str(), "bar");
+        assert_eq!(matches[2].pattern(), 1);
+        assert_eq!(matches[3].as_str(), "foo");
+        assert_eq!(matches[3].pattern(), 0);
+    }
+
+    #[test]
+    fn test_cache_reuse_with_hard_patterns() {
+        // Test that hard pattern matches are cached and reused
+        let set = RegexSet::new(&[r"(\w+)\1"]).unwrap();
+        let text = "foofoo barbar bazbaz";
+        let matches: Vec<_> = set.matches(text)
+            .map(|m| m.unwrap())
+            .collect();
+        
+        // Should find all three backreference matches
+        assert_eq!(matches.len(), 3);
+        assert_eq!(matches[0].as_str(), "foofoo");
+        assert_eq!(matches[1].as_str(), "barbar");
+        assert_eq!(matches[2].as_str(), "bazbaz");
+    }
 }
