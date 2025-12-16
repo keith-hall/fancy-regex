@@ -100,6 +100,23 @@ let fields: Vec<&str> = re.splitn(target, 3).map(|x| x.unwrap()).collect();
 assert_eq!(fields, vec!["a", "b", "c\td    e"]);
 ```
 
+## Example: Matching multiple patterns with RegexSet
+
+`RegexSet` allows matching multiple patterns against text with priority ordering:
+
+```rust
+use fancy_regex::RegexSet;
+
+let set = RegexSet::new(&["foo", "bar", "baz"]).unwrap();
+let text = "hello bar world";
+let result = set.find(text).unwrap();
+
+assert!(result.is_some());
+let m = result.unwrap();
+assert_eq!(m.pattern(), 1); // pattern "bar" matched
+assert_eq!(m.as_str(), "bar");
+```
+
 # Features
 
 This crate supports several optional features that can be enabled or disabled:
@@ -221,6 +238,7 @@ mod expand;
 mod optimize;
 mod parse;
 mod parse_flags;
+mod regexset;
 mod replacer;
 mod vm;
 
@@ -234,6 +252,7 @@ use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
+pub use crate::regexset::{RegexSet, RegexSetBuilder, SetMatch, SetMatches};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 
 const MAX_RECURSION: usize = 64;
@@ -1415,7 +1434,7 @@ impl<'t> Match<'t> {
     }
 
     /// Creates a new match from the given text and byte offsets.
-    fn new(text: &'t str, start: usize, end: usize) -> Match<'t> {
+    pub(crate) fn new(text: &'t str, start: usize, end: usize) -> Match<'t> {
         Match { text, start, end }
     }
 }

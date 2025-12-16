@@ -1,0 +1,1229 @@
+// Copyright 2016 The Fancy Regex Authors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+//! RegexSet for matching multiple patterns with priority ordering
+//!
+//! This module provides a `RegexSet` type that can match multiple regular expression patterns
+//! against a text and return the first match based on position and priority order.
+//!
+//! # Example
+//!
+//! ```
+//! use fancy_regex::RegexSet;
+//!
+//! let set = RegexSet::new(&["foo", "bar", "baz"]).unwrap();
+//! let text = "hello bar world";
+//! let result = set.find(text).unwrap();
+//!
+//! assert!(result.is_some());
+//! let m = result.unwrap();
+//! assert_eq!(m.pattern(), 1); // pattern "bar" matched
+//! assert_eq!(m.as_str(), "bar");
+//! ```
+//!
+//! # Priority-based Matching
+//!
+//! When multiple patterns match at different positions, the match with the lowest starting
+//! position is returned. When multiple patterns match at the same position, the pattern with
+//! the lowest index (highest priority) is returned.
+//!
+//! ```
+//! use fancy_regex::RegexSet;
+//!
+//! let set = RegexSet::new(&["foo", "f"]).unwrap();
+//! let text = "foo";
+//! let result = set.find(text).unwrap();
+//!
+//! // Both patterns match at position 0, but "foo" has higher priority (lower index)
+//! assert_eq!(result.unwrap().pattern(), 0);
+//! ```
+//!
+//! # Mixed Easy and Hard Patterns
+//!
+//! `RegexSet` automatically classifies patterns as "easy" (can be delegated to the fast
+//! `regex-automata` engine) or "hard" (require backtracking VM execution). Easy patterns
+//! are matched efficiently using `regex-automata`, while hard patterns with features like
+//! backreferences and lookaround are executed using the VM.
+//!
+//! With the `std` feature enabled, hard patterns are searched in parallel using multiple
+//! threads for better performance.
+//!
+//! ```
+//! use fancy_regex::RegexSet;
+//!
+//! // Mix of easy and hard patterns
+//! let set = RegexSet::new(&[
+//!     r"simple",           // easy pattern
+//!     r"(\w+)\1",          // hard pattern (backreference)
+//!     r"easy",             // easy pattern
+//! ]).unwrap();
+//!
+//! let text = "foofoo easy simple";
+//! let result = set.find(text).unwrap().unwrap();
+//! assert_eq!(result.as_str(), "foofoo");
+//! assert_eq!(result.pattern(), 1);
+//! ```
+
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use regex_automata::meta::Regex as RaRegex;
+use regex_automata::Input as RaInput;
+
+use crate::analyze::analyze;
+use crate::compile::{compile, compile_inner};
+use crate::optimize::optimize;
+use crate::vm::{self, Prog};
+use crate::{Expr, Match, RegexOptions, Result};
+
+/// A builder for constructing a RegexSet
+///
+/// # Example
+///
+/// ```
+/// use fancy_regex::RegexSetBuilder;
+///
+/// let set = RegexSetBuilder::new(&["foo", "bar"])
+///     .build()
+///     .unwrap();
+///
+/// let result = set.find("foobar").unwrap().unwrap();
+/// assert_eq!(result.as_str(), "foo");
+/// ```
+///
+/// With the `std` feature, you can configure the maximum number of threads:
+///
+/// ```
+/// # #[cfg(feature = "std")]
+/// # {
+/// use fancy_regex::RegexSetBuilder;
+///
+/// let set = RegexSetBuilder::new(&[r"(\w+)\1", r"easy"])
+///     .max_threads(8)
+///     .build()
+///     .unwrap();
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct RegexSetBuilder {
+    patterns: Vec<String>,
+    options: RegexOptions,
+    #[cfg(feature = "std")]
+    max_threads: usize,
+}
+
+impl RegexSetBuilder {
+    /// Create a new RegexSet builder with the given patterns
+    pub fn new<I, S>(patterns: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        RegexSetBuilder {
+            patterns: patterns.into_iter().map(|s| s.as_ref().to_string()).collect(),
+            options: RegexOptions::default(),
+            #[cfg(feature = "std")]
+            max_threads: 4,
+        }
+    }
+
+    /// Set the maximum number of threads to use for searching hard patterns
+    /// (only available with the `std` feature)
+    #[cfg(feature = "std")]
+    pub fn max_threads(&mut self, max_threads: usize) -> &mut Self {
+        self.max_threads = max_threads;
+        self
+    }
+
+    /// Build the RegexSet
+    pub fn build(&self) -> Result<RegexSet> {
+        RegexSet::new_with_options(
+            &self.patterns,
+            self.options.clone(),
+            #[cfg(feature = "std")]
+            self.max_threads,
+        )
+    }
+}
+
+/// A set of compiled regular expressions for matching with priority ordering
+///
+/// `RegexSet` matches multiple patterns against a text and returns the first match
+/// based on position and priority order. Patterns are specified in priority order,
+/// with the first pattern having the highest priority.
+///
+/// # Matching Behavior
+///
+/// When searching for matches:
+/// 1. The match with the lowest starting position in the haystack wins
+/// 2. If multiple patterns match at the same position, the pattern with the
+///    lowest index (highest priority) wins
+/// 3. Easy patterns (without backreferences/lookaround) are matched using the
+///    fast `regex-automata` engine
+/// 4. Hard patterns (with backreferences/lookaround) are matched using the VM
+///
+/// # Threading
+///
+/// With the `std` feature enabled, hard patterns are searched in parallel using
+/// multiple threads for better performance. The number of threads can be configured
+/// using `RegexSetBuilder::max_threads()`. Without the `std` feature, patterns are
+/// searched sequentially.
+///
+/// # Example
+///
+/// ```
+/// use fancy_regex::RegexSet;
+///
+/// let set = RegexSet::new(&["foo", "bar", "baz"]).unwrap();
+///
+/// let result = set.find("hello bar world").unwrap().unwrap();
+/// assert_eq!(result.pattern(), 1);
+/// assert_eq!(result.as_str(), "bar");
+/// assert_eq!(result.start(), 6);
+/// assert_eq!(result.end(), 9);
+/// ```
+///
+/// # Priority Example
+///
+/// ```
+/// use fancy_regex::RegexSet;
+///
+/// let set = RegexSet::new(&["bar", "foo"]).unwrap();
+/// let text = "foobar";
+///
+/// // "foo" appears first in the text, so it matches even though "bar" has higher priority
+/// let result = set.find(text).unwrap().unwrap();
+/// assert_eq!(result.as_str(), "foo");
+/// assert_eq!(result.pattern(), 1);
+/// ```
+#[derive(Debug)]
+pub struct RegexSet {
+    /// Patterns indexed by their priority (index 0 is highest priority)
+    patterns: Vec<String>,
+    /// Easy patterns that can be delegated to regex-automata (kept for fallback)
+    easy_patterns: Vec<EasyPattern>,
+    /// Combined regex for easy patterns (if possible to combine)
+    combined_easy_regex: Option<CombinedEasyRegex>,
+    /// Hard patterns that need VM execution
+    hard_patterns: Vec<HardPattern>,
+    #[cfg(feature = "std")]
+    /// Maximum number of threads for parallel hard pattern searching
+    max_threads: usize,
+}
+
+#[derive(Debug)]
+struct CombinedEasyRegex {
+    /// The combined regex with alternations: (pattern0)|(pattern1)|...
+    regex: RaRegex,
+    /// Mapping from capture group index to pattern index
+    /// For each pattern i, group_to_pattern[i] gives the original pattern index
+    group_to_pattern: Vec<usize>,
+}
+
+#[derive(Debug)]
+struct EasyPattern {
+    /// The index in the original patterns array
+    index: usize,
+    /// The compiled regex
+    regex: RaRegex,
+    /// Options used for compilation
+    options: RegexOptions,
+    /// Whether this pattern requires extracting capture group 1 for the match boundaries
+    explicit_capture_group_0: bool,
+}
+
+#[derive(Debug)]
+struct HardPattern {
+    /// The index in the original patterns array
+    index: usize,
+    /// The compiled VM program
+    prog: Arc<Prog>,
+    /// Number of capture groups
+    n_groups: usize,
+    /// Options used for compilation
+    options: RegexOptions,
+}
+
+/// Result of a RegexSet match operation
+///
+/// Contains information about which pattern matched and the match details.
+///
+/// # Example
+///
+/// ```
+/// use fancy_regex::RegexSet;
+///
+/// let set = RegexSet::new(&["foo", "bar"]).unwrap();
+/// let result = set.find("hello bar").unwrap().unwrap();
+///
+/// assert_eq!(result.pattern(), 1);
+/// assert_eq!(result.as_str(), "bar");
+/// assert_eq!(result.start(), 6);
+/// assert_eq!(result.end(), 9);
+/// ```
+#[derive(Debug, Clone)]
+pub struct SetMatch<'t> {
+    /// The index of the matching pattern
+    pattern: usize,
+    /// The match details
+    match_: Match<'t>,
+}
+
+impl<'t> SetMatch<'t> {
+    /// Returns the index of the pattern that matched
+    pub fn pattern(&self) -> usize {
+        self.pattern
+    }
+
+    /// Returns the match details
+    pub fn match_(&self) -> &Match<'t> {
+        &self.match_
+    }
+
+    /// Returns the starting byte offset of the match
+    pub fn start(&self) -> usize {
+        self.match_.start()
+    }
+
+    /// Returns the ending byte offset of the match
+    pub fn end(&self) -> usize {
+        self.match_.end()
+    }
+
+    /// Returns the matched text
+    pub fn as_str(&self) -> &'t str {
+        self.match_.as_str()
+    }
+}
+
+/// An iterator over all non-overlapping matches in the haystack.
+///
+/// The iterator yields a `Result<SetMatch>`. The iterator stops when no more
+/// matches can be found.
+///
+/// `'r` is the lifetime of the compiled regular expression set and `'t` is the
+/// lifetime of the matched string.
+///
+/// # Example
+///
+/// ```
+/// use fancy_regex::RegexSet;
+///
+/// let set = RegexSet::new(&["foo", "bar"]).unwrap();
+/// let text = "foo bar foo";
+/// let matches: Vec<_> = set.matches(text)
+///     .map(|m| m.unwrap().as_str())
+///     .collect();
+/// assert_eq!(matches, vec!["foo", "bar", "foo"]);
+/// ```
+#[derive(Debug)]
+pub struct SetMatches<'r, 't> {
+    set: &'r RegexSet,
+    text: &'t str,
+    last_end: usize,
+    last_match: Option<usize>,
+    /// Cache of matches from hard patterns to avoid recomputation
+    /// Format: (pattern_index, start, end)
+    match_cache: Vec<(usize, usize, usize)>,
+}
+
+impl<'r, 't> SetMatches<'r, 't> {
+    /// Return the text being searched.
+    pub fn text(&self) -> &'t str {
+        self.text
+    }
+
+    /// Return the underlying regex set.
+    pub fn set(&self) -> &'r RegexSet {
+        self.set
+    }
+}
+
+impl<'r, 't> Iterator for SetMatches<'r, 't> {
+    type Item = Result<SetMatch<'t>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.last_end > self.text.len() {
+            return None;
+        }
+
+        let option_flags = if let Some(last_match) = self.last_match {
+            if self.last_end > last_match {
+                crate::vm::OPTION_SKIPPED_EMPTY_MATCH
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let mat = match self.set.find_from_pos_internal(
+            self.text,
+            self.last_end,
+            option_flags,
+            &mut self.match_cache,
+        ) {
+            Err(error) => {
+                self.last_end = self.text.len() + 1;
+                return Some(Err(error));
+            }
+            Ok(None) => return None,
+            Ok(Some(mat)) => mat,
+        };
+
+        if mat.start() == mat.end() {
+            self.last_end = next_utf8(self.text, mat.end());
+            if Some(mat.end()) == self.last_match {
+                return self.next();
+            }
+        } else {
+            self.last_end = mat.end();
+        }
+
+        self.last_match = Some(mat.end());
+
+        Some(Ok(mat))
+    }
+}
+
+/// Returns the smallest possible index of the next valid UTF-8 sequence
+/// starting after `i`.
+fn next_utf8(text: &str, i: usize) -> usize {
+    let b = match text.as_bytes().get(i) {
+        None => return i + 1,
+        Some(&b) => b,
+    };
+    let len = match b {
+        b if b < 0x80 => 1,
+        b if b < 0xe0 => 2,
+        b if b < 0xf0 => 3,
+        _ => 4,
+    };
+    i + len
+}
+
+impl RegexSet {
+    /// Create a new RegexSet from an iterator of patterns
+    pub fn new<I, S>(patterns: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let patterns: Vec<String> = patterns.into_iter().map(|s| s.as_ref().to_string()).collect();
+        Self::new_with_options(
+            &patterns,
+            RegexOptions::default(),
+            #[cfg(feature = "std")]
+            4,
+        )
+    }
+
+    fn new_with_options(
+        patterns: &[String],
+        base_options: RegexOptions,
+        #[cfg(feature = "std")] max_threads: usize,
+    ) -> Result<Self> {
+        let mut easy_patterns = Vec::new();
+        let mut hard_patterns = Vec::new();
+
+        // Parse and analyze each pattern
+        for (index, pattern) in patterns.iter().enumerate() {
+            let options = RegexOptions {
+                pattern: pattern.clone(),
+                ..base_options.clone()
+            };
+
+            let mut tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
+            let requires_capture_group_fixup = optimize(&mut tree);
+            let info = analyze(&tree, requires_capture_group_fixup)?;
+
+            if !info.hard {
+                // Easy pattern - can be delegated to regex-automata
+                let mut re_cooked = String::new();
+                tree.expr.to_str(&mut re_cooked, 0);
+                let regex = compile_inner(&re_cooked, &options)?;
+
+                easy_patterns.push(EasyPattern {
+                    index,
+                    regex,
+                    options,
+                    explicit_capture_group_0: requires_capture_group_fixup,
+                });
+            } else {
+                // Hard pattern - needs VM execution
+                let prog = compile(&info, false)?;
+                hard_patterns.push(HardPattern {
+                    index,
+                    prog: Arc::new(prog),
+                    n_groups: info.end_group(),
+                    options,
+                });
+            }
+        }
+
+        // Build combined regex for easy patterns
+        let combined_easy_regex = if !easy_patterns.is_empty() {
+            Self::build_combined_easy_regex(&easy_patterns, &base_options)?
+        } else {
+            None
+        };
+
+        Ok(RegexSet {
+            patterns: patterns.to_vec(),
+            easy_patterns,
+            combined_easy_regex,
+            hard_patterns,
+            #[cfg(feature = "std")]
+            max_threads,
+        })
+    }
+
+    fn build_combined_easy_regex(
+        easy_patterns: &[EasyPattern],
+        base_options: &RegexOptions,
+    ) -> Result<Option<CombinedEasyRegex>> {
+        if easy_patterns.is_empty() {
+            return Ok(None);
+        }
+
+        // Check if any pattern has explicit_capture_group_0 (lookahead optimization)
+        // In this case, we can't combine them as the combined pattern wouldn't work correctly
+        let has_lookahead = easy_patterns.iter().any(|p| p.explicit_capture_group_0);
+        if has_lookahead {
+            // Fall back to not using combined regex
+            return Ok(None);
+        }
+
+        // Build pattern: (pattern0)|(pattern1)|...
+        let mut combined_pattern = String::new();
+        let mut group_to_pattern = Vec::new();
+
+        for (i, easy_pattern) in easy_patterns.iter().enumerate() {
+            if i > 0 {
+                combined_pattern.push('|');
+            }
+            combined_pattern.push('(');
+            // Get the pattern string from the options
+            combined_pattern.push_str(&easy_pattern.options.pattern);
+            combined_pattern.push(')');
+            group_to_pattern.push(easy_pattern.index);
+        }
+
+        // Try to compile, but fall back to None if it fails
+        let regex = match compile_inner(&combined_pattern, base_options) {
+            Ok(r) => r,
+            Err(_) => return Ok(None), // Fall back to individual matching
+        };
+
+        Ok(Some(CombinedEasyRegex {
+            regex,
+            group_to_pattern,
+        }))
+    }
+
+    /// Returns the patterns in the set
+    pub fn patterns(&self) -> &[String] {
+        &self.patterns
+    }
+
+    /// Returns the number of patterns in the set
+    pub fn len(&self) -> usize {
+        self.patterns.len()
+    }
+
+    /// Returns true if the set has no patterns
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    /// Returns an iterator over all non-overlapping matches in the haystack.
+    ///
+    /// The iterator will yield all matches in order of their position in the text.
+    /// When multiple patterns match at the same position, the pattern with the
+    /// lowest index (highest priority) is returned.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use fancy_regex::RegexSet;
+    ///
+    /// let set = RegexSet::new(&["foo", "bar"]).unwrap();
+    /// let text = "foo bar foo";
+    /// let matches: Vec<_> = set.matches(text)
+    ///     .map(|m| m.unwrap().as_str())
+    ///     .collect();
+    /// assert_eq!(matches, vec!["foo", "bar", "foo"]);
+    /// ```
+    pub fn matches<'r, 't>(&'r self, text: &'t str) -> SetMatches<'r, 't> {
+        SetMatches {
+            set: self,
+            text,
+            last_end: 0,
+            last_match: None,
+            match_cache: Vec::new(),
+        }
+    }
+
+    /// Find the first match among all patterns in the haystack
+    ///
+    /// Returns the match with the lowest start position. If multiple patterns match
+    /// at the same position, returns the one with the highest priority (lowest index).
+    ///
+    /// This is equivalent to calling `matches(text).next()`.
+    pub fn find<'t>(&self, text: &'t str) -> Result<Option<SetMatch<'t>>> {
+        self.find_from_pos(text, 0)
+    }
+
+    /// Find the first match starting from the given position
+    pub fn find_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<SetMatch<'t>>> {
+        let mut cache = Vec::new();
+        self.find_from_pos_internal(text, pos, 0, &mut cache)
+    }
+
+    fn find_from_pos_internal<'t>(
+        &self,
+        text: &'t str,
+        pos: usize,
+        option_flags: u32,
+        match_cache: &mut Vec<(usize, usize, usize)>,
+    ) -> Result<Option<SetMatch<'t>>> {
+        // Find the best easy match
+        let easy_match = self.find_easy_match(text, pos, option_flags);
+
+        // Find the best hard match
+        let hard_match = self.find_hard_match(text, pos, option_flags, match_cache)?;
+
+        // Return the better of the two matches
+        Ok(Self::choose_best_match(easy_match, hard_match))
+    }
+
+    fn find_easy_match<'t>(
+        &self,
+        text: &'t str,
+        pos: usize,
+        _option_flags: u32,
+    ) -> Option<SetMatch<'t>> {
+        // Try combined regex first if available
+        if let Some(combined) = self.combined_easy_regex.as_ref() {
+            // Use the combined regex
+            let mut locations = combined.regex.create_captures();
+            combined
+                .regex
+                .captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+
+            if !locations.is_match() {
+                return None;
+            }
+
+            // Find which capture group matched
+            for (group_idx, &pattern_idx) in combined.group_to_pattern.iter().enumerate() {
+                // Group indices start at 1 (group 0 is the whole match)
+                let group_num = group_idx + 1;
+                if let Some(group) = locations.get_group(group_num) {
+                    return Some(SetMatch {
+                        pattern: pattern_idx,
+                        match_: Match::new(text, group.start, group.end),
+                    });
+                }
+            }
+
+            return None;
+        }
+
+        // Fall back to individual matching
+        let mut best_match: Option<SetMatch<'t>> = None;
+
+        for easy_pattern in &self.easy_patterns {
+            let current_match = if !easy_pattern.explicit_capture_group_0 {
+                // Simple case: use search() directly
+                easy_pattern
+                    .regex
+                    .search(&RaInput::new(text).span(pos..text.len()))
+                    .map(|m| SetMatch {
+                        pattern: easy_pattern.index,
+                        match_: Match::new(text, m.start(), m.end()),
+                    })
+            } else {
+                // Pattern has trailing lookahead: extract capture group 1 for match boundaries
+                let mut locations = easy_pattern.regex.create_captures();
+                easy_pattern
+                    .regex
+                    .captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+                if locations.is_match() {
+                    let group1 = locations.get_group(1).unwrap();
+                    Some(SetMatch {
+                        pattern: easy_pattern.index,
+                        match_: Match::new(text, group1.start, group1.end),
+                    })
+                } else {
+                    None
+                }
+            };
+
+            if let Some(current_match) = current_match {
+                best_match = match best_match {
+                    None => Some(current_match),
+                    Some(existing) => Some(Self::choose_best_of_two(existing, current_match)),
+                };
+
+                // Early termination optimization:
+                // If we found a match at the starting position and it's from the highest priority
+                // pattern we've checked so far, and all patterns with even higher priority have
+                // been checked, we can stop searching.
+                if let Some(ref m) = best_match {
+                    if m.start() == pos {
+                        // Match at start position - check if we can terminate early
+                        let best_pattern_idx = m.pattern();
+
+                        // Check if all higher priority patterns (lower indices) have been checked
+                        let all_higher_checked = (0..best_pattern_idx).all(|i| {
+                            // Pattern i must either be in easy_patterns or hard_patterns and
+                            // have been processed already
+                            let in_easy = self
+                                .easy_patterns
+                                .iter()
+                                .any(|ep| ep.index == i && ep.index <= easy_pattern.index);
+                            let in_hard = self.hard_patterns.iter().any(|hp| hp.index == i);
+                            in_easy || in_hard
+                        });
+
+                        if all_higher_checked {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        best_match
+    }
+
+    #[cfg(feature = "std")]
+    fn find_hard_match<'t>(
+        &self,
+        text: &'t str,
+        pos: usize,
+        option_flags: u32,
+        match_cache: &mut Vec<(usize, usize, usize)>,
+    ) -> Result<Option<SetMatch<'t>>> {
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        if self.hard_patterns.is_empty() {
+            return Ok(None);
+        }
+
+        // Invalidate cache entries before current position
+        match_cache.retain(|(start, _, _)| *start >= pos);
+
+        // Check cache for reusable matches
+        let mut best_from_cache: Option<(usize, usize, usize)> = None;
+        for &(start, pattern, end) in match_cache.iter() {
+            if start >= pos {
+                best_from_cache = match best_from_cache {
+                    None => Some((start, pattern, end)),
+                    Some((best_start, best_pattern, best_end)) => {
+                        match start.cmp(&best_start) {
+                            core::cmp::Ordering::Less => Some((start, pattern, end)),
+                            core::cmp::Ordering::Greater => Some((best_start, best_pattern, best_end)),
+                            core::cmp::Ordering::Equal => {
+                                if pattern < best_pattern {
+                                    Some((start, pattern, end))
+                                } else {
+                                    Some((best_start, best_pattern, best_end))
+                                }
+                            }
+                        }
+                    }
+                };
+            }
+        }
+
+        // Use Arc<str> to share the text across threads without copying
+        let text_arc: Arc<str> = Arc::from(text);
+        // Store results as (start, pattern_index, end) to avoid lifetime issues with Match<'t>
+        let best_match: Arc<Mutex<Option<(usize, usize, usize)>>> =
+            Arc::new(Mutex::new(best_from_cache));
+        let new_matches: Arc<Mutex<Vec<(usize, usize, usize)>>> = Arc::new(Mutex::new(Vec::new()));
+
+        // Process hard patterns in chunks based on max_threads
+        for chunk in self.hard_patterns.chunks(self.max_threads.max(1)) {
+            let mut chunk_handles = Vec::new();
+
+            for hard_pattern in chunk {
+                let best_match = Arc::clone(&best_match);
+                let new_matches = Arc::clone(&new_matches);
+                let text_arc = Arc::clone(&text_arc);
+                let prog = Arc::clone(&hard_pattern.prog);
+                let options = hard_pattern.options.clone();
+                let index = hard_pattern.index;
+
+                let handle = thread::spawn(move || -> Result<()> {
+                    // Check if we can early terminate
+                    {
+                        let current_best = best_match.lock().unwrap();
+                        if let Some((start, pattern, _)) = *current_best {
+                            if start == pos && pattern < index {
+                                // A higher priority pattern already matched at this position
+                                return Ok(());
+                            }
+                        }
+                    }
+
+                    // Execute the VM to find a match
+                    match vm::run(&prog, &text_arc, pos, option_flags, &options) {
+                        Ok(Some(saves)) => {
+                            let new_match = (saves[0], index, saves[1]);
+                            
+                            // Store in new matches for cache
+                            new_matches.lock().unwrap().push(new_match);
+                            
+                            let mut best = best_match.lock().unwrap();
+                            *best = match *best {
+                                None => Some(new_match),
+                                Some((start_a, pattern_a, end_a)) => {
+                                    let (start_b, pattern_b, end_b) = new_match;
+                                    // Choose by position first (lower is better)
+                                    match start_a.cmp(&start_b) {
+                                        core::cmp::Ordering::Less => {
+                                            Some((start_a, pattern_a, end_a))
+                                        }
+                                        core::cmp::Ordering::Greater => {
+                                            Some((start_b, pattern_b, end_b))
+                                        }
+                                        // If positions are equal, choose by priority (lower index is better)
+                                        core::cmp::Ordering::Equal => {
+                                            if pattern_a < pattern_b {
+                                                Some((start_a, pattern_a, end_a))
+                                            } else {
+                                                Some((start_b, pattern_b, end_b))
+                                            }
+                                        }
+                                    }
+                                }
+                            };
+                            Ok(())
+                        }
+                        Ok(None) => Ok(()),
+                        Err(e) => Err(e),
+                    }
+                });
+
+                chunk_handles.push(handle);
+            }
+
+            // Wait for this chunk to complete and collect any errors
+            for handle in chunk_handles {
+                match handle.join() {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => return Err(e), // Propagate VM errors
+                    Err(_e) => {
+                        // Thread panicked - this is a serious issue
+                        return Err(crate::Error::RuntimeError(
+                            crate::RuntimeError::BacktrackLimitExceeded,
+                        ));
+                    }
+                }
+            }
+
+            // Early termination: check if we can stop searching
+            // If we found a match at the current position and all higher priority patterns
+            // have been checked (either already matched or checked in previous chunks)
+            let current_best = best_match.lock().unwrap();
+            if let Some((start, pattern, _)) = *current_best {
+                if start == pos {
+                    // Check if all higher priority patterns have been checked
+                    let highest_priority_in_remaining = self
+                        .hard_patterns
+                        .iter()
+                        .skip(chunk.len())
+                        .map(|hp| hp.index)
+                        .min();
+
+                    // If all remaining patterns have lower priority, we can stop
+                    if highest_priority_in_remaining
+                        .map(|min_idx| min_idx > pattern)
+                        .unwrap_or(true)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Add new matches to cache
+        match_cache.extend(new_matches.lock().unwrap().drain(..));
+
+        let result = best_match.lock().unwrap();
+        Ok(result.map(|(start, pattern, end)| SetMatch {
+            pattern,
+            match_: Match::new(text, start, end),
+        }))
+    }
+
+    #[cfg(not(feature = "std"))]
+    fn find_hard_match<'t>(
+        &self,
+        text: &'t str,
+        pos: usize,
+        option_flags: u32,
+        match_cache: &mut Vec<(usize, usize, usize)>,
+    ) -> Result<Option<SetMatch<'t>>> {
+        // Invalidate cache entries before current position
+        match_cache.retain(|(start, _, _)| *start >= pos);
+
+        // Check cache for reusable matches
+        let mut best_match: Option<SetMatch<'t>> = None;
+        for &(start, pattern, end) in match_cache.iter() {
+            if start >= pos {
+                let cached_match = SetMatch {
+                    pattern,
+                    match_: Match::new(text, start, end),
+                };
+                best_match = match best_match {
+                    None => Some(cached_match),
+                    Some(existing) => Some(Self::choose_best_of_two(existing, cached_match)),
+                };
+            }
+        }
+
+        for hard_pattern in &self.hard_patterns {
+            // Early termination: if we found a match at the starting position with a pattern
+            // that has higher priority than the current one, and all patterns with even higher
+            // priority than the match have been checked, we can stop
+            if let Some(ref m) = best_match {
+                if m.start() == pos && m.pattern() < hard_pattern.index {
+                    // Check if all higher priority patterns have been checked
+                    let all_higher_checked = (0..m.pattern()).all(|i| {
+                        // Pattern must have been checked (exists in easy or hard patterns before current position)
+                        let in_easy = self.easy_patterns.iter().any(|ep| ep.index == i);
+                        let in_hard_before = self
+                            .hard_patterns
+                            .iter()
+                            .take_while(|hp| hp.index != hard_pattern.index)
+                            .any(|hp| hp.index == i);
+                        in_easy || in_hard_before
+                    });
+                    if all_higher_checked {
+                        break;
+                    }
+                }
+            }
+
+            // Execute the VM to find a match
+            if let Some(saves) =
+                vm::run(&hard_pattern.prog, text, pos, option_flags, &hard_pattern.options)?
+            {
+                let current_match = SetMatch {
+                    pattern: hard_pattern.index,
+                    match_: Match::new(text, saves[0], saves[1]),
+                };
+
+                // Add to cache
+                match_cache.push((saves[0], hard_pattern.index, saves[1]));
+
+                best_match = match best_match {
+                    None => Some(current_match),
+                    Some(existing) => Some(Self::choose_best_of_two(existing, current_match)),
+                };
+            }
+        }
+
+        Ok(best_match)
+    }
+
+    fn choose_best_match<'t>(
+        easy: Option<SetMatch<'t>>,
+        hard: Option<SetMatch<'t>>,
+    ) -> Option<SetMatch<'t>> {
+        match (easy, hard) {
+            (None, None) => None,
+            (Some(m), None) | (None, Some(m)) => Some(m),
+            (Some(easy), Some(hard)) => Some(Self::choose_best_of_two(easy, hard)),
+        }
+    }
+
+    fn choose_best_of_two<'t>(a: SetMatch<'t>, b: SetMatch<'t>) -> SetMatch<'t> {
+        // Choose by position first (lower is better)
+        match a.start().cmp(&b.start()) {
+            core::cmp::Ordering::Less => a,
+            core::cmp::Ordering::Greater => b,
+            // If positions are equal, choose by priority (lower index is better)
+            core::cmp::Ordering::Equal => {
+                if a.pattern < b.pattern {
+                    a
+                } else {
+                    b
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_easy_patterns_only() {
+        let set = RegexSet::new(&["foo", "bar", "baz"]).unwrap();
+        let text = "hello foo world";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.pattern(), 0);
+        assert_eq!(m.as_str(), "foo");
+    }
+
+    #[test]
+    fn test_priority_order() {
+        let set = RegexSet::new(&["bar", "foo"]).unwrap();
+        let text = "foobar";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        // "foo" appears first in the text, so it should match
+        assert_eq!(m.as_str(), "foo");
+        assert_eq!(m.pattern(), 1);
+    }
+
+    #[test]
+    fn test_same_position_priority() {
+        let set = RegexSet::new(&["foo", "f", "fo"]).unwrap();
+        let text = "foo";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        // All match at position 0, highest priority wins
+        assert_eq!(m.pattern(), 0);
+        assert_eq!(m.as_str(), "foo");
+    }
+
+    #[test]
+    fn test_hard_patterns() {
+        let set = RegexSet::new(&[r"(\w+)\1", "foo", "bar"]).unwrap();
+        let text = "foobar foofoo";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        // "foo" at position 0 should match first
+        assert_eq!(m.as_str(), "foo");
+        assert_eq!(m.pattern(), 1);
+    }
+
+    #[test]
+    fn test_hard_pattern_wins() {
+        let set = RegexSet::new(&[r"(\w+)\1", "bar"]).unwrap();
+        let text = "foofoo bar";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        // The backreference pattern should match at position 0
+        assert_eq!(m.as_str(), "foofoo");
+        assert_eq!(m.pattern(), 0);
+    }
+
+    #[test]
+    fn test_no_match() {
+        let set = RegexSet::new(&["foo", "bar"]).unwrap();
+        let text = "baz";
+        let result = set.find(text).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_mixed_patterns() {
+        let set = RegexSet::new(&["easy", r"(\w+)\1", "pattern"]).unwrap();
+        let text = "this is a pattern foofoo test";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.as_str(), "pattern");
+        assert_eq!(m.pattern(), 2);
+    }
+
+    #[test]
+    fn test_lookahead_pattern() {
+        let set = RegexSet::new(&[r"\w+(?=!)", "test"]).unwrap();
+        let text = "test! example";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.as_str(), "test");
+        assert_eq!(m.pattern(), 0);
+        assert_eq!(m.start(), 0);
+        assert_eq!(m.end(), 4);
+    }
+
+    #[test]
+    fn test_empty_pattern_list() {
+        let patterns: Vec<&str> = vec![];
+        let set = RegexSet::new(&patterns).unwrap();
+        let text = "hello world";
+        let result = set.find(text).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_single_pattern() {
+        let set = RegexSet::new(&["foo"]).unwrap();
+        let text = "hello foo world";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.pattern(), 0);
+        assert_eq!(m.as_str(), "foo");
+    }
+
+    #[test]
+    fn test_find_from_pos() {
+        let set = RegexSet::new(&["foo", "bar"]).unwrap();
+        let text = "foo bar foo";
+        
+        // Find from position 0
+        let result = set.find_from_pos(text, 0).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.as_str(), "foo");
+        assert_eq!(m.start(), 0);
+        
+        // Find from position 4 (after first "foo")
+        let result = set.find_from_pos(text, 4).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.as_str(), "bar");
+        assert_eq!(m.start(), 4);
+        
+        // Find from position 8 (after "bar")
+        let result = set.find_from_pos(text, 8).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        assert_eq!(m.as_str(), "foo");
+        assert_eq!(m.start(), 8);
+    }
+
+    #[test]
+    fn test_overlapping_patterns() {
+        let set = RegexSet::new(&["abc", "abcd", "ab"]).unwrap();
+        let text = "abcd";
+        let result = set.find(text).unwrap();
+        assert!(result.is_some());
+        let m = result.unwrap();
+        // All match at position 0, highest priority (index 0) wins
+        assert_eq!(m.pattern(), 0);
+        assert_eq!(m.as_str(), "abc");
+    }
+
+    #[test]
+    fn test_matches_iterator() {
+        let set = RegexSet::new(&["foo", "bar"]).unwrap();
+        let text = "foo bar foo bar";
+        let matches: Vec<_> = set.matches(text).collect();
+        
+        assert_eq!(matches.len(), 4);
+        
+        let m0 = matches[0].as_ref().unwrap();
+        assert_eq!(m0.pattern(), 0);
+        assert_eq!(m0.as_str(), "foo");
+        assert_eq!(m0.start(), 0);
+        
+        let m1 = matches[1].as_ref().unwrap();
+        assert_eq!(m1.pattern(), 1);
+        assert_eq!(m1.as_str(), "bar");
+        assert_eq!(m1.start(), 4);
+        
+        let m2 = matches[2].as_ref().unwrap();
+        assert_eq!(m2.pattern(), 0);
+        assert_eq!(m2.as_str(), "foo");
+        assert_eq!(m2.start(), 8);
+        
+        let m3 = matches[3].as_ref().unwrap();
+        assert_eq!(m3.pattern(), 1);
+        assert_eq!(m3.as_str(), "bar");
+        assert_eq!(m3.start(), 12);
+    }
+
+    #[test]
+    fn test_matches_with_hard_patterns() {
+        let set = RegexSet::new(&[r"(\w+)\1", "bar"]).unwrap();
+        let text = "foofoo bar foofoo";
+        let matches: Vec<_> = set.matches(text)
+            .map(|m| m.unwrap())
+            .collect();
+        
+        assert_eq!(matches.len(), 3);
+        assert_eq!(matches[0].as_str(), "foofoo");
+        assert_eq!(matches[0].pattern(), 0);
+        assert_eq!(matches[1].as_str(), "bar");
+        assert_eq!(matches[1].pattern(), 1);
+        assert_eq!(matches[2].as_str(), "foofoo");
+        assert_eq!(matches[2].pattern(), 0);
+    }
+
+    #[test]
+    fn test_matches_empty_string_handling() {
+        let set = RegexSet::new(&["a+", "b"]).unwrap();
+        let text = "aaa b";
+        let matches: Vec<_> = set.matches(text)
+            .map(|m| m.unwrap())
+            .collect();
+        
+        // Should match "aaa" and "b" 
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].as_str(), "aaa");
+        assert_eq!(matches[1].as_str(), "b");
+    }
+
+    #[test]
+    fn test_combined_easy_regex() {
+        // Test that multiple easy patterns work efficiently with combined regex
+        let set = RegexSet::new(&["foo", "bar", "baz"]).unwrap();
+        let text = "foo baz bar foo";
+        let matches: Vec<_> = set.matches(text)
+            .map(|m| m.unwrap())
+            .collect();
+        
+        assert_eq!(matches.len(), 4);
+        assert_eq!(matches[0].as_str(), "foo");
+        assert_eq!(matches[0].pattern(), 0);
+        assert_eq!(matches[1].as_str(), "baz");
+        assert_eq!(matches[1].pattern(), 2);
+        assert_eq!(matches[2].as_str(), "bar");
+        assert_eq!(matches[2].pattern(), 1);
+        assert_eq!(matches[3].as_str(), "foo");
+        assert_eq!(matches[3].pattern(), 0);
+    }
+
+    #[test]
+    fn test_cache_reuse_with_hard_patterns() {
+        // Test that hard pattern matches are cached and reused
+        let set = RegexSet::new(&[r"(\w+)\1"]).unwrap();
+        let text = "foofoo barbar bazbaz";
+        let matches: Vec<_> = set.matches(text)
+            .map(|m| m.unwrap())
+            .collect();
+        
+        // Should find all three backreference matches
+        assert_eq!(matches.len(), 3);
+        assert_eq!(matches[0].as_str(), "foofoo");
+        assert_eq!(matches[1].as_str(), "barbar");
+        assert_eq!(matches[2].as_str(), "bazbaz");
+    }
+}
