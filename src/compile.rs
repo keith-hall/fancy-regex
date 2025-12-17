@@ -190,7 +190,10 @@ impl Compiler {
                 });
             }
             Expr::Conditional { .. } => {
+                let inside_alternation = self.inside_alternation;
+                self.inside_alternation = true;
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
+                self.inside_alternation = inside_alternation;
             }
             Expr::SubroutineCall(_) => {
                 return Err(Error::CompileError(Box::new(
