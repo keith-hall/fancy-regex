@@ -341,6 +341,126 @@ fn unicode_property_remapping_inside_char_class() {
     assert_match(r"[/\P{alnum}]", "/");
 }
 
+#[test]
+fn char_class_negated_property_as_first_item() {
+    // Test negated properties as the first (and only) item in a char class
+    // These should work correctly without the && prefix
+    
+    // \P{alnum} as only content - should match non-alphanumeric characters
+    assert_no_match(r"[\P{alnum}]", "a");
+    assert_no_match(r"[\P{alnum}]", "Z");
+    assert_no_match(r"[\P{alnum}]", "0");
+    assert_no_match(r"[\P{alnum}]", "9");
+    assert_match(r"[\P{alnum}]", " ");
+    assert_match(r"[\P{alnum}]", "!");
+    assert_match(r"[\P{alnum}]", "-");
+    
+    // \P{blank} as only content - should match non-blank characters
+    assert_match(r"[\P{blank}]", "a");
+    assert_match(r"[\P{blank}]", "!");
+    assert_no_match(r"[\P{blank}]", " ");
+    assert_no_match(r"[\P{blank}]", "\t");
+    
+    // \P{word} as only content - should match non-word characters
+    assert_no_match(r"[\P{word}]", "a");
+    assert_no_match(r"[\P{word}]", "_");
+    assert_no_match(r"[\P{word}]", "0");
+    assert_match(r"[\P{word}]", " ");
+    assert_match(r"[\P{word}]", "-");
+}
+
+#[test]
+fn char_class_negated_property_after_range() {
+    // Test negated properties after ranges
+    // These should have the && prefix and work correctly
+    
+    // Range followed by negated property
+    assert_match(r"[a-z\P{alnum}]", "a");
+    assert_match(r"[a-z\P{alnum}]", "z");
+    assert_match(r"[a-z\P{alnum}]", "!"); // non-alphanumeric
+    assert_no_match(r"[a-z\P{alnum}]", "A");
+    assert_no_match(r"[a-z\P{alnum}]", "0");
+    
+    // Another test
+    assert_match(r"[0-9\P{blank}]", "5");
+    assert_match(r"[0-9\P{blank}]", "a"); // non-blank
+    assert_no_match(r"[0-9\P{blank}]", " ");
+    assert_no_match(r"[0-9\P{blank}]", "\t");
+}
+
+#[test]
+fn char_class_negated_property_after_intersection() {
+    // Test negated properties after && operator
+    
+    // \w intersected with negated digit - should match word chars that are not digits
+    assert_match(r"[\w&&\P{blank}]", "a");
+    assert_match(r"[\w&&\P{blank}]", "0");
+    assert_match(r"[\w&&\P{blank}]", "_");
+    assert_no_match(r"[\w&&\P{blank}]", " ");
+    assert_no_match(r"[\w&&\P{blank}]", "\t");
+}
+
+#[test]
+fn char_class_negated_in_negated_class() {
+    // Test negated properties in a negated char class
+    // [^\P{alnum}] should match alphanumeric (double negation)
+    
+    assert_match(r"[^\P{alnum}]", "a");
+    assert_match(r"[^\P{alnum}]", "Z");
+    assert_match(r"[^\P{alnum}]", "0");
+    assert_match(r"[^\P{alnum}]", "9");
+    assert_no_match(r"[^\P{alnum}]", " ");
+    assert_no_match(r"[^\P{alnum}]", "!");
+    
+    // [^\P{word}] should match word characters
+    assert_match(r"[^\P{word}]", "a");
+    assert_match(r"[^\P{word}]", "_");
+    assert_match(r"[^\P{word}]", "0");
+    assert_no_match(r"[^\P{word}]", " ");
+    assert_no_match(r"[^\P{word}]", "-");
+}
+
+#[test]
+fn char_class_negated_property_mixed() {
+    // Test various combinations
+    
+    // Multiple items with negated property in the middle
+    assert_match(r"[a-z0-9\P{blank}_]", "a");
+    assert_match(r"[a-z0-9\P{blank}_]", "5");
+    assert_match(r"[a-z0-9\P{blank}_]", "_");
+    assert_match(r"[a-z0-9\P{blank}_]", "!"); // non-blank
+    assert_match(r"[a-z0-9\P{blank}_]", "A"); // non-blank (even though not in a-z or 0-9)
+    assert_no_match(r"[a-z0-9\P{blank}_]", " "); // blank
+    assert_no_match(r"[a-z0-9\P{blank}_]", "\t"); // blank
+    
+    // Multiple negated properties
+    // [\P{alnum}\P{blank}] - matches non-alphanumeric intersected with non-blank
+    // This is a complex case - both are negations, first shouldn't have &&, second should
+    assert_match(r"[\P{alnum}\P{blank}]", "!");
+    assert_match(r"[\P{alnum}\P{blank}]", "-");
+    assert_no_match(r"[\P{alnum}\P{blank}]", "a");
+    assert_no_match(r"[\P{alnum}\P{blank}]", "0");
+    assert_no_match(r"[\P{alnum}\P{blank}]", " "); // blank
+    assert_no_match(r"[\P{alnum}\P{blank}]", "\t"); // blank
+}
+
+#[test]
+fn char_class_positive_property_not_affected() {
+    // Make sure positive properties work as before
+    
+    assert_match(r"[\p{alnum}]", "a");
+    assert_match(r"[\p{alnum}]", "Z");
+    assert_match(r"[\p{alnum}]", "0");
+    assert_no_match(r"[\p{alnum}]", " ");
+    assert_no_match(r"[\p{alnum}]", "!");
+    
+    // After a range
+    assert_match(r"[!-#\p{blank}]", "!");
+    assert_match(r"[!-#\p{blank}]", " ");
+    assert_match(r"[!-#\p{blank}]", "\t");
+    assert_no_match(r"[!-#\p{blank}]", "a");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn match_text(re: &str, text: &str) -> bool {
     let regex = common::regex(re);
