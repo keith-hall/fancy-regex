@@ -817,15 +817,19 @@ impl<'a> Parser<'a> {
                         }
                         Expr::Delegate { inner, .. } => {
                             // Check if this is a negated property that needs && prefix
-                            let is_negated_prop = inner.starts_with("[^");
+                            // A negated property is a nested character class that starts with [^ and contains
+                            // Unicode property patterns or POSIX classes
+                            let is_negated_prop = inner.starts_with("[^") 
+                                && (inner.contains("\\p{") || inner.contains("\\P{") 
+                                    || inner.contains("[:") || inner.contains("\\t") 
+                                    || inner.contains("\\x"));
                             if is_negated_prop {
                                 if seen_negated_property {
                                     // This is not the first negated property, add &&
                                     class.push_str("&&");
-                                } else {
-                                    // This is the first negated property
-                                    seen_negated_property = true;
                                 }
+                                // Mark that we've seen a negated property
+                                seen_negated_property = true;
                             }
                             class.push_str(&inner);
                         }

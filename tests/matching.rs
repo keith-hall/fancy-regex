@@ -213,7 +213,7 @@ fn word_boundary_brace_syntax() {
     assert_no_match(r"\b{start-half}world", "helloworld");
     assert_match(r"\b{start-half}test", "test case");
     assert_no_match(r"\b{start-half}test", "contest");
-    assert_match(r"\b{start-half}-test", "run --test"); // diferent from \b{start}
+    assert_match(r"\b{start-half}-test", "run --test"); // different from \b{start}
 
     // \b{end}
     assert_match(r"world\b{end}", "hello world");
