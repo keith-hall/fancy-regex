@@ -286,10 +286,21 @@ impl<'a> Analyzer<'a> {
                         });
                 }
                 
-                // For analysis purposes, treat it as having zero min_size and non-const
-                // The actual behavior will be determined at runtime
-                min_size = 0;
-                const_size = false;
+                // Look up the target group's min_size if available (similar to backrefs)
+                // This is important for accurate left recursion detection
+                if let Some(&SizeInfo {
+                    min_size: group_min_size,
+                    const_size: group_const_size,
+                }) = self.group_info.get(&target_group)
+                {
+                    min_size = group_min_size;
+                    const_size = group_const_size;
+                } else {
+                    // If the group hasn't been seen yet (forward reference), 
+                    // use conservative defaults
+                    min_size = 0;
+                    const_size = false;
+                }
                 hard = true;
             }
             Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
