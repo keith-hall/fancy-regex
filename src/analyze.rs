@@ -285,7 +285,7 @@ impl<'a> Analyzer<'a> {
                             min_pos: min_pos_in_group,
                         });
                 }
-                
+
                 // Look up the target group's min_size if available (similar to backrefs)
                 // This is important for accurate left recursion detection
                 if let Some(&SizeInfo {
@@ -296,7 +296,7 @@ impl<'a> Analyzer<'a> {
                     min_size = group_min_size;
                     const_size = group_const_size;
                 } else {
-                    // If the group hasn't been seen yet (forward reference), 
+                    // If the group hasn't been seen yet (forward reference),
                     // use conservative defaults
                     min_size = 0;
                     const_size = false;
@@ -338,7 +338,12 @@ impl<'a> Analyzer<'a> {
         for &start_group in self.subroutine_calls.keys() {
             let mut visited = BitSet::new();
             let mut rec_stack = BitSet::new();
-            if self.dfs_check_left_recursion(start_group, &mut visited, &mut rec_stack, &group_names)? {
+            if self.dfs_check_left_recursion(
+                start_group,
+                &mut visited,
+                &mut rec_stack,
+                &group_names,
+            )? {
                 // Found left recursion
                 let group_desc = if let Some(name) = group_names.get(&start_group) {
                     format!("group '{}' ({})", name, start_group)
@@ -435,12 +440,12 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
             ))));
         }
     }
-    
+
     // Check for left-recursive subroutine calls (only if subroutines are present)
     if tree.contains_subroutines {
         analyzer.check_left_recursion(&tree.named_groups)?;
     }
-    
+
     analyzed
 }
 
