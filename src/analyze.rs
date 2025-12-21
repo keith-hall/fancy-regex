@@ -281,7 +281,7 @@ impl<'a> Analyzer<'a> {
                         .entry(self.current_group)
                         .or_insert_with(Vec::new)
                         .push(SubroutineCallInfo {
-                            target_group: target_group,
+                            target_group,
                             min_pos: min_pos_in_group,
                         });
                 }
@@ -368,8 +368,8 @@ impl<'a> Analyzer<'a> {
         group_names: &Map<usize, String>,
     ) -> Result<bool> {
         if rec_stack.contains(group) {
-            // We found a cycle, check if it's left-recursive
-            // A cycle is left-recursive if any call in the cycle has min_pos == 0
+            // We found a cycle. Since we only follow calls at position 0 (see below),
+            // reaching a group already in the recursion stack means we have a left-recursive cycle.
             return Ok(true);
         }
 
@@ -849,14 +849,6 @@ mod tests {
         let result = analyze(&tree, false);
         // This should be OK since {0} makes it unreachable
         // Note: The call is never actually made
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn not_left_recursive_unreachable() {
-        // Not left recursive because group 1 is never called: (a?\g<1>){0}
-        let tree = Expr::parse_tree(r"(a?\g<1>){0}").unwrap();
-        let result = analyze(&tree, false);
         assert!(result.is_ok());
     }
 
