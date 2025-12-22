@@ -33,6 +33,7 @@ use regex_syntax::escape_into;
 use crate::flags::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
 use crate::{Assertion, LookAround::*};
+use crate::iter::ExprIter;
 
 #[cfg(not(feature = "std"))]
 pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
@@ -46,6 +47,15 @@ pub struct ExprTree {
     pub named_groups: NamedGroups,
     pub(crate) contains_subroutines: bool,
     pub(crate) self_recursive: bool,
+}
+
+impl ExprTree {
+    /// Returns an iterator over all expressions in the tree, yielding each node
+    /// with its parent context. This provides an alternative to the visitor pattern
+    /// that automatically handles all container types.
+    pub fn iter(&self) -> ExprIter {
+        ExprIter::new(&self.expr)
+    }
 }
 
 #[derive(Debug)]
@@ -79,10 +89,8 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        if p.has_unresolved_subroutines {
-            p.has_unresolved_subroutines = false;
-            p.resolve_named_subroutine_calls(&mut expr);
-        }
+        // Note: Unresolved subroutine calls are now resolved during analysis
+        // to avoid a separate pass over the tree.
 
         Ok(ExprTree {
             expr,

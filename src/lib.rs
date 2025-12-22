@@ -202,6 +202,7 @@ mod compile;
 mod error;
 mod expand;
 mod flags;
+mod iter;
 mod optimize;
 mod parse;
 mod replacer;
@@ -737,7 +738,7 @@ impl Regex {
 
         // try to optimize the expression tree
         let requires_capture_group_fixup = optimize(&mut tree);
-        let info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
+        let info = analyze(&mut tree, if requires_capture_group_fixup { 0 } else { 1 })?;
 
         if !info.hard {
             // easy case, wrap regex

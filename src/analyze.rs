@@ -27,7 +27,7 @@ use core::cmp::min;
 use bit_set::BitSet;
 
 use crate::alloc::string::ToString;
-use crate::parse::ExprTree;
+use crate::parse::{ExprTree, NamedGroups};
 use crate::{CompileError, Error, Expr, Result};
 
 #[cfg(not(feature = "std"))]
@@ -252,8 +252,50 @@ fn literal_const_size(_: &str, _: bool) -> bool {
     true
 }
 
+/// Resolve any unresolved named subroutine calls in the expression tree.
+/// This is done during analysis to avoid a separate pass during parsing.
+fn resolve_unresolved_subroutines(expr: &mut Expr, named_groups: &NamedGroups) -> Result<()> {
+    match expr {
+        Expr::UnresolvedNamedSubroutineCall { name, ix } => {
+            if let Some(group) = named_groups.get(name) {
+                *expr = Expr::SubroutineCall(*group);
+            } else {
+                return Err(Error::CompileError(
+                    CompileError::SubroutineCallTargetNotFound(name.to_string(), *ix),
+                ));
+            }
+        }
+        // recursively resolve in inner expressions
+        Expr::Group(inner) | Expr::LookAround(inner, _) | Expr::AtomicGroup(inner) => {
+            resolve_unresolved_subroutines(inner, named_groups)?;
+        }
+        Expr::Concat(children) | Expr::Alt(children) => {
+            for child in children {
+                resolve_unresolved_subroutines(child, named_groups)?;
+            }
+        }
+        Expr::Repeat { child, .. } => {
+            resolve_unresolved_subroutines(child, named_groups)?;
+        }
+        Expr::Conditional {
+            condition,
+            true_branch,
+            false_branch,
+        } => {
+            resolve_unresolved_subroutines(condition, named_groups)?;
+            resolve_unresolved_subroutines(true_branch, named_groups)?;
+            resolve_unresolved_subroutines(false_branch, named_groups)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// Analyze the parsed expression to determine whether it requires fancy features.
-pub fn analyze<'a>(tree: &'a ExprTree, start_group: usize) -> Result<Info<'a>> {
+pub fn analyze<'a>(tree: &'a mut ExprTree, start_group: usize) -> Result<Info<'a>> {
+    // First resolve any unresolved subroutine calls
+    resolve_unresolved_subroutines(&mut tree.expr, &tree.named_groups)?;
+
     let mut analyzer = Analyzer {
         backrefs: &tree.backrefs,
         group_ix: start_group,
