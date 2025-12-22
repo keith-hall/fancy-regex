@@ -910,8 +910,9 @@ impl<'a> Parser<'a> {
             return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with("?P>") {
             return self.parse_named_subroutine_call(ix + 3, "", ")", false);
-        } else if self.re[ix..].starts_with("*FAIL)") {
+        } else if ix + 6 <= self.re.len() && self.re[ix..].starts_with("*FAIL)") {
             // Backtracking control verb (*FAIL) - match immediately fails
+            // Verify we have enough characters and the full pattern
             return Ok((ix + 6, Expr::Fail));
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
