@@ -155,6 +155,32 @@ fn conditional_with_lookaround_condition() {
 }
 
 #[test]
+fn backtracking_control_verbs() {
+    // (*FAIL) always fails the current backtracking path
+    assert_no_match(r"(*FAIL)", "anything");
+    assert_no_match(r"a(*FAIL)", "a");
+    assert_no_match(r"abc(*FAIL)", "abc");
+    
+    // (*FAIL) in alternation causes backtracking to try other branches
+    assert_match(r"(*FAIL)|a", "a");
+    assert_match(r"a|(*FAIL)", "a");
+    assert_no_match(r"(*FAIL)|(*FAIL)", "anything");
+    
+    // (*FAIL) can be used to force exploration of alternatives
+    assert_match(r"a(*FAIL)|ab", "ab");
+}
+
+#[test]
+fn continue_from_previous_match_end_in_conditional() {
+    // Test that \G inside a conditional expression works correctly
+    // When \G is in a lookahead condition, it matches at the start
+    assert_match(r"(?((?=\G))a|b)", "a");
+    
+    // With negative lookahead
+    assert_match(r"(?((?!\G))b|a)", "a");
+}
+
+#[test]
 fn backrefs() {
     assert_match(r"(abc)\1", "abcabc");
     assert_match(r"(abc|def)\1", "abcabc");
