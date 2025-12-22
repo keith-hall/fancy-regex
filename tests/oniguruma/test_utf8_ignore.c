@@ -106,7 +106,7 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\A(?<n>(a\\g<n>)|)\\z", "aaaa", 0, 4);
 
-  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 'n' (1)"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<n>|\\g<m>\\g<n>)\\z|\\zEND (?<m>a|(b)\\g<m>)", "bbbbabba", 0, 8);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
