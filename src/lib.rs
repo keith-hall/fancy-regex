@@ -1678,6 +1678,9 @@ pub enum Expr {
         /// The position in the original regex pattern where the subroutine call is made
         ix: usize,
     },
+    /// Backtracking control verb that causes the current match attempt to fail immediately,
+    /// equivalent to `(*FAIL)` in Oniguruma/PCRE syntax
+    Fail,
 }
 
 /// Type of look-around assertion as used for a look-around expression.

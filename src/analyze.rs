@@ -224,6 +224,10 @@ impl<'a> Analyzer<'a> {
                 hard = true;
                 const_size = true;
             }
+            Expr::Fail => {
+                hard = true;
+                const_size = true;
+            }
             Expr::Conditional {
                 ref condition,
                 ref true_branch,

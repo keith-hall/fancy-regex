@@ -165,6 +165,9 @@ impl Compiler {
             Expr::BackrefExistsCondition(group) => {
                 self.b.add(Insn::BackrefExistsCondition(group));
             }
+            Expr::Fail => {
+                self.b.add(Insn::Fail);
+            }
             Expr::AtomicGroup(_) => {
                 // TODO optimization: atomic insns are not needed if the
                 // child doesn't do any backtracking.

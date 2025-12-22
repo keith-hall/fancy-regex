@@ -307,6 +307,9 @@ pub enum Insn {
     },
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    /// Immediately fail the current match attempt and trigger backtracking.
+    /// This is used for backtracking control verbs like `(*FAIL)`.
+    Fail,
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     BackwardsDelegate(ReverseBackwardsDelegate),
@@ -851,6 +854,10 @@ pub(crate) fn run(
                         // Referenced group hasn't matched, so the backref doesn't match either
                         break 'fail;
                     }
+                }
+                Insn::Fail => {
+                    // Immediately fail and trigger backtracking
+                    break 'fail;
                 }
                 #[cfg(feature = "variable-lookbehinds")]
                 Insn::BackwardsDelegate(ReverseBackwardsDelegate {
