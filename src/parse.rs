@@ -213,6 +213,7 @@ impl<'a> Parser<'a> {
             Expr::KeepOut => false,
             Expr::ContinueFromPreviousMatchEnd => false,
             Expr::BackrefExistsCondition(_) => false,
+            Expr::Fail => false,
             _ => true,
         }
     }
@@ -2838,6 +2839,67 @@ mod tests {
     #[test]
     fn fuzz_4() {
         fail(r"\u{2}(?(2)");
+    }
+
+    #[test]
+    fn backtracking_control_fail() {
+        assert_eq!(p(r"(*FAIL)"), Expr::Fail);
+        assert_eq!(
+            p(r"a(*FAIL)"),
+            Expr::Concat(vec![make_literal("a"), Expr::Fail])
+        );
+        // Note: Testing (*FAIL) in conditionals is complex due to parsing ambiguities
+        // For now, just test basic (*FAIL) usage
+    }
+
+    #[test]
+    fn continue_from_previous_match_end_in_conditional() {
+        // Test that \G inside a conditional expression parses correctly
+        // When \G is in a lookahead condition
+        assert_eq!(
+            p(r"(?((?=\G))a|b)"),
+            Expr::Conditional {
+                condition: Box::new(Expr::LookAround(
+                    Box::new(Expr::ContinueFromPreviousMatchEnd),
+                    LookAhead
+                )),
+                true_branch: Box::new(make_literal("a")),
+                false_branch: Box::new(make_literal("b")),
+            }
+        );
+
+        // Test with \G in lookahead along with other patterns
+        assert_eq!(
+            p(r"(?((?=\G\d))a|b)"),
+            Expr::Conditional {
+                condition: Box::new(Expr::LookAround(
+                    Box::new(Expr::Concat(vec![
+                        Expr::ContinueFromPreviousMatchEnd,
+                        Expr::Delegate {
+                            inner: "\\d".to_string(),
+                            size: 1,
+                            casei: false,
+                        }
+                    ])),
+                    LookAhead
+                )),
+                true_branch: Box::new(make_literal("a")),
+                false_branch: Box::new(make_literal("b")),
+            }
+        );
+
+        // Test with \G in negative lookahead condition
+        assert_eq!(
+            p(r"(?((?!\G))a|b)"),
+            Expr::Conditional {
+                condition: Box::new(Expr::LookAround(
+                    Box::new(Expr::ContinueFromPreviousMatchEnd),
+                    LookAheadNeg
+                )),
+                true_branch: Box::new(make_literal("a")),
+                false_branch: Box::new(make_literal("b")),
+            }
+        );
     }
 
     #[test]
