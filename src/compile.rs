@@ -538,18 +538,17 @@ impl Compiler {
         // Absent functions: (?~absent), (?~|absent|exp), (?~|absent), (?~|)
         // 
         // The semantics: match exp but only ranges that don't contain absent pattern
-        // Example: (?~|345|\d*) on "12345678" matches "12", "1", ""
+        // Example: (?~|78|\d*) on "123456789" matches "123456" (stops before 78)
         //
-        // Strategy: Transform into ((?!absent).)*? or similar construct
-        // The absent function should match the expression but ensure the absent pattern
-        // is never matched at any position during the match.
+        // Implementation:
+        // For (?~|absent|exp*), we transform to ((?!absent)exp)*
+        // This checks absent at each repetition
         
         let absent_info = &info.children[0];
         
         // Check if this is a range clear: (?~|)
         if let Expr::Empty = absent_info.expr {
-            // Range clear - clears stopper effects
-            // Since stoppers aren't fully implemented, this is a no-op
+            // Range clear - no-op
             return Ok(());
         }
         
@@ -558,22 +557,47 @@ impl Compiler {
             // (?~|absent|exp) or (?~absent)
             let expr_info = &info.children[1];
             
-            // Compile as: match expr but with absent constraint
-            // We implement this by compiling: ((?!absent)exp)
-            // which ensures absent doesn't match before matching exp
-            //
-            // For a more complete implementation matching the Oniguruma semantics,
-            // we would need to check absent at every position, not just once.
-            // That would require: ((?!absent).)*? matched character-by-character
-            //
-            // Current implementation: Just check once at the start
-            self.compile_negative_lookaround(absent_info, LookAheadNeg)?;
-            self.visit(expr_info, hard)?;
-            
-            Ok(())
+            // Check if expr is a repeat (like .* or \d*)
+            if let Expr::Repeat { child: _, lo, hi, greedy } = expr_info.expr {
+                // Transform (?~|absent|exp{lo,hi}) into ((?!absent)exp){lo,hi}
+                // We compile this as a repeat that checks absent before each iteration
+                
+                let inner_child_info = &expr_info.children[0];
+                
+                // For simplicity, handle the common case of * (0 to MAX)
+                if *lo == 0 && *hi == usize::MAX {
+                    // Compile as: Split(body, end); (?!absent); child; Jmp(back to split)
+                    let split_pc = self.b.pc();
+                    self.b.add(Insn::Split(split_pc + 1, split_pc + 1));
+                    
+                    // Check absent doesn't match here
+                    self.compile_negative_lookaround(absent_info, LookAheadNeg)?;
+                    
+                    // Match one instance of child
+                    self.visit(inner_child_info, true)?;
+                    
+                    // Jump back to split
+                    self.b.add(Insn::Jmp(split_pc));
+                    
+                    // Set split target to here (after the loop)
+                    let end_pc = self.b.pc();
+                    self.b.set_split_target(split_pc, end_pc, *greedy);
+                } else {
+                    // For other cases, use the full repeat implementation
+                    // This is more complex, so for now just check absent once
+                    self.compile_negative_lookaround(absent_info, LookAheadNeg)?;
+                    self.compile_repeat(expr_info, *lo, *hi, *greedy, hard)?;
+                }
+                
+                Ok(())
+            } else {
+                // For non-repeat expressions, check absent once before matching
+                self.compile_negative_lookaround(absent_info, LookAheadNeg)?;
+                self.visit(expr_info, hard)?;
+                Ok(())
+            }
         } else {
             // (?~|absent) - absent stopper
-            // This should set a constraint limiting future matching
             // Not fully implemented - treat as no-op
             Ok(())
         }

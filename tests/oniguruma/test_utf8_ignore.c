@@ -223,76 +223,16 @@
   // Compile failed: ParseError(1, InvalidEscape("\\o"))
   x2("[\\o{101}]", "A", 0, 1);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~(?:|aaa))", "aaa", 0, 0);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~aaa|)", "aaa", 0, 0);
-
-  // Compile failed: ParseError(3, UnknownFlag("(?~"))
+  // Match found at start 0 and end 2 (expected 0 and 26)
   x2("a(?~(?~)).", "abcdefghijklmnopqrstuvwxyz", 0, 26);
 
-  // Compile failed: ParseError(5, UnknownFlag("(?~"))
-  x2("/\\*(?~\\*/)\\*/", "/* */ */", 0, 5);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~\\w+)zzzzz", "zzzzz", 0, 5);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~\\w*)zzzzz", "zzzzz", 0, 5);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~A.C|B)", "ABC", 0, 0);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~XYZ|ABC)a", "ABCa", 1, 4);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~XYZ|ABC)a", "aABCa", 0, 1);
-
-  // Compile failed: ParseError(9, UnknownFlag("(?~"))
-  x2("<[^>]*>(?~[<>])</[^>]*>", "<a>vvv</a>   <b>  </b>", 0, 10);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~ab)", "ccc\ndab", 0, 5);
-
-  // Compile failed: ParseError(6, UnknownFlag("(?~"))
-  x2("(?m:(?~ab))", "ccc\ndab", 0, 5);
-
-  // Compile failed: ParseError(7, UnknownFlag("(?~"))
-  x2("(?-m:(?~ab))", "ccc\ndab", 0, 5);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~abc)xyz", "xyz012345678901234567890123456789abc", 0, 3);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~|78|\\d*)", "123456789", 0, 6);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Match found at start 0 and end 17 (expected 0 and 11)
   x2("(?~|def|(?:abc|de|f){0,100})", "abcdedeabcfdefabc", 0, 11);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~|ab|.*)", "ccc\nddd", 0, 3);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~|ab|\\O*)", "ccc\ndab", 0, 5);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Match found at start 0 and end 7 (expected 0 and 5)
   x2("(?~|ab|\\O{2,10})", "ccc\ndab", 0, 5);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~|ab|\\O{1,10})", "ab", 1, 2);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~|abc|\\O{1,10})", "abc", 1, 3);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~|ab|\\O{5,10})|abc", "abc", 0, 3);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~|ab|\\O{1,10})", "cccccccccccab", 0, 10);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Match found at start 1 and end 1 (expected 0 and 0)
   x2("(?~|aaa|)", "aaa", 0, 0);
 
   // Compile failed: ParseError(2, UnknownFlag("(?~"))
