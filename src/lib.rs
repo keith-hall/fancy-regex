@@ -1678,6 +1678,18 @@ pub enum Expr {
         /// The position in the original regex pattern where the subroutine call is made
         ix: usize,
     },
+    /// Absent function - matches expression that doesn't contain the absent pattern
+    /// Corresponds to various absent syntaxes:
+    /// - `(?~absent)` - absent repeater (equivalent to `(?~|(?:absent)|\O*)`)
+    /// - `(?~|absent|exp)` - absent expression
+    /// - `(?~|absent)` - absent stopper
+    /// - `(?~|)` - range clear
+    Absent {
+        /// The pattern that should be absent
+        absent: Box<Expr>,
+        /// The expression to match (None for stopper/clear, Some for expression/repeater)
+        expr: Option<Box<Expr>>,
+    },
 }
 
 /// Type of look-around assertion as used for a look-around expression.

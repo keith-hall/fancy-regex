@@ -341,6 +341,45 @@ fn unicode_property_remapping_inside_char_class() {
     assert_match(r"[/\P{alnum}]", "/");
 }
 
+#[test]
+fn absent_functions() {
+    // Basic absent repeater: (?~absent)
+    // Should match text that doesn't contain "345"
+    assert_match(r"(?~345)", "12");
+    assert_match(r"(?~345)", "678");
+    
+    // Absent expression: (?~|absent|exp)
+    // Should match exp but stop before absent pattern
+    // Note: Current implementation is simplified and may not match exact Oniguruma semantics
+    assert_match(r"(?~|345|.*)", "12");
+    
+    // Absent stopper: (?~|absent)
+    // Sets a constraint for future matching
+    assert_match(r"(?~|345)", "");
+    
+    // Range clear: (?~|)
+    // Clears stopper effects
+    assert_match(r"(?~|)", "");
+}
+
+#[test]
+fn absent_functions_parsing() {
+    // Just test that the syntax is parsed correctly without errors
+    use fancy_regex::Regex;
+    
+    // Absent repeater
+    assert!(Regex::new(r"(?~abc)").is_ok());
+    
+    // Absent expression
+    assert!(Regex::new(r"(?~|abc|\d+)").is_ok());
+    
+    // Absent stopper
+    assert!(Regex::new(r"(?~|abc)").is_ok());
+    
+    // Range clear
+    assert!(Regex::new(r"(?~|)").is_ok());
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn match_text(re: &str, text: &str) -> bool {
     let regex = common::regex(re);

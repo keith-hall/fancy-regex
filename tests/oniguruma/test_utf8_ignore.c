@@ -224,15 +224,6 @@
   x2("[\\o{101}]", "A", 0, 1);
 
   // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~)", "", 0, 0);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
-  x2("(?~)", "A", 0, 0);
-
-  // Compile failed: ParseError(7, UnknownFlag("(?~"))
-  x2("aaaaa(?~)", "aaaaaaaaaa", 0, 5);
-
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
   x2("(?~(?:|aaa))", "aaa", 0, 0);
 
   // Compile failed: ParseError(2, UnknownFlag("(?~"))
