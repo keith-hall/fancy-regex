@@ -598,6 +598,11 @@ impl<'a> Parser<'a> {
             (end, Expr::Any { newline: true })
         } else if b == b'N' && !in_class {
             (end, Expr::Any { newline: false })
+        } else if b == b'R' && !in_class {
+            (end, Expr::Delegate {
+            inner: r"[\p{Line_Separator}\p{Paragraph_Separator}]".to_string(),
+            casei: false,
+            size: 1})
         } else if b == b'g' && !in_class {
             if end == self.re.len() {
                 return Err(Error::ParseError(
