@@ -174,6 +174,14 @@ impl<'a> Analyzer<'a> {
                 hard = true;
                 children.push(child_info);
             }
+            Expr::Absent(ref child) => {
+                // Absent operator matches longest string not containing pattern
+                let child_info = self.visit(child, min_pos_in_group)?;
+                // min_size = 0 (can match empty)
+                const_size = false; // size depends on input
+                hard = true; // requires backtracking
+                children.push(child_info);
+            }
             Expr::Repeat {
                 ref child, lo, hi, ..
             } => {
