@@ -1850,10 +1850,7 @@ impl Assertion {
         matches!(
             self,
             // these will make regex-automata use PikeVM
-            LeftWordBoundary
-                | LeftWordHalfBoundary
-                | RightWordBoundary
-                | RightWordHalfBoundary
+            LeftWordBoundary | LeftWordHalfBoundary | RightWordBoundary | RightWordHalfBoundary
         )
     }
 }
