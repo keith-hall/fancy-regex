@@ -943,11 +943,17 @@ pub(crate) fn run(
                     // - If no, try advancing one character and loop back to check again
                     // - If we reach end of string, continue to next instruction
                     
+                    // Pre-allocate inner_slots if needed for capture groups
+                    if let Some(range) = delegate.capture_groups {
+                        let required_size = (range.end() - range.start() + 1) * 2;
+                        if inner_slots.len() < required_size {
+                            inner_slots.resize(required_size, None);
+                        }
+                    }
+                    
                     // Check if delegate matches at current position
                     let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
                     let delegate_matches_here = if delegate.capture_groups.is_some() {
-                        let range = delegate.capture_groups.unwrap();
-                        inner_slots.resize((range.end() - range.start() + 1) * 2, None);
                         delegate.inner.search_slots(&input, &mut inner_slots).is_some()
                     } else {
                         delegate.inner.search_half(&input).is_some()

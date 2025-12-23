@@ -306,9 +306,9 @@ impl<'a> Analyzer<'a> {
                     )));
                 }
                 
-                // Absent operator consumes no characters, but is hard (needs backtracking)
+                // Absent operator consumes a variable number of characters (0 to end of string)
                 min_size = 0;
-                const_size = true;
+                const_size = false; // Variable length
                 hard = true;
                 children.push(child_info);
             }
