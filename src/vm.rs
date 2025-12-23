@@ -937,10 +937,11 @@ pub(crate) fn run(
                     }
                 }
                 Insn::Absent { ref delegate, next } => {
-                    // The absent operator matches the shortest string not containing the delegate pattern
-                    // We advance one character at a time, checking if delegate matches at each position
-                    // If delegate matches, we've found the boundary and continue to next instruction
-                    // If we reach end of string without delegate matching, we also continue
+                    // The absent operator matches and consumes the shortest string not containing the delegate pattern
+                    // We check if delegate matches at current position:
+                    // - If yes, we've found the boundary - continue to next instruction at current position (consumed 0 chars)
+                    // - If no, try advancing one character and loop back to check again
+                    // - If we reach end of string, continue to next instruction
                     
                     // Check if delegate matches at current position
                     let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
@@ -954,20 +955,23 @@ pub(crate) fn run(
                     
                     if delegate_matches_here {
                         // Delegate matches at current position - we've reached the boundary
-                        // Continue to next instruction without consuming any characters
+                        // The absent operator has consumed from its start position to here
+                        // Continue to next instruction at current position
                         pc = next;
                         continue;
                     }
                     
-                    // Delegate doesn't match here
+                    // Delegate doesn't match at current position
                     if ix < s.len() {
-                        // Try advancing one character and checking again
-                        state.push(next, ix)?; // If advancing fails, continue to next instruction
+                        // Advance one character and check again
+                        // Push a backtrack point for continuing to next instruction (if advancing fails)
+                        state.push(next, ix)?;
                         ix += codepoint_len_at(s, ix);
-                        // Stay at same pc to check delegate match at new position
+                        // Loop back to same pc to check delegate match at new position
                         continue;
                     } else {
-                        // Reached end of string - delegate never matched, so we succeed
+                        // Reached end of string - delegate never matched
+                        // The absent operator has consumed from its start to end of string
                         pc = next;
                         continue;
                     }
