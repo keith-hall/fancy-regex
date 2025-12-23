@@ -997,7 +997,7 @@ impl<'a> Parser<'a> {
             let (ix, absent) = self.parse_re(ix, depth)?;
             let ix = self.check_for_close_paren(ix)?;
             
-            // Convert to (?~|absent|\O*) where \O* is represented as .*
+            // Convert to (?~|absent|.*) where .* matches any character including newlines
             let any_repeater = Expr::Repeat {
                 child: Box::new(Expr::Any { newline: true }),
                 lo: 0,

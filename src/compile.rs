@@ -568,7 +568,7 @@ impl Compiler {
                 if *lo == 0 && *hi == usize::MAX {
                     // Compile as: Split(body, end); (?!absent); child; Jmp(back to split)
                     let split_pc = self.b.pc();
-                    self.b.add(Insn::Split(split_pc + 1, split_pc + 1));
+                    self.b.add(Insn::Split(split_pc + 1, usize::MAX)); // second target set later
                     
                     // Check absent doesn't match here
                     self.compile_negative_lookaround(absent_info, LookAheadNeg)?;
@@ -598,7 +598,10 @@ impl Compiler {
             }
         } else {
             // (?~|absent) - absent stopper
-            // Not fully implemented - treat as no-op
+            // Absent stoppers would set a constraint limiting future matching to not cross
+            // the absent pattern. This requires VM-level state tracking which is not
+            // implemented yet. For now, treat as matching empty string (no-op).
+            // This means absent stoppers don't have their intended effect but don't cause errors.
             Ok(())
         }
     }
