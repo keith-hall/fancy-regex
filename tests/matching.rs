@@ -14,6 +14,56 @@ fn control_character_escapes() {
 }
 
 #[test]
+fn r_escape_basic() {
+    // \R should match basic newline characters
+    assert_match(r"\R", "\n");
+    assert_match(r"\R", "\r");
+    assert_match(r"\R", "\x0B"); // VT
+    assert_match(r"\R", "\x0C"); // FF
+    
+    // Should not match non-newline characters
+    assert_no_match(r"\R", "a");
+    assert_no_match(r"\R", " ");
+}
+
+#[test]
+fn r_escape_crlf() {
+    // \R should match \r\n as a unit (2 characters)
+    let re = common::regex(r"\R");
+    let m = re.find("\r\n").unwrap().unwrap();
+    assert_eq!(m.start(), 0);
+    assert_eq!(m.end(), 2);
+}
+
+#[test]
+fn r_escape_no_backtrack() {
+    // This is the key test: \R\n should NOT match "\r\n"
+    // because \R atomically consumes both \r and \n
+    assert_no_match(r"\R\n", "\r\n");
+    
+    // But \R\n should match "\n\n" (first \n consumed by \R, second by \n)
+    assert_match(r"\R\n", "\n\n");
+    
+    // And \R\n should match "\r\n\n"
+    assert_match(r"\R\n", "\r\n\n");
+}
+
+#[test]
+fn r_escape_unicode() {
+    // \R should match Unicode newline characters
+    assert_match(r"\R", "\u{0085}"); // NEL
+    assert_match(r"\R", "\u{2028}"); // LS
+    assert_match(r"\R", "\u{2029}"); // PS
+}
+
+#[test]
+fn r_escape_in_character_class_error() {
+    // \R should not be allowed in character classes
+    let result = fancy_regex::Regex::new(r"[\R]");
+    assert!(result.is_err(), "Expected \\R in character class to fail");
+}
+
+#[test]
 fn character_class_escapes() {
     assert_match(r"[\[]", "[");
     assert_match(r"[\^]", "^");
