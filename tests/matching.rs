@@ -220,7 +220,6 @@ fn lookahead_with_nested_class() {
     // Test the original problematic pattern that includes nested character class with [^]
     // This pattern is from the issue report and should compile without error
     let pattern = r#"(^[\t ]+)?(?=--+(?![[\p{S}\p{P}]&&[^]"'(),;\[_`{}]]))"#;
-    let re = fancy_regex::Regex::new(pattern).expect("Pattern should compile");
 
     // The pattern should not match empty string (requires dashes)
     assert_no_match(pattern, "");
