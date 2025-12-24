@@ -827,20 +827,20 @@ impl<'a> Parser<'a> {
                     nest += 1;
                     class.push('[');
                     let mut end = ix + 1;
-                    
+
                     // Handle `]` after `[` or `[^` in nested classes
                     // Check for negated character class
                     if bytes.get(end) == Some(&b'^') {
                         class.push('^');
                         end += 1;
                     }
-                    
+
                     // `]` does not have to be escaped after opening `[` or `[^`
                     if bytes.get(end) == Some(&b']') {
                         class.push(']');
                         end += 1;
                     }
-                    
+
                     end
                 }
                 b']' => {
@@ -1265,7 +1265,11 @@ pub(crate) fn make_literal_case_insensitive(s: &str, case_insensitive: bool) -> 
     }
 }
 
-fn remap_unicode_property_if_necessary(property_name: &str, unicode_flag: bool, in_class: bool) -> String {
+fn remap_unicode_property_if_necessary(
+    property_name: &str,
+    unicode_flag: bool,
+    in_class: bool,
+) -> String {
     let (neg, prop) = if let Some(p) = property_name.strip_prefix(r"\p{") {
         (false, p)
     } else if let Some(p) = property_name.strip_prefix(r"\P{") {

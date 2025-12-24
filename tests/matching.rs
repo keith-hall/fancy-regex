@@ -42,12 +42,12 @@ fn character_class_escapes() {
 fn character_class_nested() {
     assert_match(r"[[a][bc]]", "c");
     assert_match(r"[a[^b]]", "c");
-    
+
     // Test nested classes with [^] pattern where ] is a literal character
     assert_match(r"[[a]&&[^]b]]", "a");
     assert_no_match(r"[[a]&&[^]b]]", "]");
     assert_no_match(r"[[a]&&[^]b]]", "b");
-    
+
     // Test with unicode properties and intersection
     assert_match(r#"[[\p{L}]&&[^]abc]]"#, "x");
     assert_no_match(r#"[[\p{L}]&&[^]abc]]"#, "]");
@@ -61,7 +61,7 @@ fn character_class_intersection() {
 
     assert_match(r"[[0-9]&&[^4]]", "1");
     assert_no_match(r"[[0-9]&&[^4]]", "4");
-    
+
     // Test complex intersection with [^] where ] is literal
     // This tests the original issue: nested class with unicode properties and [^] pattern
     assert_match(r#"[[\p{S}\p{P}]&&[^]"'(),;\[_`{}]]"#, "!");
@@ -221,20 +221,20 @@ fn lookahead_with_nested_class() {
     // This pattern is from the issue report and should compile without error
     let pattern = r#"(^[\t ]+)?(?=--+(?![[\p{S}\p{P}]&&[^]"'(),;\[_`{}]]))"#;
     let re = fancy_regex::Regex::new(pattern).expect("Pattern should compile");
-    
+
     // The pattern should not match empty string (requires dashes)
     assert_no_match(pattern, "");
-    
+
     // Test that it matches dashes with optional leading whitespace
     assert_match(pattern, "--");
     assert_match(pattern, "  --");
     assert_match(pattern, "\t--");
-    
+
     // The negative lookahead succeeds when followed by chars IN the exclusion list
     // (because we're checking NOT [[symbols]&&[^excluded]], so excluded chars are ok)
     assert_match(pattern, "--]");
     assert_match(pattern, "--,");
-    
+
     // The negative lookahead fails when followed by symbols NOT in the exclusion list
     assert_no_match(pattern, "--!");
 }
