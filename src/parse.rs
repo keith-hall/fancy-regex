@@ -602,6 +602,10 @@ impl<'a> Parser<'a> {
             (end, Expr::Any { newline: true })
         } else if b == b'N' && !in_class {
             (end, Expr::Any { newline: false })
+        } else if b == b'R' && !in_class {
+            // \R matches any Unicode newline sequence
+            // It's atomic to prevent backtracking from \r\n to \r
+            return Ok((end, self.make_r_expr()));
         } else if b == b'g' && !in_class {
             if end == self.re.len() {
                 return Err(Error::ParseError(
@@ -703,6 +707,33 @@ impl<'a> Parser<'a> {
         } else {
             Err(Error::ParseError(ix, ParseError::InvalidCodepointValue))
         }
+    }
+
+    // Create an expression for \R that matches any Unicode newline sequence
+    // This is atomic to prevent backtracking from \r\n to \r
+    fn make_r_expr(&self) -> Expr {
+        // Build the alternation: \r\n | \n | \r | \v | \f | \x85 | \u{2028} | \u{2029}
+        let mut alternatives = vec![
+            // \r\n must come first to be matched atomically before individual \r
+            Expr::Concat(vec![
+                make_literal("\r"),
+                make_literal("\n"),
+            ]),
+            make_literal("\n"),   // LF
+            make_literal("\r"),   // CR
+            make_literal("\x0b"), // VT
+            make_literal("\x0c"), // FF
+        ];
+        
+        // Add Unicode newline characters if Unicode is enabled
+        if self.flag(FLAG_UNICODE) {
+            alternatives.push(make_literal("\u{0085}")); // NEL
+            alternatives.push(make_literal("\u{2028}")); // LS
+            alternatives.push(make_literal("\u{2029}")); // PS
+        }
+        
+        // Wrap in an atomic group to prevent backtracking
+        Expr::AtomicGroup(Box::new(Expr::Alt(alternatives)))
     }
 
     // ix points before '\b' or '\B'
