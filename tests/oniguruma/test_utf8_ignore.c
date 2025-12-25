@@ -88,7 +88,7 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<name_2>ab)\\g<name_2>", "abab", 0, 4);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Variable length lookbehinds with fancy features"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<=\\g<ab>)|-\\zEND (?<ab>XyZ)", "XyZ", 3, 3);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
