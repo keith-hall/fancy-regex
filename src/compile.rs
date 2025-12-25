@@ -32,12 +32,20 @@ use regex_automata::util::pool::Pool;
 #[cfg(all(test, feature = "std"))]
 use std::{collections::BTreeMap, sync::RwLock};
 
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap as Map;
+#[cfg(feature = "std")]
+use std::collections::HashMap as Map;
+
 use crate::analyze::Info;
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result};
+
+/// Maximum recursion depth for subroutine calls (matches Oniguruma's limit)
+const MAX_SUBROUTINE_RECURSION_DEPTH: usize = 20;
 
 // I'm thinking it probably doesn't make a lot of sense having this split
 // out from Compiler.
@@ -99,18 +107,24 @@ impl VMBuilder {
     }
 }
 
-struct Compiler {
+struct Compiler<'a> {
     b: VMBuilder,
     options: RegexOptions,
     inside_alternation: bool,
+    /// Map from group number to its Info node for subroutine expansion
+    group_info_map: Map<usize, &'a Info<'a>>,
+    /// Stack tracking currently expanding subroutine calls to detect recursion depth
+    subroutine_recursion_stack: Vec<usize>,
 }
 
-impl Compiler {
-    fn new(max_group: usize) -> Compiler {
+impl<'a> Compiler<'a> {
+    fn new(max_group: usize) -> Compiler<'a> {
         Compiler {
             b: VMBuilder::new(max_group),
             options: Default::default(),
             inside_alternation: false,
+            group_info_map: Map::new(),
+            subroutine_recursion_stack: Vec::new(),
         }
     }
 
@@ -202,10 +216,40 @@ impl Compiler {
             Expr::Conditional { .. } => {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
             }
-            Expr::SubroutineCall(_) => {
-                return Err(Error::CompileError(Box::new(
-                    CompileError::FeatureNotYetSupported("Subroutine Call".to_string()),
-                )));
+            Expr::SubroutineCall(target_group) => {
+                // Check if we're already expanding this specific group (direct/indirect recursion)
+                let recursion_count = self.subroutine_recursion_stack.iter().filter(|&&g| g == target_group).count();
+                if recursion_count >= MAX_SUBROUTINE_RECURSION_DEPTH {
+                    // Hit recursion limit - don't expand further, effectively making this match fail
+                    // This matches Oniguruma's behavior of limiting recursion depth
+                    self.b.add(Insn::Fail);
+                    return Ok(());
+                }
+                
+                // Get the Info node for the target group
+                let target_info = self.group_info_map.get(&target_group).copied();
+                
+                if let Some(target_info) = target_info {
+                    // Track that we're expanding this subroutine
+                    self.subroutine_recursion_stack.push(target_group);
+                    
+                    // Inline the target group's expression (without the Save instructions)
+                    // We visit the child of the Group expression directly
+                    if !target_info.children.is_empty() {
+                        self.visit(&target_info.children[0], hard)?;
+                    }
+                    
+                    // Pop the recursion stack
+                    self.subroutine_recursion_stack.pop();
+                } else {
+                    // The target group hasn't been seen yet (forward reference)
+                    // This should have been caught by analysis, but be defensive
+                    return Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported(
+                            format!("Forward subroutine call to group {}", target_group)
+                        ),
+                    )));
+                }
             }
             Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
@@ -610,9 +654,33 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
     Ok(re)
 }
 
+/// Recursively populate the group_info_map with all capture groups in the Info tree
+fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Info<'a>) {
+    match info.expr {
+        Expr::Group(_) => {
+            let group = info.start_group();
+            map.insert(group, info);
+            // Continue recursing into children
+            for child in &info.children {
+                populate_group_info_map(map, child);
+            }
+        }
+        _ => {
+            // Recurse into all children
+            for child in &info.children {
+                populate_group_info_map(map, child);
+            }
+        }
+    }
+}
+
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group());
+    
+    // Pre-populate the group_info_map to support forward references
+    populate_group_info_map(&mut c.group_info_map, info);
+    
     if !anchored {
         // add instructions as if \O*? was used at the start of the expression
         // so that we bump the haystack index by one when failing to match at the current position

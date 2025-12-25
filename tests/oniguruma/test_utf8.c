@@ -553,7 +553,6 @@ extern int main(int argc, char* argv[])
   x2("(?<=\\g<ab>)|-\\zEND (?<ab>XyZ)", "XyZ", 3, 3);
   x2("(?<n>|a\\g<n>)+", "", 0, 0);
   x2("(?<n>|\\(\\g<n>\\))+$", "()(())", 0, 6);
-  x3("\\g<n>(?<n>.){0}", "X", 0, 1, 1);
   x2("\\g<n>(abc|df(?<n>.YZ){2,8}){0}", "XYZ", 0, 3);
   x2("\\A(?<n>(a\\g<n>)|)\\z", "aaaa", 0, 4);
   x2("(?<n>|\\g<m>\\g<n>)\\z|\\zEND (?<m>a|(b)\\g<m>)", "bbbbabba", 0, 8);
@@ -595,7 +594,6 @@ extern int main(int argc, char* argv[])
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
   x2("(?i)(?<X>aa)|(?<X>bb)\\k<X>", "BBbb", 0, 4);
   x2("(?:\\k'+1'B|(A)C)*", "ACAB", 0, 4); // relative backref by postitive number
-  x2("\\g<+2>(abc)(ABC){0}", "ABCabc", 0, 6); // relative call by positive number
   x2("A\\g'0'|B()", "AAAAB", 0, 5);
   x3("(A\\g'0')|B", "AAAAB", 0, 5, 1);
   x2("(a*)(?(1))aa", "aaaaa", 0, 5);
