@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths: [ 'playground/**' ]
   workflow_dispatch:
+    # This allows manual deployment from any branch through GitHub UI
 
 permissions:
   contents: write
