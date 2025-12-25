@@ -586,6 +586,120 @@ impl<'a> Analyzer<'a> {
         recursion_stack.remove(group);
         Ok(false)
     }
+
+    /// Update Info tree with correct size information after all groups have been analyzed
+    /// This fixes issues with forward-referenced subroutine calls that had conservative defaults
+    fn update_info_sizes(&self, info: &mut Info<'a>) {
+        match info.expr {
+            Expr::SubroutineCall(target_group) => {
+                // Update size info from the now-available group info
+                if let Some(&SizeInfo {
+                    min_size: group_min_size,
+                    const_size: group_const_size,
+                }) = self.group_info.get(target_group)
+                {
+                    info.min_size = group_min_size;
+                    info.const_size = group_const_size;
+                }
+            }
+            Expr::Concat(_) => {
+                // First update children
+                for child in &mut info.children {
+                    self.update_info_sizes(child);
+                }
+                // Then recalculate concat's size based on updated children
+                let mut min_size = 0;
+                let mut const_size = true;
+                for child in &info.children {
+                    min_size += child.min_size;
+                    const_size &= child.const_size;
+                }
+                info.min_size = min_size;
+                info.const_size = const_size;
+            }
+            Expr::Alt(_) => {
+                // First update children
+                for child in &mut info.children {
+                    self.update_info_sizes(child);
+                }
+                // Then recalculate alt's size based on updated children
+                if !info.children.is_empty() {
+                    let mut min_size = info.children[0].min_size;
+                    let mut const_size = info.children[0].const_size;
+                    for child in &info.children[1..] {
+                        const_size &= child.const_size && min_size == child.min_size;
+                        min_size = min(min_size, child.min_size);
+                    }
+                    info.min_size = min_size;
+                    info.const_size = const_size;
+                }
+            }
+            Expr::Group(_) => {
+                // Update child first
+                if !info.children.is_empty() {
+                    self.update_info_sizes(&mut info.children[0]);
+                    info.min_size = info.children[0].min_size;
+                    info.const_size = info.children[0].const_size;
+                }
+            }
+            Expr::Repeat { lo, hi, .. } => {
+                if !info.children.is_empty() {
+                    self.update_info_sizes(&mut info.children[0]);
+                    info.min_size = info.children[0].min_size * lo;
+                    info.const_size = info.children[0].const_size && lo == hi;
+                }
+            }
+            Expr::LookAround(_, _) | Expr::AtomicGroup(_) => {
+                // Update child
+                if !info.children.is_empty() {
+                    self.update_info_sizes(&mut info.children[0]);
+                }
+                // Note: LookAround always has const_size=true and min_size=0
+                // AtomicGroup inherits from child
+                if matches!(info.expr, Expr::AtomicGroup(_)) && !info.children.is_empty() {
+                    info.min_size = info.children[0].min_size;
+                    info.const_size = info.children[0].const_size;
+                }
+            }
+            Expr::Conditional { .. } => {
+                // Update all three children (condition, true_branch, false_branch)
+                for child in &mut info.children {
+                    self.update_info_sizes(child);
+                }
+                // Recalculate conditional's size
+                if info.children.len() >= 3 {
+                    let cond_size = info.children[0].min_size;
+                    let true_size = info.children[1].min_size;
+                    let false_size = info.children[2].min_size;
+                    info.min_size = cond_size + min(true_size, false_size);
+                    info.const_size = info.children[0].const_size
+                        && info.children[1].const_size
+                        && info.children[2].const_size
+                        && cond_size + true_size == false_size;
+                }
+            }
+            Expr::Backref { group, .. } => {
+                // Backrefs might also benefit from updated group info, though they should
+                // already be correct since backrefs are backward references by definition
+                if *group != 0 {
+                    if let Some(&SizeInfo {
+                        min_size: group_min_size,
+                        const_size: group_const_size,
+                    }) = self.group_info.get(group)
+                    {
+                        info.min_size = group_min_size;
+                        info.const_size = group_const_size;
+                    }
+                }
+            }
+            _ => {
+                // For other expressions, just recurse into children
+                for child in &mut info.children {
+                    self.update_info_sizes(child);
+                }
+            }
+        }
+    }
 }
 
 fn literal_const_size(_: &str, _: bool) -> bool {
@@ -609,7 +723,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         contains_forward_referenced_subroutines: false,
     };
 
-    let analyzed = analyzer.visit(&tree.expr, 0);
+    let mut analyzed = analyzer.visit(&tree.expr, 0);
     if analyzer.backrefs.contains(0) {
         return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
             0,
@@ -642,6 +756,13 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         }
     }
 
+    // If we had forward-referenced subroutines, update the Info tree with correct size information
+    if tree.contains_subroutines && analyzer.contains_forward_referenced_subroutines {
+        if let Ok(ref mut analyzed_info) = analyzed {
+            analyzer.update_info_sizes(analyzed_info);
+        }
+    }
+
     analyzed
 }
 
@@ -665,7 +786,7 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
 mod tests {
     use super::analyze;
     // use super::literal_const_size;
-    use crate::{can_compile_as_anchored, CompileError, Error, Expr};
+    use crate::{can_compile_as_anchored, CompileError, Error, Expr, LookAround::*};
 
     // #[test]
     // fn case_folding_safe() {
@@ -1196,6 +1317,46 @@ mod tests {
         assert!(
             result.is_ok(),
             "Pattern should not be left-recursive because group m has min_size > 0"
+        );
+    }
+
+    #[test]
+    fn forward_referenced_subroutine_in_lookbehind_has_correct_const_size() {
+        // This test verifies that forward-referenced subroutine calls get their
+        // const_size correctly updated on the second pass.
+        // Pattern: (?<=\g<ab>)|-\zEND (?<ab>XyZ)
+        // The lookbehind contains a forward reference to group 'ab' which is defined later.
+        // On first pass, the subroutine call has const_size=false (conservative default).
+        // After second pass, it should have const_size=true because 'XyZ' has constant size.
+        let tree = Expr::parse_tree(r"(?<=\g<ab>)|-\zEND (?<ab>XyZ)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+
+        // The root is an alternation with two branches
+        assert!(matches!(info.expr, Expr::Alt(_)));
+        assert_eq!(info.children.len(), 2);
+
+        // First branch is the lookbehind
+        let lookbehind_branch = &info.children[0];
+        assert!(matches!(lookbehind_branch.expr, Expr::LookAround(_, LookBehind)));
+
+        // The lookbehind should have const_size=true (lookbehind itself is zero-width)
+        assert!(lookbehind_branch.const_size);
+
+        // The child of the lookbehind is the subroutine call
+        assert_eq!(lookbehind_branch.children.len(), 1);
+        let subroutine_call = &lookbehind_branch.children[0];
+        assert!(matches!(subroutine_call.expr, Expr::SubroutineCall(_)));
+
+        // After the second pass, the subroutine call should have:
+        // - const_size = true (because 'XyZ' is constant size)
+        // - min_size = 3 (the length of 'XyZ')
+        assert!(
+            subroutine_call.const_size,
+            "Subroutine call should have const_size=true after second pass"
+        );
+        assert_eq!(
+            subroutine_call.min_size, 3,
+            "Subroutine call should have min_size=3 (length of 'XyZ')"
         );
     }
 }
