@@ -215,7 +215,6 @@ fn oniguruma() {
     let mut success = 0;
 
     for test in tests {
-        eprintln!("Running test: {}", test.source);
         let result = run_test(&test);
 
         if let Some(expected_failure) = ignore.get(&test) {
