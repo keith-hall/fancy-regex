@@ -244,18 +244,27 @@ impl<'a> Compiler<'a> {
                     // For other groups, visit the child of the Group expression
                     if target_group == 0 {
                         self.visit(target_info, hard)?;
-                    } else if !target_info.children.is_empty() {
+                    } else {
+                        // Groups should always have at least one child (the group content)
+                        // If empty, this is an error in the analysis phase
+                        if target_info.children.is_empty() {
+                            return Err(Error::CompileError(Box::new(
+                                CompileError::FeatureNotYetSupported(
+                                    format!("Subroutine call to empty group {}", target_group)
+                                ),
+                            )));
+                        }
                         self.visit(&target_info.children[0], hard)?;
                     }
                     
                     // Pop the recursion stack
                     self.subroutine_recursion_stack.pop();
                 } else {
-                    // The target group hasn't been seen yet (forward reference)
+                    // The target group doesn't exist (invalid group reference)
                     // This should have been caught by analysis, but be defensive
                     return Err(Error::CompileError(Box::new(
                         CompileError::FeatureNotYetSupported(
-                            format!("Forward subroutine call to group {}", target_group)
+                            format!("Invalid subroutine call to non-existent group {}", target_group)
                         ),
                     )));
                 }
