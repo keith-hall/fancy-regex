@@ -647,3 +647,129 @@ fn unicode_property_cntrl_graph_print_combined() {
     assert_match(r"[\p{cntrl}\x21-\x7E]", "a"); // visible ASCII
     assert_no_match(r"[\p{cntrl}\x21-\x7E]", " "); // space (not in cntrl or \x21-\x7E)
 }
+
+#[test]
+fn test_basic_subroutine() {
+    use fancy_regex::Regex;
+
+    // Simple subroutine call
+    let re = Regex::new(r"(a)\g<1>").unwrap();
+    assert!(re.is_match("aa").unwrap());
+    assert!(!re.is_match("ab").unwrap());
+
+    // Named group subroutine
+    let re = Regex::new(r"(?<name>ab)\g<name>").unwrap();
+    assert!(re.is_match("abab").unwrap());
+    assert!(!re.is_match("abcd").unwrap());
+}
+#[test]
+fn test_recursive_subroutine() {
+    use fancy_regex::Regex;
+
+    // Test from oniguruma test suite: balanced parentheses
+    let re = Regex::new(r"(?<foo>a|\(\g<foo>\))").unwrap();
+    assert!(re.is_match("a").unwrap());
+    assert!(re.is_match("((((((a))))))").unwrap());
+
+    // Another test: nested structure
+    let re = Regex::new(r"(?<n>|a\g<n>)+").unwrap();
+    assert!(re.is_match("").unwrap());
+    assert!(re.is_match("aaaa").unwrap());
+}
+
+#[test]
+fn test_forward_reference_subroutine() {
+    use fancy_regex::Regex;
+
+    // Forward reference: subroutine call before group definition
+    let re = Regex::new(r"\g<1>(a)").unwrap();
+    assert!(re.is_match("aa").unwrap());
+
+    // Named forward reference
+    let re = Regex::new(r"\g<name>(?<name>a)").unwrap();
+    assert!(re.is_match("aa").unwrap());
+}
+#[test]
+fn test_subroutine_match_behavior() {
+    use fancy_regex::Regex;
+
+    // Test that simple subroutine works correctly
+    let re = Regex::new(r"(a)\g<1>").unwrap();
+    let m = re.find("aa").unwrap().unwrap();
+    assert_eq!(m.as_str(), "aa");
+    let m = re.find("aaa").unwrap().unwrap();
+    assert_eq!(m.as_str(), "aa"); // Should match first two 'a's
+
+    // Test balanced parens with limited depth
+    let re = Regex::new(r"(?<foo>a|\(\g<foo>\))").unwrap();
+    assert!(re.is_match("a").unwrap());
+    assert!(re.is_match("(a)").unwrap());
+    assert!(re.is_match("((a))").unwrap());
+    assert!(re.is_match("(((a)))").unwrap());
+
+    // Test the specific case from oniguruma
+    let re = Regex::new(r"(?<foo>a|\(\g<foo>\))").unwrap();
+    assert!(re.is_match("((((((a))))))").unwrap());
+
+    // Test non-matching case
+    let re = Regex::new(r"(ab)\g<1>").unwrap();
+    assert!(!re.is_match("abcd").unwrap());
+    assert!(re.is_match("abab").unwrap());
+}
+#[test]
+fn test_forward_ref_zero_rep() {
+    use fancy_regex::Regex;
+
+    // Test: \g<n>(?<n>.){0}
+    // This has a forward reference to group n, which is defined as . with {0} repetition
+    let re = Regex::new(r"\g<n>(?<n>.){0}");
+
+    match re {
+        Ok(regex) => {
+            println!("Regex compiled successfully");
+            let result = regex.find("X");
+            println!("Find result: {:?}", result);
+            if let Ok(Some(m)) = result {
+                println!("Match: {:?}", m);
+                let caps = regex.captures("X").unwrap().unwrap();
+                println!("Captures: {:?}", caps);
+                println!("Group 1: {:?}", caps.get(1));
+            }
+        }
+        Err(e) => {
+            println!("Compile error: {}", e);
+        }
+    }
+}
+#[test]
+fn debug_forward_ref_zero_rep() {
+    use fancy_regex::Regex;
+
+    let re = Regex::new(r"\g<n>(?<n>.){0}").unwrap();
+    let caps = re.captures("X").unwrap().unwrap();
+
+    println!("Overall match: {:?}", caps.get(0));
+    println!("Group 1: {:?}", caps.get(1));
+    println!("Captures len: {}", caps.len());
+
+    // What we expect based on oniguruma test:
+    // - Overall match at 0-1
+    // - Group 1 should exist and match at 0-1
+    assert_eq!(caps.get(0).unwrap().as_str(), "X");
+    // This might fail:
+    assert_eq!(caps.get(1).is_some(), true, "Group 1 should exist");
+}
+#[test]
+fn test_complex_groups() {
+    use fancy_regex::Regex;
+
+    let re = Regex::new(r"(z)()()(?<_9>a)\g<_9>").unwrap();
+    let caps = re.captures("zaa").unwrap().unwrap();
+
+    println!("Overall match: {:?}", caps.get(0));
+    for i in 1..=4 {
+        println!("Group {}: {:?}", i, caps.get(i));
+    }
+}
+
+
