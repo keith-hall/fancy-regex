@@ -286,3 +286,71 @@ fn match_text(re: &str, text: &str) -> bool {
     );
     result.unwrap()
 }
+#[test]
+fn test_basic_subroutine() {
+    use fancy_regex::Regex;
+    
+    // Simple subroutine call
+    let re = Regex::new(r"(a)\g<1>").unwrap();
+    assert!(re.is_match("aa").unwrap());
+    assert!(!re.is_match("ab").unwrap());
+    
+    // Named group subroutine
+    let re = Regex::new(r"(?<name>ab)\g<name>").unwrap();
+    assert!(re.is_match("abab").unwrap());
+    assert!(!re.is_match("abcd").unwrap());
+}
+#[test]
+fn test_recursive_subroutine() {
+    use fancy_regex::Regex;
+    
+    // Test from oniguruma test suite: balanced parentheses
+    let re = Regex::new(r"(?<foo>a|\(\g<foo>\))").unwrap();
+    assert!(re.is_match("a").unwrap());
+    assert!(re.is_match("((((((a))))))").unwrap());
+    
+    // Another test: nested structure
+    let re = Regex::new(r"(?<n>|a\g<n>)+").unwrap();
+    assert!(re.is_match("").unwrap());
+    assert!(re.is_match("aaaa").unwrap());
+}
+
+#[test]
+fn test_forward_reference_subroutine() {
+    use fancy_regex::Regex;
+    
+    // Forward reference: subroutine call before group definition
+    let re = Regex::new(r"\g<1>(a)").unwrap();
+    assert!(re.is_match("aa").unwrap());
+    
+    // Named forward reference
+    let re = Regex::new(r"\g<name>(?<name>a)").unwrap();
+    assert!(re.is_match("aa").unwrap());
+}
+#[test]
+fn test_subroutine_match_behavior() {
+    use fancy_regex::Regex;
+    
+    // Test that simple subroutine works correctly
+    let re = Regex::new(r"(a)\g<1>").unwrap();
+    let m = re.find("aa").unwrap().unwrap();
+    assert_eq!(m.as_str(), "aa");
+    let m = re.find("aaa").unwrap().unwrap();
+    assert_eq!(m.as_str(), "aa"); // Should match first two 'a's
+    
+    // Test balanced parens with limited depth
+    let re = Regex::new(r"(?<foo>a|\(\g<foo>\))").unwrap();
+    assert!(re.is_match("a").unwrap());
+    assert!(re.is_match("(a)").unwrap());
+    assert!(re.is_match("((a))").unwrap());
+    assert!(re.is_match("(((a)))").unwrap());
+    
+    // Test the specific case from oniguruma
+    let re = Regex::new(r"(?<foo>a|\(\g<foo>\))").unwrap();
+    assert!(re.is_match("((((((a))))))").unwrap());
+    
+    // Test non-matching case
+    let re = Regex::new(r"(ab)\g<1>").unwrap();
+    assert!(!re.is_match("abcd").unwrap());
+    assert!(re.is_match("abab").unwrap());
+}

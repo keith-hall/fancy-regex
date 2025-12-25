@@ -129,6 +129,12 @@ fn unescape(escaped: &str) -> String {
                         let num = u8::from_str_radix(&hex, 16).expect("Error parsing hex number");
                         s.push(num);
                     }
+                    // Regex escapes that should be kept as-is
+                    'g' | 'k' | 'z' | 'A' | 'Z' | 'G' | 'K' | 'd' | 'D' | 'w' | 'W' | 's' | 'S' | 
+                    'h' | 'H' | 'p' | 'P' | 'b' | 'B' | 'c' | 'C' | 'e' | 'O' | 'N' | 'a' | 't' => {
+                        s.push(b'\\');
+                        s.append(&mut next.to_string().into_bytes());
+                    }
                     _ => {
                         unimplemented!("Unknown escaped character {} in {}", next, escaped);
                     }
