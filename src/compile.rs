@@ -530,7 +530,9 @@ impl Compiler {
             } else {
                 // variable sized lookbehinds with fancy features are currently unsupported
                 Err(Error::CompileError(Box::new(
-                    CompileError::LookBehindNotConst,
+                    CompileError::FeatureNotYetSupported(
+                        "Variable length lookbehinds with fancy features".to_string(),
+                    ),
                 )))
             }
         } else {
@@ -938,7 +940,7 @@ mod tests {
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
-            Error::CompileError(box_err) if matches!(*box_err, CompileError::LookBehindNotConst)
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
         );
     }
 
