@@ -117,6 +117,8 @@ struct Compiler<'a> {
     group_info_map: Map<usize, &'a Info<'a>>,
     /// Stack tracking currently expanding subroutine calls to detect recursion depth
     subroutine_recursion_stack: Vec<usize>,
+    /// Root Info node for handling group 0 subroutine calls
+    root_info: Option<&'a Info<'a>>,
 }
 
 impl<'a> Compiler<'a> {
@@ -127,6 +129,7 @@ impl<'a> Compiler<'a> {
             inside_alternation: false,
             group_info_map: Map::new(),
             subroutine_recursion_stack: Vec::new(),
+            root_info: None,
         }
     }
 
@@ -228,16 +231,22 @@ impl<'a> Compiler<'a> {
                     return Ok(());
                 }
                 
-                // Get the Info node for the target group
-                let target_info = self.group_info_map.get(&target_group).copied();
+                // Handle group 0 (whole pattern) specially
+                let target_info = if target_group == 0 {
+                    self.root_info
+                } else {
+                    self.group_info_map.get(&target_group).copied()
+                };
                 
                 if let Some(target_info) = target_info {
                     // Track that we're expanding this subroutine
                     self.subroutine_recursion_stack.push(target_group);
                     
-                    // Inline the target group's expression (without the Save instructions)
-                    // We visit the child of the Group expression directly
-                    if !target_info.children.is_empty() {
+                    // For group 0, visit the entire root info
+                    // For other groups, visit the child of the Group expression
+                    if target_group == 0 {
+                        self.visit(target_info, hard)?;
+                    } else if !target_info.children.is_empty() {
                         self.visit(&target_info.children[0], hard)?;
                     }
                     
@@ -767,6 +776,9 @@ fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Inf
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group());
+    
+    // Store root info for group 0 subroutine calls
+    c.root_info = Some(info);
     
     // Pre-populate the group_info_map to support forward references
     populate_group_info_map(&mut c.group_info_map, info);
