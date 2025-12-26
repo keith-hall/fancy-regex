@@ -158,7 +158,7 @@ The fancy-regex library uses a hybrid approach:
        if let Some(cached_info) = self.group_info_cache.get(&target_group) {
            // Use cached information
            min_size = cached_info.min_size;
-           const_size = false; // Recursion is never constant size
+           const_size = cached_info.const_size;
        } else if let Some(group_expr) = self.capture_groups.get(target_group) {
            // Forward reference: analyze the group immediately
            let saved_group_ix = self.group_ix;
@@ -172,7 +172,7 @@ The fancy-regex library uses a hybrid approach:
            self.group_info_cache.insert(target_group, Arc::new(group_info.clone()));
            
            min_size = group_info.min_size;
-           const_size = false; // Recursion is never constant size
+           const_size = group_info.const_size;
        } else {
            // Group doesn't exist - error will be caught later
            min_size = 0;
@@ -193,6 +193,7 @@ The fancy-regex library uses a hybrid approach:
 - Be careful with the `group_ix` counter when jumping to analyze forward-referenced groups
 - Ensure left recursion detection still works correctly
 - Group 0 (the implicit whole-pattern group) won't be in the capture group map, so handle it specially for `\g<0>` calls
+- **Const size for subroutine calls**: The `const_size` property is preserved from the target group. Only recursive cycles (detected by the left recursion checker) will cause the calling group to be non-const-size. Non-recursive subroutine calls like `(abc)\g<1>` correctly preserve const_size=true.
 
 **Testing:**
 - Test with forward-referencing subroutine calls: `\g<2>(a)(b)`
@@ -258,11 +259,18 @@ The fancy-regex library uses a hybrid approach:
        
        // Inline the target group's instructions
        if target_group == 0 {
-           // Special case: \g<0> calls the whole pattern
-           // This is the only self-recursive case we need to handle specially
-           // For now, emit Fail to prevent infinite expansion
-           // TODO: Consider jumping back to the start instruction
-           self.b.add(Insn::Fail);
+           // Special case: \g<0> calls the whole pattern recursively
+           // We inline the root expression just like any other group
+           // The recursion depth tracking ensures we don't exceed 20 levels
+           if let Some(target_info) = self.group_info_map.get(&0) {
+               self.visit(target_info, hard)?;
+           } else {
+               // If group 0 is not in the map, we need to handle it specially
+               // This should be set up during the compilation preparation phase
+               return Err(Error::CompileError(Box::new(
+                   CompileError::InvalidSubroutineCall(target_group),
+               )));
+           }
        } else {
            // Find the Info node for the target group
            // We need to store a mapping from group number to Info node
@@ -301,11 +309,16 @@ The fancy-regex library uses a hybrid approach:
 
 4. Populate the group info map before compilation:
    - Walk the `Info` tree to build a map from group numbers to their corresponding `Info` nodes
+   - This includes group 0 (the root/whole-pattern group) to support `\g<0>` self-recursion
    - This can be done in a pre-compilation pass or during the initial analysis
 
-**Alternative Approach for \g<0> (Self-Recursion):**
+**Note on \g<0> Self-Recursion:**
 
-For `\g<0>` specifically, we could add a `RecursiveCall` instruction to the VM:
+The inlining approach handles `\g<0>` naturally by including group 0 in the `group_info_map`. When a `\g<0>` call is encountered, the compiler inlines the entire pattern (up to the recursion depth limit). This is consistent with how all other subroutine calls work and requires no special VM instructions.
+
+**Alternative Approach (Jump-based, not recommended):**
+
+An alternative would be to add a `RecursiveCall` instruction to the VM:
 ```rust
 pub enum Insn {
     // ... existing instructions ...
@@ -319,8 +332,7 @@ The VM would handle this by:
 - Checking if depth < 20
 - If yes, jump back to the start instruction (after the initial Save(0))
 - If no, fail
-
-This requires minimal VM changes and is more efficient for self-recursive patterns.
+This requires VM changes and is more complex than the recommended inlining approach. The inlining approach is simpler, more consistent, and requires no VM modifications.
 
 **File: `src/error.rs`**
 
