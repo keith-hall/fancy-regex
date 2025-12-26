@@ -19,6 +19,83 @@
 // THE SOFTWARE.
 
 //! RegexSet API for matching multiple patterns against the same input.
+//!
+//! This module provides [`RegexSet`], which allows efficient matching of multiple
+//! regular expression patterns against the same input text. This is particularly
+//! useful for applications like syntax highlighting, where many patterns need to
+//! be matched against each line of text.
+//!
+//! # Examples
+//!
+//! Basic usage:
+//!
+//! ```rust
+//! use fancy_regex::RegexSet;
+//!
+//! # fn main() -> Result<(), fancy_regex::Error> {
+//! let set = RegexSet::new(&[
+//!     r"\d+",              // Pattern 0: numbers
+//!     r"\w+",              // Pattern 1: words
+//!     r"(?<=\$)\d+\.\d+",  // Pattern 2: prices (with lookbehind)
+//! ])?;
+//!
+//! let text = "The price is $29.99 today";
+//!
+//! for result in set.matches(text) {
+//!     let m = result?;
+//!     println!("Pattern {} matched '{}' at {}..{}",
+//!         m.pattern(), m.as_str(), m.start(), m.end());
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Using the builder for custom options:
+//!
+//! ```rust
+//! use fancy_regex::RegexSetBuilder;
+//!
+//! # fn main() -> Result<(), fancy_regex::Error> {
+//! let set = RegexSetBuilder::new(&[
+//!     r"hello",
+//!     r"world",
+//! ])
+//! .case_insensitive(true)
+//! .multi_line(true)
+//! .build()?;
+//!
+//! let text = "HELLO\nWORLD";
+//!
+//! for result in set.matches(text) {
+//!     let m = result?;
+//!     println!("Pattern {} matched: {}", m.pattern(), m.as_str());
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Performance
+//!
+//! The `RegexSet` uses a hybrid approach to achieve good performance:
+//!
+//! - **Easy patterns** (those without backreferences, lookaround, etc.) are
+//!   combined into a single multi-pattern DFA for parallel evaluation. This
+//!   provides very fast matching with linear time complexity.
+//!
+//! - **Hard patterns** (those with backreferences, lookaround, etc.) are
+//!   evaluated individually using a backtracking VM. These may have exponential
+//!   time complexity in pathological cases.
+//!
+//! For best performance, try to design patterns that can be delegated to the
+//! DFA when possible.
+//!
+//! # Priority and Non-Overlapping Matches
+//!
+//! The iterator returns non-overlapping matches in order of their start position.
+//! When multiple patterns match at the same position, the pattern with the
+//! lowest index (specified first in the constructor) wins. After yielding a match
+//! at position `pos` with length `len`, the next match starts searching from
+//! `pos + max(1, len)`, which prevents infinite loops on zero-width matches.
 
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -39,6 +116,24 @@ use crate::vm::{self, Prog};
 use crate::{Captures, Expr, RegexOptions, Result};
 
 /// A builder for a `RegexSet` to allow configuring options.
+///
+/// This builder allows you to configure the compilation options for all patterns
+/// in a regex set. All patterns in the set share the same options.
+///
+/// # Examples
+///
+/// ```rust
+/// use fancy_regex::RegexSetBuilder;
+///
+/// # fn main() -> Result<(), fancy_regex::Error> {
+/// let set = RegexSetBuilder::new(&[r"hello", r"world"])
+///     .case_insensitive(true)
+///     .multi_line(true)
+///     .backtrack_limit(10_000_000)
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct RegexSetBuilder {
     patterns: Vec<String>,
@@ -52,6 +147,14 @@ pub struct RegexSetBuilder {
 
 impl RegexSetBuilder {
     /// Create a new RegexSet builder with a list of patterns.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use fancy_regex::RegexSetBuilder;
+    ///
+    /// let builder = RegexSetBuilder::new(&[r"\d+", r"[a-z]+"]);
+    /// ```
     pub fn new<I, S>(patterns: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -259,6 +362,51 @@ impl RegexSetBuilder {
 }
 
 /// A compiled set of regular expressions.
+///
+/// A `RegexSet` allows you to match multiple patterns against the same input
+/// text efficiently. It's particularly useful for applications like syntax
+/// highlighting or token scanning where you need to check many patterns against
+/// each piece of text.
+///
+/// The set analyzes patterns at compile time and uses different strategies for
+/// different types of patterns:
+/// - Simple patterns are combined into a single high-performance DFA
+/// - Complex patterns (with backreferences, lookaround, etc.) use backtracking
+///
+/// # Examples
+///
+/// Basic matching:
+///
+/// ```rust
+/// use fancy_regex::RegexSet;
+///
+/// # fn main() -> Result<(), fancy_regex::Error> {
+/// let set = RegexSet::new(&[r"\d+", r"[a-z]+", r"[A-Z]+"])?;
+///
+/// let text = "abc 123 XYZ";
+/// for m in set.matches(text) {
+///     let m = m?;
+///     println!("Pattern {} matched: {}", m.pattern(), m.as_str());
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The `RegexSet` is cheaply cloneable (via `Arc`) and can be used from
+/// multiple threads:
+///
+/// ```rust
+/// use fancy_regex::RegexSet;
+/// use std::sync::Arc;
+///
+/// # fn main() -> Result<(), fancy_regex::Error> {
+/// let set = Arc::new(RegexSet::new(&[r"\d+"])?);
+/// let set_clone = Arc::clone(&set);
+///
+/// // Use from different threads...
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone, Debug)]
 pub struct RegexSet {
     inner: Arc<RegexSetImpl>,
@@ -382,6 +530,35 @@ impl RegexSet {
 }
 
 /// A match from a RegexSet, including the pattern index and capture groups.
+///
+/// This type represents a single match found by a [`RegexSet`]. It provides
+/// information about which pattern matched, the location of the match, and
+/// access to any capture groups.
+///
+/// # Examples
+///
+/// ```rust
+/// use fancy_regex::RegexSet;
+///
+/// # fn main() -> Result<(), fancy_regex::Error> {
+/// let set = RegexSet::new(&[r"(\d+)-(\d+)", r"[a-z]+"])?;
+/// let text = "abc 123-456";
+///
+/// for m in set.matches(text) {
+///     let m = m?;
+///     println!("Pattern {} matched '{}' at {}..{}",
+///         m.pattern(), m.as_str(), m.start(), m.end());
+///     
+///     // Access capture groups
+///     for cap in m.captures().iter() {
+///         if let Some(cap) = cap {
+///             println!("  Capture: {}", cap.as_str());
+///         }
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct RegexSetMatch<'h> {
     pattern_index: usize,
