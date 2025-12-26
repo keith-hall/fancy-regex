@@ -1085,7 +1085,7 @@ impl Regex {
                 ..
             } => {
                 let result = vm::run(prog, text, pos, 0, options)?;
-                Ok(result.map(|mut saves| {
+                Ok(result.map(|mut saves: Vec<usize>| {
                     saves.truncate(n_groups * 2);
                     Captures {
                         inner: CapturesImpl::Fancy { text, saves },

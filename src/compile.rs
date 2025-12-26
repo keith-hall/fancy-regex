@@ -664,7 +664,7 @@ impl DelegateBuilder {
             // Update the end_group to the latest
             self.capture_groups = self
                 .capture_groups
-                .map(|range| CaptureGroupRange(range.start(), info.end_group()));
+                .map(|range: CaptureGroupRange| CaptureGroupRange(range.start(), info.end_group()));
         }
 
         // Add expression. The precedence argument has to be 1 here to

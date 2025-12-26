@@ -36,6 +36,7 @@ pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
 pub(crate) type NamedGroups = std::collections::HashMap<String, usize>;
 
 // Re-export public items
+#[allow(unused_imports)]
 pub(crate) use utils::{
     make_literal, make_literal_case_insensitive, parse_decimal, parse_id, ParsedId,
 };

@@ -592,15 +592,12 @@ pub(crate) fn run(
         pc = newpc;
         ix = newix;
     }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use quickcheck::{quickcheck, Arbitrary, Gen};
-
-    #[test]
-    fn state_push_pop() {
-}
 
     #[test]
     fn state_push_pop() {

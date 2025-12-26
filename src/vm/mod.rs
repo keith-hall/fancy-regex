@@ -77,7 +77,6 @@ use regex_automata::meta::Regex;
 #[cfg(feature = "variable-lookbehinds")]
 use regex_automata::util::pool::Pool;
 
-use crate::error::RuntimeError;
 use crate::{Assertion, Formatter};
 
 mod execution;
@@ -334,6 +333,3 @@ impl Prog {
         Ok(())
     }
 }
-
-#[derive(Debug)]
-#[cfg(test)]
