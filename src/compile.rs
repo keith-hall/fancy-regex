@@ -209,6 +209,15 @@ impl Compiler {
             }
             Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
+            Expr::RelativeBackref { .. } => {
+                unreachable!("RelativeBackref should have been resolved before compilation")
+            }
+            Expr::UnresolvedNamedBackref { .. } => {
+                unreachable!("UnresolvedNamedBackref should have been resolved before compilation")
+            }
+            Expr::RelativeSubroutineCall { .. } => {
+                unreachable!("RelativeSubroutineCall should have been resolved before compilation")
+            }
         }
         Ok(())
     }

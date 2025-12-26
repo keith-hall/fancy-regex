@@ -233,6 +233,7 @@ mod vm;
 
 use crate::analyze::analyze;
 use crate::analyze::can_compile_as_anchored;
+use crate::analyze::resolve_backreferences;
 use crate::compile::compile;
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
@@ -799,6 +800,10 @@ impl Regex {
 
         // try to optimize the expression tree
         let requires_capture_group_fixup = optimize(&mut tree);
+
+        // resolve relative and named backreferences
+        resolve_backreferences(&mut tree)?;
+
         let info = analyze(&tree, requires_capture_group_fixup)?;
 
         if !info.hard {
@@ -1656,6 +1661,24 @@ pub enum Expr {
         /// Whether the matching is case-insensitive or not
         casei: bool,
     },
+    /// Unresolved relative backreference, e.g. `\k<+1>` or `\k<-1>` that needs to be resolved
+    /// to a concrete group number during analysis.
+    RelativeBackref {
+        /// The relative offset from the current group (positive for forward, negative for backward)
+        relative_index: isize,
+        /// Whether the matching is case-insensitive or not
+        casei: bool,
+    },
+    /// Unresolved named backreference that needs to be resolved to a concrete group number
+    /// during analysis.
+    UnresolvedNamedBackref {
+        /// The capture group name being referenced
+        name: String,
+        /// Whether the matching is case-insensitive or not
+        casei: bool,
+        /// The position in the original regex pattern where the backref is made
+        ix: usize,
+    },
     /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
     /// never backtrack and try `a`, even if matching fails after the atomic group.
     AtomicGroup(Box<Expr>),
@@ -1676,6 +1699,12 @@ pub enum Expr {
     },
     /// Subroutine call to the specified group number
     SubroutineCall(usize),
+    /// Unresolved relative subroutine call, e.g. `\g<+1>` or `\g<-1>` that needs to be resolved
+    /// to a concrete group number during analysis.
+    RelativeSubroutineCall {
+        /// The relative offset from the current group (positive for forward, negative for backward)
+        relative_index: isize,
+    },
     /// Unresolved subroutine call to the specified group name
     UnresolvedNamedSubroutineCall {
         /// The capture group name
