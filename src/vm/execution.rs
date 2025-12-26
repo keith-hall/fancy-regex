@@ -18,339 +18,41 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//! Backtracking VM for implementing fancy regexes.
-//!
-//! Read <https://swtch.com/~rsc/regexp/regexp2.html> for a good introduction for how this works.
-//!
-//! The VM executes a sequence of instructions (a program) against an input string. It keeps track
-//! of a program counter (PC) and an index into the string (IX). Execution can have one or more
-//! threads.
-//!
-//! One of the basic instructions is `Lit`, which matches a string against the input. If it matches,
-//! the PC advances to the next instruction and the IX to the position after the matched string.
-//! If not, the current thread is stopped because it failed.
-//!
-//! If execution reaches an `End` instruction, the program is successful because a match was found.
-//! If there are no more threads to execute, the program has failed to match.
-//!
-//! A very simple program for the regex `a`:
-//!
-//! ```text
-//! 0: Lit("a")
-//! 1: End
-//! ```
-//!
-//! The `Split` instruction causes execution to split into two threads. The first thread is executed
-//! with the current string index. If it fails, we reset the string index and resume execution with
-//! the second thread. That is what "backtracking" refers to. In order to do that, we keep a stack
-//! of threads (PC and IX) to try.
-//!
-//! Example program for the regex `ab|ac`:
-//!
-//! ```text
-//! 0: Split(1, 4)
-//! 1: Lit("a")
-//! 2: Lit("b")
-//! 3: Jmp(6)
-//! 4: Lit("a")
-//! 5: Lit("c")
-//! 6: End
-//! ```
-//!
-//! The `Jmp` instruction causes execution to jump to the specified instruction. In the example it
-//! is needed to separate the two threads.
-//!
-//! Let's step through execution with that program for the input `ac`:
-//!
-//! 1. We're at PC 0 and IX 0
-//! 2. `Split(1, 4)` means we save a thread with PC 4 and IX 0 for trying later
-//! 3. Continue at `Lit("a")` which matches, so we advance IX to 1
-//! 4. `Lit("b")` doesn't match at IX 1 (`"b" != "c"`), so the thread fails
-//! 5. We continue with the previously saved thread at PC 4 and IX 0 (backtracking)
-//! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
+//! VM execution engine and state management.
 
 use alloc::collections::BTreeSet;
-use alloc::string::String;
-#[cfg(feature = "variable-lookbehinds")]
-use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
 
-#[cfg(feature = "variable-lookbehinds")]
-use regex_automata::util::pool::Pool;
-
-#[cfg(feature = "variable-lookbehinds")]
-pub(crate) type CachePoolFn = alloc::boxed::Box<
-    dyn Fn() -> regex_automata::hybrid::dfa::Cache
-        + Send
-        + Sync
-        + core::panic::UnwindSafe
-        + core::panic::RefUnwindSafe,
->;
-
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
-use crate::Assertion;
-use crate::Error;
-use crate::Formatter;
-use crate::Result;
-use crate::{codepoint_len, RegexOptions};
+use crate::{Assertion, Error, RegexOptions, Result};
 
-/// Enable tracing of VM execution. Only for debugging/investigating.
-const OPTION_TRACE: u32 = 1 << 0;
-/// When iterating over all matches within a text (e.g. with `find_iter`), empty matches need to be
-/// handled specially. If we kept matching at the same position, we'd never stop. So what we do
-/// after we've had an empty match, is to advance the position where matching is attempted.
-/// If `\G` is used in the pattern, that means it no longer matches. If we didn't tell the VM about
-/// the fact that we skipped because of an empty match, it would still treat `\G` as matching. So
-/// this option is for communicating that to the VM. Phew.
-pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
-
-// TODO: make configurable
-const MAX_STACK: usize = 1_000_000;
-
-/// Represents a range of capture groups by storing the first and last group numbers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CaptureGroupRange(pub usize, pub usize);
-
-impl CaptureGroupRange {
-    /// Returns the start (first) group number.
-    pub fn start(&self) -> usize {
-        self.0
-    }
-
-    /// Returns the end (last) group number.
-    pub fn end(&self) -> usize {
-        self.1
-    }
-
-    /// Converts this range to an Option, returning None if start equals end (no capture groups).
-    pub fn to_option_if_non_empty(self) -> Option<Self> {
-        if self.start() == self.end() {
-            None
-        } else {
-            Some(self)
-        }
-    }
-}
-
-#[derive(Clone)]
-/// Delegate matching to the regex crate
-pub struct Delegate {
-    /// The regex
-    pub inner: Regex,
-    /// The regex pattern as a string
-    pub pattern: String,
-    /// The range of capture groups. None if there are no capture groups.
-    pub capture_groups: Option<CaptureGroupRange>,
-}
-
-impl core::fmt::Debug for Delegate {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        // Ensures it fails to compile if the struct changes
-        let Self {
-            inner: _,
-            pattern,
-            capture_groups,
-        } = self;
-
-        f.debug_struct("Delegate")
-            .field("pattern", pattern)
-            .field("capture_groups", capture_groups)
-            .finish()
-    }
-}
+use super::helpers::{
+    codepoint_len_at, matches_literal, matches_literal_casei, store_capture_groups,
+};
+use super::{Delegate, Insn, Prog, MAX_STACK, OPTION_SKIPPED_EMPTY_MATCH, OPTION_TRACE};
 
 #[cfg(feature = "variable-lookbehinds")]
-/// Delegate matching in reverse to regex-automata
-pub struct ReverseBackwardsDelegate {
-    /// The regex pattern as a string which will be matched in reverse, in a backwards direction
-    pub pattern: String,
-    /// The delegate regex to match backwards (wrapped in Arc for efficient cloning)
-    pub(crate) dfa: Arc<regex_automata::hybrid::dfa::DFA>,
-    /// Cache pool for DFA searches
-    pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
-    /// The forward regex for capture group extraction
-    pub(crate) capture_group_extraction_inner: Option<Regex>,
-    /// The range of capture groups. None if there are no capture groups.
-    pub capture_groups: Option<CaptureGroupRange>,
-}
-
-#[cfg(feature = "variable-lookbehinds")]
-impl Clone for ReverseBackwardsDelegate {
-    fn clone(&self) -> Self {
-        let dfa_for_closure = Arc::clone(&self.dfa);
-        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
-        Self {
-            pattern: self.pattern.clone(),
-            cache_pool: Pool::new(create),
-            dfa: Arc::clone(&self.dfa),
-            capture_group_extraction_inner: self.capture_group_extraction_inner.clone(),
-            capture_groups: self.capture_groups,
-        }
-    }
-}
-
-#[cfg(feature = "variable-lookbehinds")]
-impl core::fmt::Debug for ReverseBackwardsDelegate {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        // Ensures it fails to compile if the struct changes
-        let Self {
-            pattern,
-            dfa: _,
-            cache_pool: _,
-            capture_group_extraction_inner: _,
-            capture_groups,
-        } = self;
-
-        f.debug_struct("ReverseBackwardsDelegate")
-            .field("pattern", pattern)
-            .field("capture_groups", capture_groups)
-            .finish()
-    }
-}
-
-/// Instruction of the VM.
+use super::ReverseBackwardsDelegate;
 #[derive(Debug)]
-pub enum Insn {
-    /// Successful end of program
-    End,
-    /// Match any character (including newline)
-    Any,
-    /// Match any character (not including newline)
-    AnyNoNL,
-    /// Assertions
-    Assertion(Assertion),
-    /// Match the literal string at the current index
-    Lit(String), // should be cow?
-    /// Split execution into two threads. The two fields are positions of instructions. Execution
-    /// first tries the first thread. If that fails, the second position is tried.
-    Split(usize, usize),
-    /// Jump to instruction at position
-    Jmp(usize),
-    /// Save the current string index into the specified slot
-    Save(usize),
-    /// Save `0` into the specified slot
-    Save0(usize),
-    /// Set the string index to the value that was saved in the specified slot
-    Restore(usize),
-    /// Repeat greedily (match as much as possible)
-    RepeatGr {
-        /// Minimum number of matches
-        lo: usize,
-        /// Maximum number of matches
-        hi: usize,
-        /// The instruction after the repeat
-        next: usize,
-        /// The slot for keeping track of the number of repetitions
-        repeat: usize,
-    },
-    /// Repeat non-greedily (prefer matching as little as possible)
-    RepeatNg {
-        /// Minimum number of matches
-        lo: usize,
-        /// Maximum number of matches
-        hi: usize,
-        /// The instruction after the repeat
-        next: usize,
-        /// The slot for keeping track of the number of repetitions
-        repeat: usize,
-    },
-    /// Repeat greedily and prevent infinite loops from empty matches
-    RepeatEpsilonGr {
-        /// Minimum number of matches
-        lo: usize,
-        /// The instruction after the repeat
-        next: usize,
-        /// The slot for keeping track of the number of repetitions
-        repeat: usize,
-        /// The slot for saving the previous IX to check if we had an empty match
-        check: usize,
-    },
-    /// Repeat non-greedily and prevent infinite loops from empty matches
-    RepeatEpsilonNg {
-        /// Minimum number of matches
-        lo: usize,
-        /// The instruction after the repeat
-        next: usize,
-        /// The slot for keeping track of the number of repetitions
-        repeat: usize,
-        /// The slot for saving the previous IX to check if we had an empty match
-        check: usize,
-    },
-    /// Negative look-around failed
-    FailNegativeLookAround,
-    /// Set IX back by the specified number of characters
-    GoBack(usize),
-    /// Back reference to a group number to check
-    Backref {
-        /// The save slot representing the start of the capture group
-        slot: usize,
-        /// Whether the backref should be matched case insensitively
-        casei: bool,
-    },
-    /// Begin of atomic group
-    BeginAtomic,
-    /// End of atomic group
-    EndAtomic,
-    /// Delegate matching to the regex crate
-    Delegate(Delegate),
-    /// Anchor to match at the position where the previous match ended
-    ContinueFromPreviousMatchEnd {
-        /// Whether this is at the start of the pattern (allowing early exit on failure)
-        at_start: bool,
-    },
-    /// Continue only if the specified capture group has already been populated as part of the match
-    BackrefExistsCondition(usize),
-    /// Immediately fail the current match attempt and trigger backtracking.
-    /// This is used for backtracking control verbs like `(*FAIL)`.
-    Fail,
-    #[cfg(feature = "variable-lookbehinds")]
-    /// Reverse lookbehind using regex-automata for variable-sized patterns
-    BackwardsDelegate(ReverseBackwardsDelegate),
-}
-
-/// Sequence of instructions for the VM to execute.
-#[derive(Debug)]
-pub struct Prog {
-    /// Instructions of the program
-    pub body: Vec<Insn>,
-    n_saves: usize,
-}
-
-impl Prog {
-    pub(crate) fn new(body: Vec<Insn>, n_saves: usize) -> Prog {
-        Prog { body, n_saves }
-    }
-
-    #[doc(hidden)]
-    pub(crate) fn debug_print(&self, writer: &mut Formatter<'_>) -> core::fmt::Result {
-        for (i, insn) in self.body.iter().enumerate() {
-            writeln!(writer, "{:3}: {:?}", i, insn)?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-struct Branch {
+pub(super) struct Branch {
     pc: usize,
     ix: usize,
     nsave: usize,
 }
 
 #[derive(Debug)]
-struct Save {
+pub(super) struct Save {
     slot: usize,
     value: usize,
 }
 
-struct State {
+pub(crate) struct State {
     /// Saved values indexed by slot. Mostly indices to s, but can be repeat values etc.
     /// Always contains the saves of the current state.
     saves: Vec<usize>,
@@ -414,7 +116,7 @@ impl State {
         (pc, ix)
     }
 
-    fn save(&mut self, slot: usize, val: usize) {
+    pub(super) fn save(&mut self, slot: usize, val: usize) {
         for i in 0..self.nsave {
             // could avoid this iteration with some overhead; worth it?
             if self.oldsave[self.oldsave.len() - i - 1].slot == slot {
@@ -519,85 +221,6 @@ impl State {
         #[cfg(feature = "std")]
         if self.options & OPTION_TRACE != 0 {
             println!("stack after {}: {:?}", operation, self.stack);
-        }
-    }
-}
-
-fn codepoint_len_at(s: &str, ix: usize) -> usize {
-    codepoint_len(s.as_bytes()[ix])
-}
-
-#[inline]
-fn matches_literal(s: &str, ix: usize, end: usize, literal: &str) -> bool {
-    // Compare as bytes because the literal might be a single byte char whereas ix
-    // points to a multibyte char. Comparing with str would result in an error like
-    // "byte index N is not a char boundary".
-    end <= s.len() && &s.as_bytes()[ix..end] == literal.as_bytes()
-}
-
-fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool {
-    if end > s.len() {
-        return false;
-    }
-    if matches_literal(s, ix, end, literal) {
-        return true;
-    }
-    if !s.is_char_boundary(ix) || !s.is_char_boundary(end) {
-        return false;
-    }
-    if s[ix..end].is_ascii() {
-        return s[ix..end].eq_ignore_ascii_case(literal);
-    }
-
-    // text captured and being backreferenced is not ascii, so we utilize regex-automata's case insensitive matching
-    use regex_syntax::ast::*;
-    let span = Span::splat(Position::new(0, 0, 0));
-    let literals = literal
-        .chars()
-        .map(|c| {
-            Ast::literal(Literal {
-                span,
-                kind: LiteralKind::Verbatim,
-                c,
-            })
-        })
-        .collect();
-    let ast = Ast::concat(Concat {
-        span,
-        asts: literals,
-    });
-
-    let mut translator = regex_syntax::hir::translate::TranslatorBuilder::new()
-        .case_insensitive(true)
-        .build();
-    let hir = translator.translate(literal, &ast).unwrap();
-
-    use regex_automata::meta::Builder as RaBuilder;
-    let re = RaBuilder::new()
-        .build_from_hir(&hir)
-        .expect("literal hir should get built successfully");
-    re.find(&s[ix..end]).is_some()
-}
-
-/// Helper function to store capture group positions from inner_slots into state.
-/// This is used by both Delegate and BackwardsDelegate instructions.
-#[inline]
-fn store_capture_groups(
-    state: &mut State,
-    inner_slots: &[Option<NonMaxUsize>],
-    range: CaptureGroupRange,
-) {
-    let start_group = range.start();
-    let end_group = range.end();
-    for i in 0..(end_group - start_group) {
-        let slot = (start_group + i) * 2;
-        if let Some(start) = inner_slots[(i + 1) * 2] {
-            let end = inner_slots[(i + 1) * 2 + 1].unwrap();
-            state.save(slot, start.get());
-            state.save(slot + 1, end.get());
-        } else {
-            state.save(slot, usize::MAX);
-            state.save(slot + 1, usize::MAX);
         }
     }
 }
@@ -969,12 +592,15 @@ pub(crate) fn run(
         pc = newpc;
         ix = newix;
     }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use quickcheck::{quickcheck, Arbitrary, Gen};
+
+    #[test]
+    fn state_push_pop() {
+}
 
     #[test]
     fn state_push_pop() {
