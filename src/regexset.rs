@@ -97,8 +97,9 @@
 //! at position `pos` with length `len`, the next match starts searching from
 //! `pos + max(1, len)`, which prevents infinite loops on zero-width matches.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
 
