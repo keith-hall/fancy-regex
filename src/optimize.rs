@@ -25,6 +25,7 @@ use crate::Expr;
 use crate::LookAround;
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec;
 use core::mem;
 
@@ -59,7 +60,7 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
 
             // extract the inner expression from the lookahead
             if let Expr::LookAround(inner, LookAround::LookAhead) = lookahead_expr {
-                let group0 = Expr::Group(Box::new(Expr::Concat(group0_children)));
+                let group0 = Expr::Group(Arc::new(Expr::Concat(group0_children)));
                 // compose new Concat: [Group0, lookahead inner expr]
                 let new_concat = Expr::Concat(vec![group0, *inner]);
                 tree.expr = new_concat;
@@ -69,7 +70,7 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
             }
         }
     } else if let Expr::LookAround(inner, LookAround::LookAhead) = &mut tree.expr {
-        let group0 = Expr::Group(Box::new(Expr::Empty));
+        let group0 = Expr::Group(Arc::new(Expr::Empty));
         let mut swap = Expr::Empty;
         mem::swap(&mut swap, inner);
         // compose new Concat: [Group0, lookahead inner expr]
@@ -83,6 +84,7 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
 mod tests {
     use super::optimize;
     use super::vec;
+    use super::Arc;
     use super::Box;
     use crate::parse::make_literal;
     use crate::Expr;
@@ -126,8 +128,8 @@ mod tests {
         assert_eq!(
             tree.expr,
             Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Concat(vec![
-                    Expr::Group(Box::new(make_literal("a"))),
+                Expr::Group(Arc::new(Expr::Concat(vec![
+                    Expr::Group(Arc::new(make_literal("a"))),
                     Expr::Backref {
                         group: 1,
                         casei: false

@@ -727,6 +727,7 @@ mod tests {
             named_groups: Default::default(),
             contains_subroutines: false,
             self_recursive: false,
+            capture_groups: Vec::new(),
         };
         let info = analyze(&tree, false).unwrap();
 
