@@ -144,3 +144,63 @@ After modularization:
 - Public API remains unchanged
 - Documentation builds correctly
 - Code is more maintainable and understandable
+
+## Example: VM Module Refactoring
+
+To demonstrate the approach, here's a concrete example of how `src/vm.rs` (1,167 lines) would be split:
+
+### Before (src/vm.rs)
+Single file containing:
+- Instruction definitions (Insn enum, Prog struct) ~320 lines
+- Execution engine (State struct, run functions) ~600 lines  
+- Helper functions (codepoint_len_at, matches_literal, store_capture_groups) ~100 lines
+- Tests ~100 lines
+
+### After (src/vm/)
+
+**src/vm/mod.rs** (~350 lines)
+```rust
+//! VM instruction definitions and program structure
+pub use helpers::{codepoint_len_at, matches_literal, store_capture_groups};
+pub use execution::{run, run_trace, run_default};
+
+mod helpers;
+mod execution;
+
+pub enum Insn { /* ... */ }
+pub struct Prog { /* ... */ }
+pub struct Delegate { /* ... */ }
+pub struct CaptureGroupRange { /* ... */ }
+```
+
+**src/vm/execution.rs** (~600 lines)
+```rust
+//! VM execution engine and state management
+use super::{Insn, Prog, CaptureGroupRange};
+use crate::helpers::*;
+
+struct State { /* ... */ }
+pub(crate) fn run(...) -> Result<...> { /* ... */ }
+```
+
+**src/vm/helpers.rs** (~100 lines)
+```rust
+//! Helper functions for string matching and capture group management
+pub(super) fn codepoint_len_at(...) -> usize { /* ... */ }
+pub(super) fn matches_literal(...) -> bool { /* ... */ }
+pub(super) fn store_capture_groups(...) { /* ... */ }
+```
+
+### Benefits of This Split
+
+1. **Clear Responsibilities**: Each file has a single, focused purpose
+2. **Easier Navigation**: Want to modify execution logic? Go to `execution.rs`. Need to understand instructions? Check `mod.rs`.
+3. **Better Encapsulation**: Helper functions are marked `pub(super)`, making it clear they're internal
+4. **Improved Testing**: Each module can have its own test module
+5. **Reduced Cognitive Load**: Smaller files are easier to understand and modify
+
+## Conclusion
+
+This modularization strategy provides a clear path forward for improving the codebase's maintainability. The approach is conservative, preserving the public API while improving internal organization. Each phase can be implemented independently, allowing for incremental progress and validation.
+
+The key is to balance the benefits of modularization (easier navigation, clearer boundaries) against the costs (more files, potential import complexity). The proposed structure aims for this balance by creating modules at natural conceptual boundaries.
