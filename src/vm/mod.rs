@@ -72,6 +72,7 @@
 use alloc::string::String;
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use regex_automata::meta::Regex;
 
 #[cfg(feature = "variable-lookbehinds")]

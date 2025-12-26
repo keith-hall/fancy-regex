@@ -21,6 +21,7 @@
 //! Compilation of regexes to VM.
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 

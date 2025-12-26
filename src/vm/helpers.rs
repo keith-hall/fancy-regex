@@ -23,7 +23,8 @@
 use crate::codepoint_len;
 use regex_automata::util::primitives::NonMaxUsize;
 
-use super::{CaptureGroupRange, State};
+use super::execution::State;
+use super::CaptureGroupRange;
 
 pub(super) fn codepoint_len_at(s: &str, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
