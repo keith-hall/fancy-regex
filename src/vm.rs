@@ -69,12 +69,12 @@
 //! 5. We continue with the previously saved thread at PC 4 and IX 0 (backtracking)
 //! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
 
-use alloc::collections::BTreeSet;
 use alloc::string::String;
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
-use alloc::vec;
 use alloc::vec::Vec;
+use core::iter::FromIterator;
+use im::Vector;
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
@@ -341,25 +341,15 @@ impl Prog {
 struct Branch {
     pc: usize,
     ix: usize,
-    nsave: usize,
-}
-
-#[derive(Debug)]
-struct Save {
-    slot: usize,
-    value: usize,
+    saves: Vector<usize>,
 }
 
 struct State {
     /// Saved values indexed by slot. Mostly indices to s, but can be repeat values etc.
-    /// Always contains the saves of the current state.
-    saves: Vec<usize>,
+    /// Uses a persistent vector that efficiently shares structure across snapshots.
+    saves: Vector<usize>,
     /// Stack of backtrack branches.
     stack: Vec<Branch>,
-    /// Old saves (slot, value)
-    oldsave: Vec<Save>,
-    /// Number of saves at the end of `oldsave` that need to be restored to `saves` on pop
-    nsave: usize,
     explicit_sp: usize,
     /// Maximum size of the stack. If the size would be exceeded during execution, a `StackOverflow`
     /// error is raised.
@@ -370,19 +360,17 @@ struct State {
 
 // Each element in the stack conceptually represents the entire state
 // of the machine: the pc (index into prog), the index into the
-// string, and the entire vector of saves. However, copying the save
-// vector on every push/pop would be inefficient, so instead we use a
-// copy-on-write approach for each slot within the save vector. The
-// top `nsave` elements in `oldsave` represent the delta from the
-// current machine state to the top of stack.
+// string, and the entire vector of saves. We use im::Vector which is
+// a persistent data structure that provides efficient copy-on-write
+// semantics through structural sharing. When we clone the vector, most
+// of the data is shared between the original and the clone, making
+// push/pop operations efficient.
 
 impl State {
     fn new(n_saves: usize, max_stack: usize, options: u32) -> State {
         State {
-            saves: vec![usize::MAX; n_saves],
+            saves: Vector::from_iter(core::iter::repeat(usize::MAX).take(n_saves)),
             stack: Vec::new(),
-            oldsave: Vec::new(),
-            nsave: 0,
             explicit_sp: n_saves,
             max_stack,
             options,
@@ -392,9 +380,12 @@ impl State {
     // push a backtrack branch
     fn push(&mut self, pc: usize, ix: usize) -> Result<()> {
         if self.stack.len() < self.max_stack {
-            let nsave = self.nsave;
-            self.stack.push(Branch { pc, ix, nsave });
-            self.nsave = 0;
+            // Clone the saves vector - this is cheap due to structural sharing in im::Vector
+            self.stack.push(Branch {
+                pc,
+                ix,
+                saves: self.saves.clone(),
+            });
             self.trace_stack("push");
             Ok(())
         } else {
@@ -404,31 +395,14 @@ impl State {
 
     // pop a backtrack branch
     fn pop(&mut self) -> (usize, usize) {
-        for _ in 0..self.nsave {
-            let Save { slot, value } = self.oldsave.pop().unwrap();
-            self.saves[slot] = value;
-        }
-        let Branch { pc, ix, nsave } = self.stack.pop().unwrap();
-        self.nsave = nsave;
+        let Branch { pc, ix, saves } = self.stack.pop().unwrap();
+        self.saves = saves;
         self.trace_stack("pop");
         (pc, ix)
     }
 
     fn save(&mut self, slot: usize, val: usize) {
-        for i in 0..self.nsave {
-            // could avoid this iteration with some overhead; worth it?
-            if self.oldsave[self.oldsave.len() - i - 1].slot == slot {
-                // already saved, just update
-                self.saves[slot] = val;
-                return;
-            }
-        }
-        self.oldsave.push(Save {
-            slot,
-            value: self.saves[slot],
-        });
-        self.nsave += 1;
-        self.saves[slot] = val;
+        self.saves.set(slot, val);
 
         #[cfg(feature = "std")]
         if self.options & OPTION_TRACE != 0 {
@@ -444,12 +418,12 @@ impl State {
     // the explicit stack is saved and restored on backtrack.
     fn stack_push(&mut self, val: usize) {
         if self.saves.len() == self.explicit_sp {
-            self.saves.push(self.explicit_sp + 1);
+            self.saves.push_back(self.explicit_sp + 1);
         }
         let explicit_sp = self.explicit_sp;
         let sp = self.get(explicit_sp);
         if self.saves.len() == sp {
-            self.saves.push(val);
+            self.saves.push_back(val);
         } else {
             self.save(sp, val);
         }
@@ -475,42 +449,10 @@ impl State {
     /// What we want:
     /// * Keep the current `saves` as they are
     /// * Only keep `count` backtrack branches on `stack`, discard the rest
-    /// * Keep the first `oldsave` for each slot, discard the rest (multiple pushes might have
-    ///   happened with saves to the same slot)
     fn backtrack_cut(&mut self, count: usize) {
-        if self.stack.len() == count {
-            // no backtrack branches to discard, all good
-            return;
-        }
-        // start and end indexes of old saves for the branch we're cutting to
-        let (oldsave_start, oldsave_end) = {
-            let mut end = self.oldsave.len() - self.nsave;
-            for &Branch { nsave, .. } in &self.stack[count + 1..] {
-                end -= nsave;
-            }
-            let start = end - self.stack[count].nsave;
-            (start, end)
-        };
-        let mut saved = BTreeSet::new();
-        // keep all the old saves of our branch (they're all for different slots)
-        for &Save { slot, .. } in &self.oldsave[oldsave_start..oldsave_end] {
-            saved.insert(slot);
-        }
-        let mut oldsave_ix = oldsave_end;
-        // for other old saves, keep them only if they're for a slot that we haven't saved yet
-        for ix in oldsave_end..self.oldsave.len() {
-            let Save { slot, .. } = self.oldsave[ix];
-            let new_slot = saved.insert(slot);
-            if new_slot {
-                // put the save we want to keep (ix) after the ones we already have (oldsave_ix)
-                // note that it's fine if the indexes are the same (then swapping is a no-op)
-                self.oldsave.swap(oldsave_ix, ix);
-                oldsave_ix += 1;
-            }
-        }
+        // With im::Vector, we simply truncate the stack. The current saves are
+        // already what we want to keep, and we don't need complex delta tracking.
         self.stack.truncate(count);
-        self.oldsave.truncate(oldsave_ix);
-        self.nsave = oldsave_ix - oldsave_start;
     }
 
     #[inline]
@@ -655,7 +597,8 @@ pub(crate) fn run(
                             state.save(0, slot1);
                         }
                     }
-                    return Ok(Some(state.saves));
+                    // Convert im::Vector to Vec for return
+                    return Ok(Some(state.saves.iter().copied().collect()));
                 }
                 Insn::Any => {
                     if ix < s.len() {
