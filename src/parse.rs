@@ -47,6 +47,10 @@ pub struct ExprTree {
     #[allow(dead_code)]
     pub(crate) contains_subroutines: bool,
     pub(crate) self_recursive: bool,
+    /// Map from capture group number to the Group Expr
+    /// Index 0 represents the implicit whole-pattern group (the root expr)
+    /// Index 1+ represent explicit capture groups
+    pub(crate) capture_groups: Vec<Arc<Expr>>,
 }
 
 #[derive(Debug)]
@@ -60,6 +64,8 @@ pub(crate) struct Parser<'a> {
     contains_subroutines: bool,
     has_unresolved_subroutines: bool,
     self_recursive: bool,
+    /// Map from capture group number to the Group Expr, built during parsing
+    capture_groups: Vec<Arc<Expr>>,
 }
 
 struct NamedBackrefOrSubroutine<'a> {
@@ -85,12 +91,22 @@ impl<'a> Parser<'a> {
             p.resolve_named_subroutine_calls(&mut expr);
         }
 
+        // Store the root expression as group 0 in capture_groups
+        let mut capture_groups = p.capture_groups;
+        // Ensure there's space for group 0
+        if capture_groups.is_empty() {
+            capture_groups.push(Arc::new(expr.clone()));
+        } else {
+            capture_groups[0] = Arc::new(expr.clone());
+        }
+
         Ok(ExprTree {
             expr,
             backrefs: p.backrefs,
             named_groups: p.named_groups,
             contains_subroutines: p.contains_subroutines,
             self_recursive: p.self_recursive,
+            capture_groups,
         })
     }
 
@@ -111,6 +127,7 @@ impl<'a> Parser<'a> {
             contains_subroutines: false,
             has_unresolved_subroutines: false,
             self_recursive: false,
+            capture_groups: Vec::new(),
         }
     }
 
@@ -857,17 +874,18 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::RecursionExceeded));
         }
         let ix = self.optional_whitespace(ix + 1)?;
-        let (la, skip) = if self.re[ix..].starts_with("?=") {
-            (Some(LookAhead), 2)
+        let (la, skip, group_num) = if self.re[ix..].starts_with("?=") {
+            (Some(LookAhead), 2, None)
         } else if self.re[ix..].starts_with("?!") {
-            (Some(LookAheadNeg), 2)
+            (Some(LookAheadNeg), 2, None)
         } else if self.re[ix..].starts_with("?<=") {
-            (Some(LookBehind), 3)
+            (Some(LookBehind), 3, None)
         } else if self.re[ix..].starts_with("?<!") {
-            (Some(LookBehindNeg), 3)
+            (Some(LookBehindNeg), 3, None)
         } else if self.re[ix..].starts_with("?<") || self.re[ix..].starts_with("?'") {
             // Named capture group using Oniguruma syntax: (?<name>...) or (?'name'...)
             self.curr_group += 1;
+            let group_num = self.curr_group;
             let (open, close) = if self.re[ix..].starts_with("?<") {
                 ("<", ">")
             } else {
@@ -880,13 +898,14 @@ impl<'a> Parser<'a> {
             }) = parse_id(&self.re[ix + 1..], open, close, false)
             {
                 self.named_groups.insert(id.to_string(), self.curr_group);
-                (None, skip + 1)
+                (None, skip + 1, Some(group_num))
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
             }
         } else if self.re[ix..].starts_with("?P<") {
             // Named capture group using Python syntax: (?P<name>...)
             self.curr_group += 1; // this is a capture group
+            let group_num = self.curr_group;
             if let Some(ParsedId {
                 id,
                 relative: None,
@@ -894,7 +913,7 @@ impl<'a> Parser<'a> {
             }) = parse_id(&self.re[ix + 2..], "<", ">", false)
             {
                 self.named_groups.insert(id.to_string(), self.curr_group);
-                (None, skip + 2)
+                (None, skip + 2, Some(group_num))
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
             }
@@ -902,7 +921,7 @@ impl<'a> Parser<'a> {
             // Backref using Python syntax: (?P=name)
             return self.parse_named_backref(ix + 3, "", ")", false);
         } else if self.re[ix..].starts_with("?>") {
-            (None, 2)
+            (None, 2, None)
         } else if self.re[ix..].starts_with("?(") {
             return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with("?P>") {
@@ -913,7 +932,8 @@ impl<'a> Parser<'a> {
             return self.parse_flags(ix, depth);
         } else {
             self.curr_group += 1; // this is a capture group
-            (None, 0)
+            let group_num = self.curr_group;
+            (None, 0, Some(group_num))
         };
         let ix = ix + skip;
         let (ix, child) = self.parse_re(ix, depth)?;
@@ -921,7 +941,21 @@ impl<'a> Parser<'a> {
         let result = match (la, skip) {
             (Some(la), _) => Expr::LookAround(Box::new(child), la),
             (None, 2) => Expr::AtomicGroup(Box::new(child)),
-            _ => Expr::Group(Arc::new(child)),
+            _ => {
+                // This is a capturing group
+                let group_expr = Arc::new(child);
+
+                // Store in capture_groups vector if this is a capturing group
+                if let Some(gnum) = group_num {
+                    // Ensure the vector has enough capacity
+                    if self.capture_groups.len() <= gnum {
+                        self.capture_groups.resize(gnum + 1, Arc::new(Expr::Empty));
+                    }
+                    self.capture_groups[gnum] = Arc::clone(&group_expr);
+                }
+
+                Expr::Group(group_expr)
+            }
         };
         Ok((ix, result))
     }
@@ -3127,5 +3161,88 @@ mod tests {
             "(*RANDOM)",
             "Parsing error at position 1: Target of repeat operator is invalid",
         );
+    }
+
+    #[test]
+    fn capture_group_map_basic() {
+        // Test with single group
+        let tree = Expr::parse_tree("(a)").unwrap();
+        assert_eq!(tree.capture_groups.len(), 2); // group 0 (root) + group 1
+
+        // Test group 0 is the root
+        match &tree.capture_groups[0].as_ref() {
+            Expr::Group(_) => {}
+            _ => panic!("Group 0 should be the root expression"),
+        }
+
+        // Test group 1 is the first capture group
+        match &tree.capture_groups[1].as_ref() {
+            Expr::Literal { val, .. } if val == "a" => {}
+            _ => panic!("Group 1 should contain literal 'a'"),
+        }
+    }
+
+    #[test]
+    fn capture_group_map_multiple_groups() {
+        // Test with multiple groups: (a)(b)(c)
+        let tree = Expr::parse_tree("(a)(b)(c)").unwrap();
+        assert_eq!(tree.capture_groups.len(), 4); // group 0 + groups 1, 2, 3
+
+        // Verify each group contains the expected literal
+        match &tree.capture_groups[1].as_ref() {
+            Expr::Literal { val, .. } if val == "a" => {}
+            _ => panic!("Group 1 should contain literal 'a'"),
+        }
+        match &tree.capture_groups[2].as_ref() {
+            Expr::Literal { val, .. } if val == "b" => {}
+            _ => panic!("Group 2 should contain literal 'b'"),
+        }
+        match &tree.capture_groups[3].as_ref() {
+            Expr::Literal { val, .. } if val == "c" => {}
+            _ => panic!("Group 3 should contain literal 'c'"),
+        }
+    }
+
+    #[test]
+    fn capture_group_map_nested_groups() {
+        // Test with nested groups: ((a))
+        let tree = Expr::parse_tree("((a))").unwrap();
+        assert_eq!(tree.capture_groups.len(), 3); // group 0 + groups 1, 2
+
+        // Group 1 contains the expression inside the outer group, which is another Group
+        // The capture_groups vector stores the *child* of each Group
+        // For the outer group ((a)), the child is the inner Group expression (a)
+        match &tree.capture_groups[1].as_ref() {
+            Expr::Group(_) => {}
+            other => panic!("Group 1 should contain another Group, got: {:?}", other),
+        }
+
+        // Group 2 contains the expression inside the inner group, which is the literal
+        match &tree.capture_groups[2].as_ref() {
+            Expr::Literal { val, .. } if val == "a" => {}
+            other => panic!("Group 2 should contain literal 'a', got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn capture_group_map_named_groups() {
+        // Test with named groups: (?<first>a)(?<second>b)
+        let tree = Expr::parse_tree("(?<first>a)(?<second>b)").unwrap();
+        assert_eq!(tree.capture_groups.len(), 3); // group 0 + groups 1, 2
+        assert_eq!(tree.named_groups.get("first"), Some(&1));
+        assert_eq!(tree.named_groups.get("second"), Some(&2));
+    }
+
+    #[test]
+    fn capture_group_map_with_non_capturing_groups() {
+        // Test that non-capturing groups don't appear in the map: (?:a)(b)
+        let tree = Expr::parse_tree("(?:a)(b)").unwrap();
+        assert_eq!(tree.capture_groups.len(), 2); // group 0 + group 1 only
+
+        // Group 1 should be the capturing group with 'b'
+        match &tree.capture_groups[1].as_ref() {
+            Expr::Literal { val, .. } if val == "b" => {}
+            _ => panic!("Group 1 should contain literal 'b'"),
+        }
     }
 }
