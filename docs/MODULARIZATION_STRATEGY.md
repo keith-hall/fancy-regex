@@ -334,7 +334,7 @@ pub(super) trait SaveState {
 }
 ```
 
-**Note**: The function names `run_trace` and `run_default` are actual functions in the current `vm.rs` file (see lines 606 and 611).
+**Note**: The function names `run_trace` and `run_default` are actual functions in the current `vm.rs` file (lines 606 and 611 respectively).
 
 ### Benefits of This Split
 
