@@ -291,7 +291,7 @@ impl<'a> Analyzer<'a> {
                 if !self.inside_zero_rep || self.current_group != 0 {
                     self.subroutine_calls
                         .entry(self.current_group)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(SubroutineCallInfo {
                             target_group,
                             min_pos: min_pos_in_group,
@@ -491,7 +491,7 @@ impl<'a> Analyzer<'a> {
                 if !inside_zero_rep || current_group != 0 {
                     self.subroutine_calls
                         .entry(current_group)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(SubroutineCallInfo {
                             target_group: *target_group,
                             min_pos: min_pos_in_group,
@@ -571,14 +571,14 @@ impl<'a> Analyzer<'a> {
         if let Some(calls) = self.subroutine_calls.get(&group) {
             for call_info in calls {
                 // Only consider calls at position 0 (potential left recursion)
-                if call_info.min_pos == 0 {
-                    if self.dfs_check_left_recursion(
+                if call_info.min_pos == 0
+                    && self.dfs_check_left_recursion(
                         call_info.target_group,
                         visited,
                         recursion_stack,
-                    )? {
-                        return Ok(true);
-                    }
+                    )?
+                {
+                    return Ok(true);
                 }
             }
         }
