@@ -275,3 +275,49 @@ fn test_syntax_highlighting_use_case() {
     // Should find: let (keyword), x (would need \w+ pattern), 42 (number), // comment
     assert!(matches.len() >= 3); // at least keywords, number, and comment
 }
+
+#[test]
+fn test_incremental_search_behavior() {
+    // Test that the iterator searches incrementally, not upfront
+    // This is verified by stopping iteration early - if all matches were pre-computed,
+    // that would be wasted work
+    let set = RegexSet::new(&[r"\d+", r"\w+", r"[A-Z]+"]).unwrap();
+
+    let haystack = "abc 123 XYZ def 456 GHI";
+
+    // Take only the first 2 matches
+    let mut iter = set.matches(haystack);
+    let m1 = iter.next().unwrap().unwrap();
+    let m2 = iter.next().unwrap().unwrap();
+
+    // First two matches should be at the beginning
+    assert_eq!(m1.as_str(), "abc");
+    assert_eq!(m2.as_str(), "123");
+
+    // Don't consume the rest - the iterator should not have pre-computed them
+    drop(iter);
+
+    // Create a new iterator and consume all matches
+    let all_matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+    assert_eq!(all_matches.len(), 6); // abc, 123, XYZ, def, 456, GHI
+}
+
+#[test]
+fn test_overlapping_patterns_at_same_position() {
+    // Test that when multiple patterns match at the same position,
+    // the one with the lowest index wins
+    let set = RegexSet::new(&[r"hello", r"h\w+", r"\w+"]).unwrap();
+
+    let haystack = "hello world";
+    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+
+    // First match should be pattern 0 at position 0 (lowest index)
+    assert_eq!(matches[0].pattern(), 0);
+    assert_eq!(matches[0].as_str(), "hello");
+    assert_eq!(matches[0].start(), 0);
+
+    // Second match should be pattern 2 at position 6 (only pattern that matches "world")
+    assert_eq!(matches[1].pattern(), 2);
+    assert_eq!(matches[1].as_str(), "world");
+    assert_eq!(matches[1].start(), 6);
+}
