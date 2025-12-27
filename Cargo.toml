@@ -47,6 +47,10 @@ regex = "1.10"
 name = "regexset_syntax_highlighting"
 required-features = ["regex-set"]
 
+[[test]]
+name = "regexset"
+required-features = ["regex-set"]
+
 [[bench]]
 name = "bench"
 harness = false
