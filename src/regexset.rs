@@ -655,6 +655,7 @@ impl<'h> RegexSetMatch<'h> {
 ///   * Only consuming a few matches from a large input
 ///   * The input contains many matches but you only need the first few
 ///   * Processing input line-by-line (e.g., syntax highlighting)
+#[derive(Debug)]
 pub struct RegexSetMatches<'h> {
     set: &'h RegexSet,
     haystack: &'h str,
@@ -666,20 +667,6 @@ pub struct RegexSetMatches<'h> {
     hard_cache: Vec<Option<(Range<usize>, Captures<'h>)>>,
     // Reusable PatternSet for which_overlapping_matches
     pattern_set: Option<PatternSet>,
-}
-
-impl<'h> core::fmt::Debug for RegexSetMatches<'h> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("RegexSetMatches")
-            .field("set", &self.set)
-            .field("haystack", &self.haystack)
-            .field("range", &self.range)
-            .field("current_pos", &self.current_pos)
-            .field("easy_next_match", &self.easy_next_match)
-            .field("hard_cache", &self.hard_cache)
-            .field("pattern_set", &self.pattern_set)
-            .finish()
-    }
 }
 
 impl<'h> Iterator for RegexSetMatches<'h> {
@@ -924,7 +911,7 @@ impl<'h> RegexSetMatches<'h> {
         ))
     }
 
-    #[cfg_attr(feature = "std", allow(dead_code))]
+    #[cfg(not(feature = "std"))]
     fn search_hard_pattern(
         &self,
         _index: usize,
@@ -1011,8 +998,12 @@ impl<'h> RegexSetMatches<'h> {
                     .collect();
 
                 // Collect results from all threads
-                // unwrap() is safe here: if a thread panics, we want to propagate
-                // the panic as pattern evaluation should not silently fail
+                // SAFETY: unwrap() here will panic if any worker thread panics.
+                // This is intentional - if pattern evaluation panics, we want to
+                // propagate the panic to maintain the invariant that regex matching
+                // should be infallible (modulo explicit Result for backtrack limits).
+                // Pattern panics indicate bugs in the VM or pattern compilation that
+                // should not be silently ignored.
                 handles
                     .into_iter()
                     .map(|h| h.join().unwrap())

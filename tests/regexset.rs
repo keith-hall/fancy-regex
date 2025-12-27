@@ -330,12 +330,7 @@ fn test_thread_limiting() {
     // results are correct regardless of the thread limit
     for max_threads in [1, 2, 4, 8] {
         let set = RegexSetBuilder::new(&[
-            r"(?=a)a",
-            r"(?=b)b",
-            r"(?=c)c",
-            r"(?=d)d",
-            r"(?=e)e",
-            r"(?=f)f",
+            r"(?=a)a", r"(?=b)b", r"(?=c)c", r"(?=d)d", r"(?=e)e", r"(?=f)f",
         ])
         .max_concurrent_threads(Some(max_threads))
         .build()
