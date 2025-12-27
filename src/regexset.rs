@@ -629,6 +629,18 @@ impl<'h> RegexSetMatch<'h> {
 ///
 /// When multiple patterns match at the same position, the pattern with the
 /// lowest index (specified first in the constructor) is returned.
+///
+/// # Performance
+///
+/// The iterator uses an incremental search strategy for easy patterns:
+/// - Finds the next match lazily using `dfa.find()` only when needed
+/// - Uses `which_overlapping_matches()` to efficiently determine which patterns
+///   match at a given position
+/// - Only extracts capture groups for the selected pattern
+/// - Avoids pre-computing all matches upfront, making it efficient when:
+///   * Only consuming a few matches from a large input
+///   * The input contains many matches but you only need the first few
+///   * Processing input line-by-line (e.g., syntax highlighting)
 #[derive(Debug)]
 pub struct RegexSetMatches<'h> {
     set: &'h RegexSet,
@@ -636,7 +648,8 @@ pub struct RegexSetMatches<'h> {
     range: Range<usize>,
     current_pos: usize,
     // For easy patterns: cache next match position (if found)
-    easy_next_match: Option<(usize, Range<usize>)>, // (pattern_idx, range)
+    // Stores (pattern_idx, range) for the next match found by dfa.find()
+    easy_next_match: Option<(usize, Range<usize>)>,
     hard_cache: Vec<Option<(Range<usize>, Captures<'h>)>>,
 }
 
@@ -757,7 +770,15 @@ impl<'h> Iterator for RegexSetMatches<'h> {
 
 impl<'h> RegexSetMatches<'h> {
     /// Find the best match among easy patterns at a specific position.
-    /// At the given position, checks which patterns match and returns the one with lowest index.
+    ///
+    /// This method efficiently determines which pattern should match at the given position:
+    /// 1. Uses `which_overlapping_matches()` to find all patterns that match at `pos`
+    /// 2. Selects the pattern with the lowest index (highest priority)
+    /// 3. Reuses the cached match range if available, otherwise searches for it
+    /// 4. Extracts capture groups only for the selected pattern
+    ///
+    /// This approach is more efficient than extracting captures for all matching patterns
+    /// upfront, especially when there are many patterns and many matches in the input.
     fn find_easy_match_at_position(
         &self,
         pos: usize,
