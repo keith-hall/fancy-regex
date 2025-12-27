@@ -142,7 +142,7 @@ pub struct RegexSetBuilder {
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
-    #[allow(dead_code)]
+    oniguruma_mode: bool,
     max_concurrent_threads: Option<usize>,
 }
 
@@ -171,6 +171,7 @@ impl RegexSetBuilder {
             backtrack_limit: 1_000_000,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
+            oniguruma_mode: false,
             max_concurrent_threads: None,
         }
     }
@@ -223,6 +224,15 @@ impl RegexSetBuilder {
         self
     }
 
+    /// Enable Oniguruma compatibility mode for all patterns in the set.
+    ///
+    /// When enabled, this changes the behavior of certain regex features to match
+    /// Oniguruma's behavior more closely.
+    pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
+        self.oniguruma_mode = yes;
+        self
+    }
+
     /// Set maximum number of concurrent threads for hard pattern evaluation.
     /// Only applies when the `std` feature is enabled.
     ///
@@ -255,9 +265,11 @@ impl RegexSetBuilder {
         let mut easy_pattern_infos = Vec::new();
         let mut hard_patterns = Vec::new();
 
+        // Compute flags once before the loop
+        let flags = self.compute_flags();
+
         // Parse, analyze, and classify each pattern
         for (index, pattern) in self.patterns.iter().enumerate() {
-            let flags = self.compute_flags();
             let mut expr_tree = Expr::parse_tree_with_flags(pattern, flags)?;
 
             // Try to optimize the expression tree
@@ -273,7 +285,7 @@ impl RegexSetBuilder {
                     backtrack_limit: self.backtrack_limit,
                     delegate_size_limit: self.delegate_size_limit,
                     delegate_dfa_size_limit: self.delegate_dfa_size_limit,
-                    oniguruma_mode: false,
+                    oniguruma_mode: self.oniguruma_mode,
                 };
                 hard_patterns.push(HardPattern {
                     pattern_id: index,
@@ -357,8 +369,13 @@ impl RegexSetBuilder {
         } else {
             0
         };
+        let oniguruma_mode = if self.oniguruma_mode {
+            FLAG_ONIGURUMA_MODE
+        } else {
+            0
+        };
 
-        insensitive | multiline | whitespace | dotnl | unicode
+        insensitive | multiline | whitespace | dotnl | unicode | oniguruma_mode
     }
 }
 

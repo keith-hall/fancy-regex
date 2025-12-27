@@ -228,6 +228,7 @@ mod expand;
 mod optimize;
 mod parse;
 mod parse_flags;
+#[cfg(feature = "regex-set")]
 mod regexset;
 mod replacer;
 mod vm;
@@ -242,6 +243,7 @@ use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
+#[cfg(feature = "regex-set")]
 pub use crate::regexset::{RegexSet, RegexSetBuilder, RegexSetMatch, RegexSetMatches};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 
@@ -1480,6 +1482,7 @@ impl<'t> Captures<'t> {
     }
 
     /// Internal helper to create Captures from regex-automata captures
+    #[cfg(feature = "regex-set")]
     pub(crate) fn from_regex_automata(
         text: &'t str,
         locations: RaCaptures,
@@ -1497,6 +1500,7 @@ impl<'t> Captures<'t> {
     }
 
     /// Internal helper to create Captures from VM saves
+    #[cfg(feature = "regex-set")]
     pub(crate) fn from_saves(
         text: &'t str,
         saves: Vec<usize>,
