@@ -106,7 +106,7 @@ use core::ops::Range;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 use regex_automata::util::syntax::Config as SyntaxConfig;
-use regex_automata::Anchored;
+use regex_automata::{Anchored, PatternSet};
 use regex_automata::Input as RaInput;
 
 use crate::analyze::{analyze, can_compile_as_anchored};
@@ -541,7 +541,7 @@ impl RegexSet {
             haystack,
             range: range.clone(),
             current_pos: range.start,
-            easy_cache: None,
+            easy_next_match: None,
             hard_cache: Vec::new(),
         }
     }
@@ -635,7 +635,8 @@ pub struct RegexSetMatches<'h> {
     haystack: &'h str,
     range: Range<usize>,
     current_pos: usize,
-    easy_cache: Option<Vec<(usize, Range<usize>, Captures<'h>)>>,
+    // For easy patterns: cache next match position (if found)
+    easy_next_match: Option<(usize, Range<usize>)>, // (pattern_idx, range)
     hard_cache: Vec<Option<(Range<usize>, Captures<'h>)>>,
 }
 
@@ -652,14 +653,6 @@ impl<'h> Iterator for RegexSetMatches<'h> {
             return None;
         }
 
-        // Search easy patterns if we haven't yet
-        if self.easy_cache.is_none() {
-            match self.search_easy_patterns() {
-                Ok(()) => {}
-                Err(e) => return Some(Err(e)),
-            }
-        }
-
         // Search hard patterns if we haven't cached them
         if self.hard_cache.is_empty() && !self.set.inner.hard_patterns.is_empty() {
             self.hard_cache = vec![None; self.set.inner.hard_patterns.len()];
@@ -669,28 +662,41 @@ impl<'h> Iterator for RegexSetMatches<'h> {
         loop {
             let mut earliest_match: Option<(usize, usize, RegexSetMatch<'h>)> = None;
 
-            // Check easy patterns cache
-            if let Some(ref cache) = self.easy_cache {
-                for (pattern_id, range, captures) in cache {
-                    if range.start >= self.current_pos {
-                        let key = (range.start, *pattern_id);
-                        if earliest_match.is_none()
-                            || key
-                                < (
-                                    earliest_match.as_ref().unwrap().0,
-                                    earliest_match.as_ref().unwrap().1,
-                                )
-                        {
-                            earliest_match = Some((
-                                range.start,
-                                *pattern_id,
-                                RegexSetMatch {
-                                    pattern_index: *pattern_id,
-                                    captures: captures.clone(),
-                                },
-                            ));
-                        }
+            // Search for next easy pattern match if we don't have one cached
+            if self.easy_next_match.is_none() {
+                if let Some(ref easy_set) = self.set.inner.easy_patterns {
+                    let input = RaInput::new(self.haystack)
+                        .range(self.range.clone())
+                        .span(self.current_pos..self.range.end);
+                    
+                    // Find the next match from current position
+                    if let Some(mat) = easy_set.dfa.find(input) {
+                        let pattern_idx = mat.pattern().as_usize();
+                        let range = mat.start()..mat.end();
+                        self.easy_next_match = Some((pattern_idx, range));
                     }
+                }
+            }
+
+            // Check if easy pattern match is at or after current position
+            if let Some((_pattern_idx, ref range)) = self.easy_next_match {
+                if range.start >= self.current_pos {
+                    // Need to check which patterns match at this position
+                    match self.find_easy_match_at_position(range.start) {
+                        Ok(Some(m)) => {
+                            earliest_match = Some((m.start(), m.pattern(), m));
+                        }
+                        Ok(None) => {
+                            // No match found, invalidate cache and try again
+                            self.easy_next_match = None;
+                            continue;
+                        }
+                        Err(e) => return Some(Err(e)),
+                    }
+                } else {
+                    // This match is behind us, invalidate it and search again
+                    self.easy_next_match = None;
+                    continue;
                 }
             }
 
@@ -750,33 +756,49 @@ impl<'h> Iterator for RegexSetMatches<'h> {
 }
 
 impl<'h> RegexSetMatches<'h> {
-    fn search_easy_patterns(&mut self) -> Result<()> {
-        let mut cache = Vec::new();
-
+    /// Find the best match among easy patterns at a specific position.
+    /// At the given position, checks which patterns match and returns the one with lowest index.
+    fn find_easy_match_at_position(&self, pos: usize) -> Result<Option<RegexSetMatch<'h>>> {
         if let Some(ref easy_set) = self.set.inner.easy_patterns {
-            let input = RaInput::new(self.haystack).range(self.range.clone());
-
-            // Find all matches from the DFA
-            let mut matches: Vec<(usize, Range<usize>)> = Vec::new();
-            for mat in easy_set.dfa.find_iter(input) {
-                let pattern_idx = mat.pattern().as_usize();
-                let range = mat.start()..mat.end();
-                matches.push((pattern_idx, range));
-            }
-
-            // Sort by position, then by pattern index for priority
-            matches.sort_by_key(|(pattern_idx, range)| (range.start, *pattern_idx));
-
-            // Extract captures for each match
-            for (pattern_idx, range) in matches {
+            // Use which_overlapping_matches to find all patterns that match starting at pos
+            let input = RaInput::new(self.haystack)
+                .range(self.range.clone())
+                .span(pos..self.range.end);
+            
+            let mut pattern_set = PatternSet::new(easy_set.patterns.len());
+            easy_set.dfa.which_overlapping_matches(&input, &mut pattern_set);
+            
+            // Find the pattern with the lowest index that matches at this position
+            if let Some(pattern_id) = pattern_set.iter().next() {
+                let pattern_idx = pattern_id.as_usize();
                 let pattern_info = &easy_set.patterns[pattern_idx];
-                let captures = self.extract_easy_captures(pattern_info, &range)?;
-                cache.push((pattern_info.pattern_id, range, captures));
+                
+                // Now we need to find the actual match range for this specific pattern
+                // We can use the DFA but filter to just this pattern's matches
+                let search_input = RaInput::new(self.haystack)
+                    .range(self.range.clone())
+                    .span(pos..self.range.end);
+                
+                // Search for this specific pattern
+                for mat in easy_set.dfa.find_iter(search_input) {
+                    if mat.pattern().as_usize() == pattern_idx && mat.start() == pos {
+                        let range = mat.start()..mat.end();
+                        let captures = self.extract_easy_captures(pattern_info, &range)?;
+                        
+                        return Ok(Some(RegexSetMatch {
+                            pattern_index: pattern_info.pattern_id,
+                            captures,
+                        }));
+                    }
+                    // If we found a match but it doesn't start at pos, we're done
+                    if mat.start() > pos {
+                        break;
+                    }
+                }
             }
         }
-
-        self.easy_cache = Some(cache);
-        Ok(())
+        
+        Ok(None)
     }
 
     fn extract_easy_captures(
@@ -832,9 +854,11 @@ impl<'h> RegexSetMatches<'h> {
     }
 
     fn invalidate_cache_before(&mut self, pos: usize) {
-        // Remove easy cache entries before pos
-        if let Some(ref mut cache) = self.easy_cache {
-            cache.retain(|(_, range, _)| range.start >= pos);
+        // Remove easy match if it's before pos
+        if let Some((_, ref range)) = self.easy_next_match {
+            if range.start < pos {
+                self.easy_next_match = None;
+            }
         }
 
         // Remove hard cache entries before pos
