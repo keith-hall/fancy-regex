@@ -228,6 +228,8 @@ mod expand;
 mod optimize;
 mod parse;
 mod parse_flags;
+#[cfg(feature = "regex-set")]
+mod regexset;
 mod replacer;
 mod vm;
 
@@ -241,6 +243,8 @@ use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
+#[cfg(feature = "regex-set")]
+pub use crate::regexset::{RegexSet, RegexSetBuilder, RegexSetMatch, RegexSetMatches};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 
 const MAX_RECURSION: usize = 64;
@@ -427,13 +431,13 @@ impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
 }
 
 /// A set of capture groups found for a regex.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Captures<'t> {
     inner: CapturesImpl<'t>,
     named_groups: Arc<NamedGroups>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum CapturesImpl<'t> {
     Wrap {
         text: &'t str,
@@ -1474,6 +1478,37 @@ impl<'t> Captures<'t> {
                     end: hi,
                 })
             }
+        }
+    }
+
+    /// Internal helper to create Captures from regex-automata captures
+    #[cfg(feature = "regex-set")]
+    pub(crate) fn from_regex_automata(
+        text: &'t str,
+        locations: RaCaptures,
+        explicit_capture_group_0: bool,
+        named_groups: Arc<NamedGroups>,
+    ) -> Self {
+        Captures {
+            inner: CapturesImpl::Wrap {
+                text,
+                locations,
+                explicit_capture_group_0,
+            },
+            named_groups,
+        }
+    }
+
+    /// Internal helper to create Captures from VM saves
+    #[cfg(feature = "regex-set")]
+    pub(crate) fn from_saves(
+        text: &'t str,
+        saves: Vec<usize>,
+        named_groups: Arc<NamedGroups>,
+    ) -> Self {
+        Captures {
+            inner: CapturesImpl::Fancy { text, saves },
+            named_groups,
         }
     }
 
