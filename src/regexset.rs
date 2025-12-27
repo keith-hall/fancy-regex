@@ -260,6 +260,11 @@ impl RegexSetBuilder {
                 let mut re_cooked = String::new();
                 expr_tree.expr.to_str(&mut re_cooked, 0);
                 let inner = crate::compile::compile_inner(&re_cooked, &self.options)?;
+                
+                // Also save for the multi-pattern DFA
+                easy_pattern_strings.push(re_cooked.clone());
+                easy_pattern_indices.push(index);
+                
                 Regex {
                     inner: crate::RegexImpl::Wrap {
                         inner,
@@ -268,7 +273,7 @@ impl RegexSetBuilder {
                             options: self.options.clone(),
                         },
                         explicit_capture_group_0: requires_capture_group_fixup,
-                        debug_pattern: re_cooked.clone(),
+                        debug_pattern: re_cooked,
                     },
                     named_groups: Arc::new(expr_tree.named_groups.clone()),
                 }
@@ -292,16 +297,6 @@ impl RegexSetBuilder {
                 pattern_id: index,
                 regex,
             });
-
-            // If it's an easy pattern, also add it to the multi-pattern DFA
-            if !is_hard {
-                // Re-parse to get the delegate string (we can't reuse re_cooked easily)
-                let expr_tree = Expr::parse_tree_with_flags(pattern_str, flags)?;
-                let mut delegate_str = String::new();
-                expr_tree.expr.to_str(&mut delegate_str, 0);
-                easy_pattern_strings.push(delegate_str);
-                easy_pattern_indices.push(index);
-            }
         }
 
         // Build multi-pattern DFA for easy patterns
