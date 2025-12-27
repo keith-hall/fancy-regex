@@ -106,8 +106,8 @@ use core::ops::Range;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 use regex_automata::util::syntax::Config as SyntaxConfig;
-use regex_automata::{Anchored, PatternSet};
 use regex_automata::Input as RaInput;
+use regex_automata::{Anchored, PatternSet};
 
 use crate::analyze::{analyze, can_compile_as_anchored};
 use crate::compile::compile;
@@ -668,7 +668,7 @@ impl<'h> Iterator for RegexSetMatches<'h> {
                     let input = RaInput::new(self.haystack)
                         .range(self.range.clone())
                         .span(self.current_pos..self.range.end);
-                    
+
                     // Find the next match from current position
                     if let Some(mat) = easy_set.dfa.find(input) {
                         let pattern_idx = mat.pattern().as_usize();
@@ -679,10 +679,10 @@ impl<'h> Iterator for RegexSetMatches<'h> {
             }
 
             // Check if easy pattern match is at or after current position
-            if let Some((_pattern_idx, ref range)) = self.easy_next_match {
+            if let Some((pattern_idx, ref range)) = self.easy_next_match {
                 if range.start >= self.current_pos {
                     // Need to check which patterns match at this position
-                    match self.find_easy_match_at_position(range.start) {
+                    match self.find_easy_match_at_position(range.start, pattern_idx, range) {
                         Ok(Some(m)) => {
                             earliest_match = Some((m.start(), m.pattern(), m));
                         }
@@ -758,46 +758,65 @@ impl<'h> Iterator for RegexSetMatches<'h> {
 impl<'h> RegexSetMatches<'h> {
     /// Find the best match among easy patterns at a specific position.
     /// At the given position, checks which patterns match and returns the one with lowest index.
-    fn find_easy_match_at_position(&self, pos: usize) -> Result<Option<RegexSetMatch<'h>>> {
+    fn find_easy_match_at_position(
+        &self,
+        pos: usize,
+        cached_pattern_idx: usize,
+        cached_range: &Range<usize>,
+    ) -> Result<Option<RegexSetMatch<'h>>> {
         if let Some(ref easy_set) = self.set.inner.easy_patterns {
             // Use which_overlapping_matches to find all patterns that match starting at pos
             let input = RaInput::new(self.haystack)
                 .range(self.range.clone())
                 .span(pos..self.range.end);
-            
+
             let mut pattern_set = PatternSet::new(easy_set.patterns.len());
-            easy_set.dfa.which_overlapping_matches(&input, &mut pattern_set);
-            
+            easy_set
+                .dfa
+                .which_overlapping_matches(&input, &mut pattern_set);
+
             // Find the pattern with the lowest index that matches at this position
             if let Some(pattern_id) = pattern_set.iter().next() {
                 let pattern_idx = pattern_id.as_usize();
                 let pattern_info = &easy_set.patterns[pattern_idx];
-                
-                // Now we need to find the actual match range for this specific pattern
-                // We can use the DFA but filter to just this pattern's matches
-                let search_input = RaInput::new(self.haystack)
-                    .range(self.range.clone())
-                    .span(pos..self.range.end);
-                
-                // Search for this specific pattern
-                for mat in easy_set.dfa.find_iter(search_input) {
-                    if mat.pattern().as_usize() == pattern_idx && mat.start() == pos {
-                        let range = mat.start()..mat.end();
-                        let captures = self.extract_easy_captures(pattern_info, &range)?;
-                        
-                        return Ok(Some(RegexSetMatch {
-                            pattern_index: pattern_info.pattern_id,
-                            captures,
-                        }));
+
+                // Check if this is the cached pattern - if so, we already have the range
+                let range = if pattern_idx == cached_pattern_idx && cached_range.start == pos {
+                    cached_range.clone()
+                } else {
+                    // Need to find the actual match range for this pattern
+                    let search_input = RaInput::new(self.haystack)
+                        .range(self.range.clone())
+                        .span(pos..self.range.end);
+
+                    // Search for this specific pattern
+                    let mut found_range = None;
+                    for mat in easy_set.dfa.find_iter(search_input) {
+                        if mat.pattern().as_usize() == pattern_idx && mat.start() == pos {
+                            found_range = Some(mat.start()..mat.end());
+                            break;
+                        }
+                        // If we found a match but it doesn't start at pos, we're done
+                        if mat.start() > pos {
+                            break;
+                        }
                     }
-                    // If we found a match but it doesn't start at pos, we're done
-                    if mat.start() > pos {
-                        break;
+
+                    match found_range {
+                        Some(r) => r,
+                        None => return Ok(None),
                     }
-                }
+                };
+
+                let captures = self.extract_easy_captures(pattern_info, &range)?;
+
+                return Ok(Some(RegexSetMatch {
+                    pattern_index: pattern_info.pattern_id,
+                    captures,
+                }));
             }
         }
-        
+
         Ok(None)
     }
 
