@@ -116,6 +116,9 @@ use crate::parse::NamedGroups;
 use crate::vm::{self, Prog};
 use crate::{Captures, Expr, RegexOptions, Result};
 
+#[cfg(feature = "std")]
+use std::thread;
+
 /// A builder for a `RegexSet` to allow configuring options.
 ///
 /// This builder allows you to configure the compilation options for all patterns
@@ -257,6 +260,8 @@ impl RegexSetBuilder {
                     easy_patterns: None,
                     hard_patterns: Vec::new(),
                     backtrack_limit: self.backtrack_limit,
+                    #[cfg(feature = "std")]
+                    max_concurrent_threads: self.max_concurrent_threads,
                 }),
             });
         }
@@ -337,6 +342,8 @@ impl RegexSetBuilder {
                 easy_patterns,
                 hard_patterns,
                 backtrack_limit: self.backtrack_limit,
+                #[cfg(feature = "std")]
+                max_concurrent_threads: self.max_concurrent_threads,
             }),
         })
     }
@@ -436,6 +443,9 @@ struct RegexSetImpl {
     hard_patterns: Vec<HardPattern>,
     #[allow(dead_code)]
     backtrack_limit: usize,
+    #[cfg(feature = "std")]
+    #[allow(dead_code)] // Reserved for future use with persistent thread pools
+    max_concurrent_threads: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -642,7 +652,6 @@ impl<'h> RegexSetMatch<'h> {
 ///   * Only consuming a few matches from a large input
 ///   * The input contains many matches but you only need the first few
 ///   * Processing input line-by-line (e.g., syntax highlighting)
-#[derive(Debug)]
 pub struct RegexSetMatches<'h> {
     set: &'h RegexSet,
     haystack: &'h str,
@@ -654,6 +663,20 @@ pub struct RegexSetMatches<'h> {
     hard_cache: Vec<Option<(Range<usize>, Captures<'h>)>>,
     // Reusable PatternSet for which_overlapping_matches
     pattern_set: Option<PatternSet>,
+}
+
+impl<'h> core::fmt::Debug for RegexSetMatches<'h> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RegexSetMatches")
+            .field("set", &self.set)
+            .field("haystack", &self.haystack)
+            .field("range", &self.range)
+            .field("current_pos", &self.current_pos)
+            .field("easy_next_match", &self.easy_next_match)
+            .field("hard_cache", &self.hard_cache)
+            .field("pattern_set", &self.pattern_set)
+            .finish()
+    }
 }
 
 impl<'h> Iterator for RegexSetMatches<'h> {
@@ -722,16 +745,32 @@ impl<'h> Iterator for RegexSetMatches<'h> {
             }
 
             // Check hard patterns - search each if not cached
-            for (i, hard_pattern) in self.set.inner.hard_patterns.iter().enumerate() {
-                if self.hard_cache[i].is_none() {
-                    match self.search_hard_pattern(i, hard_pattern) {
-                        Ok(result) => {
-                            self.hard_cache[i] = result;
+            #[cfg(feature = "std")]
+            {
+                // Use parallel search with scoped threads
+                match self.search_hard_patterns_parallel() {
+                    Ok(_) => {}
+                    Err(e) => return Some(Err(e)),
+                }
+            }
+
+            #[cfg(not(feature = "std"))]
+            {
+                // Sequential search for no-std
+                for (i, hard_pattern) in self.set.inner.hard_patterns.iter().enumerate() {
+                    if self.hard_cache[i].is_none() {
+                        match self.search_hard_pattern(i, hard_pattern) {
+                            Ok(result) => {
+                                self.hard_cache[i] = result;
+                            }
+                            Err(e) => return Some(Err(e)),
                         }
-                        Err(e) => return Some(Err(e)),
                     }
                 }
+            }
 
+            // Find earliest match from hard patterns
+            for (i, hard_pattern) in self.set.inner.hard_patterns.iter().enumerate() {
                 if let Some((ref range, ref captures)) = self.hard_cache[i] {
                     if range.start >= self.current_pos {
                         let pattern_id = hard_pattern.pattern_id;
@@ -882,6 +921,7 @@ impl<'h> RegexSetMatches<'h> {
         ))
     }
 
+    #[cfg_attr(feature = "std", allow(dead_code))]
     fn search_hard_pattern(
         &self,
         _index: usize,
@@ -903,6 +943,68 @@ impl<'h> RegexSetMatches<'h> {
             }
             None => Ok(None),
         }
+    }
+
+    #[cfg(feature = "std")]
+    fn search_hard_patterns_parallel(&mut self) -> Result<()> {
+        // Only search patterns that aren't cached
+        let patterns_to_search: Vec<(usize, &HardPattern)> = self
+            .set
+            .inner
+            .hard_patterns
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.hard_cache[*i].is_none())
+            .collect();
+
+        if patterns_to_search.is_empty() {
+            return Ok(());
+        }
+
+        // Use scoped threads for simpler lifetime management
+        let results = thread::scope(|s| {
+            let handles: Vec<_> = patterns_to_search
+                .into_iter()
+                .map(|(index, pattern)| {
+                    let haystack = self.haystack;
+                    let current_pos = self.current_pos;
+                    s.spawn(move || {
+                        let result =
+                            vm::run(&pattern.prog, haystack, current_pos, 0, &pattern.options);
+                        (index, result)
+                    })
+                })
+                .collect();
+
+            // Collect results from all threads
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+
+        // Process results
+        for (index, result) in results {
+            match result {
+                Ok(Some(saves)) => {
+                    let pattern = &self.set.inner.hard_patterns[index];
+                    let start = saves[0];
+                    let end = saves[1];
+                    let captures = Captures::from_saves(
+                        self.haystack,
+                        saves,
+                        Arc::clone(&pattern.named_groups),
+                    );
+                    self.hard_cache[index] = Some((start..end, captures));
+                }
+                Ok(None) => {
+                    self.hard_cache[index] = None;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(())
     }
 
     fn invalidate_cache_before(&mut self, pos: usize) {
