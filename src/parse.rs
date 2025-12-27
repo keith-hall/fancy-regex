@@ -43,7 +43,6 @@ pub struct ExprTree {
     pub expr: Expr,
     pub backrefs: BitSet,
     pub named_groups: NamedGroups,
-    #[allow(dead_code)]
     pub(crate) contains_subroutines: bool,
     pub(crate) self_recursive: bool,
 }
