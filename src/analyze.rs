@@ -1220,4 +1220,23 @@ mod tests {
             "Pattern should not be left-recursive because group m has min_size > 0"
         );
     }
+
+    #[test]
+    fn forward_referenced_subroutine_in_lookbehind() {
+        // Test that a lookbehind containing a forward-referenced subroutine call
+        // Pattern: (?<=\g<1>)(abc)
+        // The lookbehind references group 1 which hasn't been analyzed yet
+        // Note: Currently, the subroutine call's const_size remains false after the first pass
+        // even though group 1 is const_size=true. This is a known limitation.
+        // Future improvement: Update Info values during rebuild pass to fix this.
+        let tree = Expr::parse_tree(r"(?<=\g<1>)(abc)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_ok());
+        
+        let info = result.unwrap();
+        // The lookbehind itself is always const_size=true (matches 0 chars)
+        assert!(info.children[0].const_size);
+        // The group should be const_size=true
+        assert!(info.children[1].const_size);
+    }
 }
