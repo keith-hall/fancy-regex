@@ -43,6 +43,10 @@ matches = "0.1.10"
 quickcheck = "1.0"
 regex = "1.10"
 
+[[example]]
+name = "regexset_syntax_highlighting"
+required-features = ["regex-set"]
+
 [[bench]]
 name = "bench"
 harness = false
