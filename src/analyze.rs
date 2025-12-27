@@ -38,6 +38,25 @@ use alloc::collections::BTreeMap as Map;
 #[cfg(feature = "std")]
 use std::collections::HashMap as Map;
 
+/// Describes how to traverse children during rebuild pass
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TraversalKind {
+    /// Just recurse into children with same position (default for most nodes)
+    Simple,
+    /// Concatenation: accumulate position as we traverse
+    Concat,
+    /// Alternation: all children start at same position
+    Alt,
+    /// Group: enter new group, reset position to 0
+    Group,
+    /// Repeat: check if it's a zero repetition
+    Repeat { hi: usize },
+    /// Conditional: special position handling for branches
+    Conditional,
+    /// SubroutineCall: track the call
+    SubroutineCall { target_group: usize },
+}
+
 #[derive(Debug)]
 pub struct Info<'a> {
     pub(crate) capture_groups: CaptureGroupRange,
@@ -49,6 +68,8 @@ pub struct Info<'a> {
     pub(crate) hard: bool,
     pub(crate) expr: &'a Expr,
     pub(crate) children: Vec<Info<'a>>,
+    /// Describes how to traverse children during rebuild pass
+    traversal_kind: TraversalKind,
 }
 
 impl<'a> Info<'a> {
@@ -123,6 +144,8 @@ impl<'a> Analyzer<'a> {
         let mut min_size = 0;
         let mut const_size = false;
         let mut hard = false;
+        let mut traversal_kind = TraversalKind::Simple;
+
         match *expr {
             Expr::Assertion(assertion) if assertion.is_hard() => {
                 const_size = true;
@@ -141,6 +164,7 @@ impl<'a> Analyzer<'a> {
                 const_size = literal_const_size(val, casei);
             }
             Expr::Concat(ref v) => {
+                traversal_kind = TraversalKind::Concat;
                 const_size = true;
                 let mut pos_in_group = min_pos_in_group;
                 for child in v {
@@ -153,6 +177,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Expr::Alt(ref v) => {
+                traversal_kind = TraversalKind::Alt;
                 let child_info = self.visit(&v[0], min_pos_in_group)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
@@ -167,6 +192,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Expr::Group(ref child) => {
+                traversal_kind = TraversalKind::Group;
                 let group = self.group_ix;
                 self.group_ix += 1;
                 let prev_group = self.current_group;
@@ -200,6 +226,7 @@ impl<'a> Analyzer<'a> {
             Expr::Repeat {
                 ref child, lo, hi, ..
             } => {
+                traversal_kind = TraversalKind::Repeat { hi };
                 // If lo and hi are both 0, we're in a zero-repetition (unreachable)
                 let prev_zero_rep = self.inside_zero_rep;
                 if lo == 0 && hi == 0 {
@@ -262,6 +289,7 @@ impl<'a> Analyzer<'a> {
                 ref true_branch,
                 ref false_branch,
             } => {
+                traversal_kind = TraversalKind::Conditional;
                 hard = true;
 
                 let child_info_condition = self.visit(condition, min_pos_in_group)?;
@@ -284,6 +312,7 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info_false);
             }
             Expr::SubroutineCall(target_group) => {
+                traversal_kind = TraversalKind::SubroutineCall { target_group };
                 // Track this subroutine call
                 // Only skip tracking if we're in unreachable code at the root level
                 // Calls inside groups should always be tracked, even if the group is inside {0} at root,
@@ -336,6 +365,7 @@ impl<'a> Analyzer<'a> {
             const_size,
             hard,
             min_pos_in_group,
+            traversal_kind,
         })
     }
 
@@ -426,8 +456,8 @@ impl<'a> Analyzer<'a> {
         min_pos_in_group: usize,
         inside_zero_rep: bool,
     ) {
-        match info.expr {
-            Expr::Group(_) => {
+        match info.traversal_kind {
+            TraversalKind::Group => {
                 let group = info.start_group();
                 // Track if this group is executed from root (not inside {0})
                 if current_group == 0 && !inside_zero_rep {
@@ -443,16 +473,18 @@ impl<'a> Analyzer<'a> {
                     );
                 }
             }
-            Expr::Concat(ref _v) => {
+            TraversalKind::Concat => {
                 let mut pos = min_pos_in_group;
                 for child in info.children.iter() {
                     self.rebuild_subroutine_calls_impl(child, current_group, pos, inside_zero_rep);
 
                     // For SubroutineCalls, use the actual group's min_size, not the Info's min_size
                     // (which might be 0 due to forward references)
-                    let child_min_size = if let Expr::SubroutineCall(target_group) = child.expr {
+                    let child_min_size = if let TraversalKind::SubroutineCall { target_group } =
+                        child.traversal_kind
+                    {
                         self.group_info
-                            .get(target_group)
+                            .get(&target_group)
                             .map(|si| si.min_size)
                             .unwrap_or(child.min_size)
                     } else {
@@ -462,7 +494,7 @@ impl<'a> Analyzer<'a> {
                     pos += child_min_size;
                 }
             }
-            Expr::Alt(_) => {
+            TraversalKind::Alt => {
                 // All alternatives start at the same position
                 for child in &info.children {
                     self.rebuild_subroutine_calls_impl(
@@ -473,8 +505,8 @@ impl<'a> Analyzer<'a> {
                     );
                 }
             }
-            Expr::Repeat { hi, .. } => {
-                let new_inside_zero_rep = inside_zero_rep || *hi == 0;
+            TraversalKind::Repeat { hi } => {
+                let new_inside_zero_rep = inside_zero_rep || hi == 0;
                 if !info.children.is_empty() {
                     self.rebuild_subroutine_calls_impl(
                         &info.children[0],
@@ -484,7 +516,7 @@ impl<'a> Analyzer<'a> {
                     );
                 }
             }
-            Expr::SubroutineCall(target_group) => {
+            TraversalKind::SubroutineCall { target_group } => {
                 // Track this call with the correct position
                 // Always track calls inside groups (they can be reached via subroutine calls)
                 // Only skip calls at root level that are inside {0}
@@ -493,22 +525,12 @@ impl<'a> Analyzer<'a> {
                         .entry(current_group)
                         .or_default()
                         .push(SubroutineCallInfo {
-                            target_group: *target_group,
+                            target_group,
                             min_pos: min_pos_in_group,
                         });
                 }
             }
-            Expr::LookAround(_, _) | Expr::AtomicGroup(_) => {
-                if !info.children.is_empty() {
-                    self.rebuild_subroutine_calls_impl(
-                        &info.children[0],
-                        current_group,
-                        min_pos_in_group,
-                        inside_zero_rep,
-                    );
-                }
-            }
-            Expr::Conditional { .. } => {
+            TraversalKind::Conditional => {
                 // Conditional has 3 children: condition, true_branch, false_branch
                 if info.children.len() >= 3 {
                     self.rebuild_subroutine_calls_impl(
@@ -532,7 +554,7 @@ impl<'a> Analyzer<'a> {
                     );
                 }
             }
-            _ => {
+            TraversalKind::Simple => {
                 // For other expressions, just recurse into children
                 for child in &info.children {
                     self.rebuild_subroutine_calls_impl(
