@@ -216,6 +216,7 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info);
             }
             Expr::LookAround(ref child, _) => {
+                // Uses Simple traversal (default) - recurses into child with same position
                 // NOTE: min_pos_in_group might seem weird for lookbehinds
                 let child_info = self.visit(child, min_pos_in_group)?;
                 // min_size = 0
@@ -262,6 +263,7 @@ impl<'a> Analyzer<'a> {
                 hard = true;
             }
             Expr::AtomicGroup(ref child) => {
+                // Uses Simple traversal (default) - recurses into child with same position
                 let child_info = self.visit(child, min_pos_in_group)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
@@ -1232,7 +1234,7 @@ mod tests {
         let tree = Expr::parse_tree(r"(?<=\g<1>)(abc)").unwrap();
         let result = analyze(&tree, false);
         assert!(result.is_ok());
-        
+
         let info = result.unwrap();
         // The lookbehind itself is always const_size=true (matches 0 chars)
         assert!(info.children[0].const_size);
