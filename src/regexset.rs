@@ -543,6 +543,7 @@ impl RegexSet {
             current_pos: range.start,
             easy_next_match: None,
             hard_cache: Vec::new(),
+            pattern_set: None,
         }
     }
 }
@@ -651,6 +652,8 @@ pub struct RegexSetMatches<'h> {
     // Stores (pattern_idx, range) for the next match found by dfa.find()
     easy_next_match: Option<(usize, Range<usize>)>,
     hard_cache: Vec<Option<(Range<usize>, Captures<'h>)>>,
+    // Reusable PatternSet for which_overlapping_matches
+    pattern_set: Option<PatternSet>,
 }
 
 impl<'h> Iterator for RegexSetMatches<'h> {
@@ -694,8 +697,13 @@ impl<'h> Iterator for RegexSetMatches<'h> {
             // Check if easy pattern match is at or after current position
             if let Some((pattern_idx, ref range)) = self.easy_next_match {
                 if range.start >= self.current_pos {
+                    // Clone the values we need before calling the method
+                    let pos = range.start;
+                    let cached_pattern_idx = pattern_idx;
+                    let cached_range = range.clone();
+
                     // Need to check which patterns match at this position
-                    match self.find_easy_match_at_position(range.start, pattern_idx, range) {
+                    match self.find_easy_match_at_position(pos, cached_pattern_idx, &cached_range) {
                         Ok(Some(m)) => {
                             earliest_match = Some((m.start(), m.pattern(), m));
                         }
@@ -780,21 +788,25 @@ impl<'h> RegexSetMatches<'h> {
     /// This approach is more efficient than extracting captures for all matching patterns
     /// upfront, especially when there are many patterns and many matches in the input.
     fn find_easy_match_at_position(
-        &self,
+        &mut self,
         pos: usize,
         cached_pattern_idx: usize,
         cached_range: &Range<usize>,
     ) -> Result<Option<RegexSetMatch<'h>>> {
         if let Some(ref easy_set) = self.set.inner.easy_patterns {
+            // Initialize pattern_set if needed
+            if self.pattern_set.is_none() {
+                self.pattern_set = Some(PatternSet::new(easy_set.patterns.len()));
+            }
+
             // Use which_overlapping_matches to find all patterns that match starting at pos
             let input = RaInput::new(self.haystack)
                 .range(self.range.clone())
                 .span(pos..self.range.end);
 
-            let mut pattern_set = PatternSet::new(easy_set.patterns.len());
-            easy_set
-                .dfa
-                .which_overlapping_matches(&input, &mut pattern_set);
+            let pattern_set = self.pattern_set.as_mut().unwrap();
+            pattern_set.clear();
+            easy_set.dfa.which_overlapping_matches(&input, pattern_set);
 
             // Find the pattern with the lowest index that matches at this position
             if let Some(pattern_id) = pattern_set.iter().next() {
@@ -810,22 +822,17 @@ impl<'h> RegexSetMatches<'h> {
                         .range(self.range.clone())
                         .span(pos..self.range.end);
 
-                    // Search for this specific pattern
-                    let mut found_range = None;
-                    for mat in easy_set.dfa.find_iter(search_input) {
+                    // Find the first match - if it's the pattern we want, use it
+                    if let Some(mat) = easy_set.dfa.find(search_input) {
                         if mat.pattern().as_usize() == pattern_idx && mat.start() == pos {
-                            found_range = Some(mat.start()..mat.end());
-                            break;
+                            mat.start()..mat.end()
+                        } else {
+                            // The DFA found a different pattern first, which shouldn't happen
+                            // since we selected the lowest-index pattern
+                            return Ok(None);
                         }
-                        // If we found a match but it doesn't start at pos, we're done
-                        if mat.start() > pos {
-                            break;
-                        }
-                    }
-
-                    match found_range {
-                        Some(r) => r,
-                        None => return Ok(None),
+                    } else {
+                        return Ok(None);
                     }
                 };
 
