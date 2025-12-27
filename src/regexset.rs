@@ -85,6 +85,10 @@
 //! - **Hard patterns** (those with backreferences, lookaround, etc.) are
 //!   evaluated individually using a backtracking VM. These may have exponential
 //!   time complexity in pathological cases.
+//!   - When the `std` feature is enabled (default), hard patterns are evaluated
+//!     in parallel using scoped threads, with one thread per pattern. This can
+//!     provide significant speedup when multiple hard patterns need to be evaluated.
+//!   - Without the `std` feature, hard patterns are evaluated sequentially.
 //!
 //! For best performance, try to design patterns that can be delegated to the
 //! DFA when possible.
@@ -947,6 +951,25 @@ impl<'h> RegexSetMatches<'h> {
 
     #[cfg(feature = "std")]
     fn search_hard_patterns_parallel(&mut self) -> Result<()> {
+        // Parallel evaluation of hard patterns using scoped threads.
+        //
+        // This method spawns one thread per hard pattern that needs evaluation
+        // (i.e., patterns without cached results). Each thread independently
+        // evaluates its pattern against the haystack starting from current_pos.
+        //
+        // Benefits of using scoped threads:
+        // - Simpler lifetime management (no need for Arc or 'static)
+        // - Automatic cleanup when the scope ends
+        // - Direct access to haystack without cloning
+        //
+        // Performance considerations:
+        // - Each pattern runs in parallel, potentially providing speedup for
+        //   CPU-bound patterns
+        // - Thread spawning overhead is amortized when patterns take significant
+        //   time to evaluate
+        // - For very fast patterns, sequential evaluation might be faster due to
+        //   thread overhead
+
         // Only search patterns that aren't cached
         let patterns_to_search: Vec<(usize, &HardPattern)> = self
             .set

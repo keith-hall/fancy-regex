@@ -372,14 +372,7 @@ fn test_parallel_with_builder() {
 fn test_many_hard_patterns() {
     // Test with many hard patterns to ensure threading works with multiple patterns
     let set = RegexSet::new(&[
-        r"(?=a)a",
-        r"(?=b)b",
-        r"(?=c)c",
-        r"(?=d)d",
-        r"(?=e)e",
-        r"(?=f)f",
-        r"(?=g)g",
-        r"(?=h)h",
+        r"(?=a)a", r"(?=b)b", r"(?=c)c", r"(?=d)d", r"(?=e)e", r"(?=f)f", r"(?=g)g", r"(?=h)h",
     ])
     .unwrap();
 
