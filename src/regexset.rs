@@ -790,8 +790,14 @@ impl<'h> RegexSetMatches<'h> {
     ) -> Result<Option<(usize, usize, Captures<'h>)>> {
         match pattern.regex.captures_from_pos(self.haystack, self.current_pos)? {
             Some(captures) => {
-                let start = captures.get(0).map(|m| m.start()).unwrap_or(0);
-                let end = captures.get(0).map(|m| m.end()).unwrap_or(0);
+                let start = captures
+                    .get(0)
+                    .expect("captures should always have group 0")
+                    .start();
+                let end = captures
+                    .get(0)
+                    .expect("captures should always have group 0")
+                    .end();
                 Ok(Some((start, end, captures)))
             }
             None => Ok(None),
