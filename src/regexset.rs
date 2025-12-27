@@ -804,11 +804,13 @@ impl<'h> RegexSetMatches<'h> {
                 .range(self.range.clone())
                 .span(pos..self.range.end);
 
+            // Safe to unwrap: pattern_set is initialized above
             let pattern_set = self.pattern_set.as_mut().unwrap();
             pattern_set.clear();
             easy_set.dfa.which_overlapping_matches(&input, pattern_set);
 
             // Find the pattern with the lowest index that matches at this position
+            // PatternSet::iter() returns patterns in ascending index order
             if let Some(pattern_id) = pattern_set.iter().next() {
                 let pattern_idx = pattern_id.as_usize();
                 let pattern_info = &easy_set.patterns[pattern_idx];
@@ -818,17 +820,20 @@ impl<'h> RegexSetMatches<'h> {
                     cached_range.clone()
                 } else {
                     // Need to find the actual match range for this pattern
+                    // Since we're using LeftmostFirst matching (default), dfa.find() should
+                    // return the same pattern we selected (lowest index at this position)
                     let search_input = RaInput::new(self.haystack)
                         .range(self.range.clone())
                         .span(pos..self.range.end);
 
-                    // Find the first match - if it's the pattern we want, use it
                     if let Some(mat) = easy_set.dfa.find(search_input) {
+                        // Verify this is the pattern we expect
                         if mat.pattern().as_usize() == pattern_idx && mat.start() == pos {
                             mat.start()..mat.end()
                         } else {
-                            // The DFA found a different pattern first, which shouldn't happen
-                            // since we selected the lowest-index pattern
+                            // Edge case: DFA found a different pattern or position
+                            // This can happen if patterns have complex interactions
+                            // In this case, skip this match and let the iterator find the next one
                             return Ok(None);
                         }
                     } else {
