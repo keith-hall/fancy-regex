@@ -324,6 +324,33 @@ fn test_overlapping_patterns_at_same_position() {
 
 #[test]
 #[cfg(feature = "std")]
+fn test_thread_limiting() {
+    // Test that max_concurrent_threads limits the number of threads spawned
+    // We can't directly observe the thread count, but we can verify that the
+    // results are correct regardless of the thread limit
+    for max_threads in [1, 2, 4, 8] {
+        let set = RegexSetBuilder::new(&[
+            r"(?=a)a",
+            r"(?=b)b",
+            r"(?=c)c",
+            r"(?=d)d",
+            r"(?=e)e",
+            r"(?=f)f",
+        ])
+        .max_concurrent_threads(Some(max_threads))
+        .build()
+        .unwrap();
+
+        let haystack = "abcdef";
+        let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+
+        // Should find one match for each character regardless of thread limit
+        assert_eq!(matches.len(), 6, "Failed with max_threads={}", max_threads);
+    }
+}
+
+#[test]
+#[cfg(feature = "std")]
 fn test_parallel_hard_patterns() {
     // Test multiple hard patterns to verify parallel execution works
     let set = RegexSet::new(&[

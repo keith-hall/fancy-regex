@@ -448,7 +448,6 @@ struct RegexSetImpl {
     #[allow(dead_code)]
     backtrack_limit: usize,
     #[cfg(feature = "std")]
-    #[allow(dead_code)] // Reserved for future use with persistent thread pools
     max_concurrent_threads: Option<usize>,
 }
 
@@ -984,30 +983,47 @@ impl<'h> RegexSetMatches<'h> {
             return Ok(());
         }
 
-        // Use scoped threads for simpler lifetime management
-        let results = thread::scope(|s| {
-            let handles: Vec<_> = patterns_to_search
-                .into_iter()
-                .map(|(index, pattern)| {
-                    let haystack = self.haystack;
-                    let current_pos = self.current_pos;
-                    s.spawn(move || {
-                        let result =
-                            vm::run(&pattern.prog, haystack, current_pos, 0, &pattern.options);
-                        (index, result)
-                    })
-                })
-                .collect();
-
-            // Collect results from all threads
-            handles
-                .into_iter()
-                .map(|h| h.join().unwrap())
-                .collect::<Vec<_>>()
+        // Determine max concurrent threads (default to number of CPU cores)
+        let max_threads = self.set.inner.max_concurrent_threads.unwrap_or_else(|| {
+            thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
         });
 
+        // Use scoped threads for simpler lifetime management
+        // Process patterns in batches if we have a thread limit
+        let mut all_results = Vec::new();
+
+        for chunk in patterns_to_search.chunks(max_threads) {
+            let results = thread::scope(|s| {
+                let handles: Vec<_> = chunk
+                    .iter()
+                    .map(|(index, pattern)| {
+                        let haystack = self.haystack;
+                        let current_pos = self.current_pos;
+                        let index = *index;
+                        s.spawn(move || {
+                            let result =
+                                vm::run(&pattern.prog, haystack, current_pos, 0, &pattern.options);
+                            (index, result)
+                        })
+                    })
+                    .collect();
+
+                // Collect results from all threads
+                // unwrap() is safe here: if a thread panics, we want to propagate
+                // the panic as pattern evaluation should not silently fail
+                handles
+                    .into_iter()
+                    .map(|h| h.join().unwrap())
+                    .collect::<Vec<_>>()
+            });
+
+            all_results.extend(results);
+        }
+
         // Process results
-        for (index, result) in results {
+        for (index, result) in all_results {
             match result {
                 Ok(Some(saves)) => {
                     let pattern = &self.set.inner.hard_patterns[index];
