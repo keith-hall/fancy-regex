@@ -1,5 +1,6 @@
 use fancy_regex::Regex;
 
+#[cfg(test)]
 pub fn regex(re: &str) -> Regex {
     let parse_result = Regex::new(re);
     assert!(
