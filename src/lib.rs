@@ -1480,37 +1480,6 @@ impl<'t> Captures<'t> {
         }
     }
 
-    /// Internal helper to create Captures from regex-automata captures
-    #[cfg(feature = "regex-set")]
-    pub(crate) fn from_regex_automata(
-        text: &'t str,
-        locations: RaCaptures,
-        explicit_capture_group_0: bool,
-        named_groups: Arc<NamedGroups>,
-    ) -> Self {
-        Captures {
-            inner: CapturesImpl::Wrap {
-                text,
-                locations,
-                explicit_capture_group_0,
-            },
-            named_groups,
-        }
-    }
-
-    /// Internal helper to create Captures from VM saves
-    #[cfg(feature = "regex-set")]
-    pub(crate) fn from_saves(
-        text: &'t str,
-        saves: Vec<usize>,
-        named_groups: Arc<NamedGroups>,
-    ) -> Self {
-        Captures {
-            inner: CapturesImpl::Fancy { text, saves },
-            named_groups,
-        }
-    }
-
     /// Returns the match for a named capture group.  Returns `None` the capture
     /// group did not match or if there is no group with the given name.
     pub fn name(&self, name: &str) -> Option<Match<'t>> {

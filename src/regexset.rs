@@ -260,11 +260,11 @@ impl RegexSetBuilder {
                 let mut re_cooked = String::new();
                 expr_tree.expr.to_str(&mut re_cooked, 0);
                 let inner = crate::compile::compile_inner(&re_cooked, &self.options)?;
-                
+
                 // Also save for the multi-pattern DFA
                 easy_pattern_strings.push(re_cooked.clone());
                 easy_pattern_indices.push(index);
-                
+
                 Regex {
                     inner: crate::RegexImpl::Wrap {
                         inner,
@@ -468,7 +468,7 @@ impl RegexSet {
             haystack,
             range: range.clone(),
             current_pos: range.start,
-            pattern_cache: Vec::new(),
+            pattern_cache: vec![None; self.inner.patterns.len()],
             easy_next_match: None,
             pattern_set: None,
         }
@@ -573,6 +573,7 @@ impl<'h> RegexSetMatch<'h> {
 pub struct RegexSetMatches<'h> {
     set: &'h RegexSet,
     haystack: &'h str,
+    /// The original range in the haystack to search within
     range: Range<usize>,
     current_pos: usize,
     // Cache of next match for each pattern: (start_pos, end_pos, captures)
@@ -596,20 +597,13 @@ impl<'h> Iterator for RegexSetMatches<'h> {
             return None;
         }
 
-        // Initialize cache if needed
-        if self.pattern_cache.is_empty() && !self.set.inner.patterns.is_empty() {
-            self.pattern_cache = vec![None; self.set.inner.patterns.len()];
-        }
-
         loop {
             let mut earliest_match: Option<(usize, usize, RegexSetMatch<'h>)> = None;
 
             // For easy patterns, use the DFA to find the next match position efficiently
             if self.easy_next_match.is_none() {
                 if let Some(ref easy_set) = self.set.inner.easy_patterns {
-                    let input = RaInput::new(self.haystack)
-                        .range(self.range.clone())
-                        .span(self.current_pos..self.range.end);
+                    let input = RaInput::new(self.haystack).span(self.current_pos..self.range.end);
 
                     if let Some(mat) = easy_set.dfa.find(input) {
                         let dfa_pattern_idx = mat.pattern().as_usize();
@@ -619,7 +613,7 @@ impl<'h> Iterator for RegexSetMatches<'h> {
                 }
             }
 
-            // If we have a DFA match, check all easy patterns at that position
+            // If we have a possible DFA match, check the matching easy patterns at that position
             if let Some((dfa_pattern_idx, ref dfa_range)) = self.easy_next_match {
                 if dfa_range.start >= self.current_pos {
                     match self.check_easy_patterns_at_position(
@@ -644,7 +638,7 @@ impl<'h> Iterator for RegexSetMatches<'h> {
                 }
             }
 
-            // Check all other patterns (hard patterns + any patterns not matched by DFA)
+            // Check all other patterns (hard patterns)
             for (i, pattern) in self.set.inner.patterns.iter().enumerate() {
                 // Skip if this pattern is an easy pattern that we just checked above
                 if let Some(ref easy_set) = self.set.inner.easy_patterns {
@@ -730,9 +724,7 @@ impl<'h> RegexSetMatches<'h> {
             }
 
             // Use which_overlapping_matches to find all patterns that match starting at pos
-            let input = RaInput::new(self.haystack)
-                .range(self.range.clone())
-                .span(pos..self.range.end);
+            let input = RaInput::new(self.haystack).span(pos..self.range.end);
 
             let pattern_set = self.pattern_set.as_mut().unwrap();
             pattern_set.clear();
@@ -768,7 +760,10 @@ impl<'h> RegexSetMatches<'h> {
                 };
 
                 // Use the pattern's Regex to extract captures
-                match pattern.regex.captures_from_pos(&self.haystack[..], range.start)? {
+                match pattern
+                    .regex
+                    .captures_from_pos(&self.haystack[..], range.start)?
+                {
                     Some(captures) => {
                         return Ok(Some(RegexSetMatch {
                             pattern_index: pattern.pattern_id,
@@ -784,11 +779,11 @@ impl<'h> RegexSetMatches<'h> {
     }
 
     /// Search a pattern starting from current position.
-    fn search_pattern(
-        &self,
-        pattern: &Pattern,
-    ) -> Result<Option<(usize, usize, Captures<'h>)>> {
-        match pattern.regex.captures_from_pos(self.haystack, self.current_pos)? {
+    fn search_pattern(&self, pattern: &Pattern) -> Result<Option<(usize, usize, Captures<'h>)>> {
+        match pattern
+            .regex
+            .captures_from_pos(self.haystack, self.current_pos)?
+        {
             Some(captures) => {
                 let start = captures
                     .get(0)
