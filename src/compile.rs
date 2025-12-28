@@ -476,7 +476,9 @@ impl Compiler {
                     // Use reverse matching for variable-sized lookbehinds without fancy features
                     use regex_automata::nfa::thompson;
                     // Build a reverse DFA for the pattern
+                    // Enable unicode_word_boundary to support word boundaries in the DFA
                     let dfa = match regex_automata::hybrid::dfa::DFA::builder()
+                        .configure(regex_automata::hybrid::dfa::Config::new().unicode_word_boundary(true))
                         .thompson(thompson::Config::new().reverse(true))
                         .build(pattern)
                     {
