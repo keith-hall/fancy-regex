@@ -183,7 +183,7 @@ impl<'a> Analyzer<'a> {
             }
             Expr::Backref { group, .. } => {
                 if group == 0 {
-                    return Err(Error::CompileError(CompileError::InvalidBackref(group)));
+                    return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(group))));
                 }
                 // Look up the referenced group's size information
                 if let Some(&SizeInfo {
@@ -239,19 +239,19 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info_false);
             }
             Expr::SubroutineCall(_) => {
-                return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
+                return Err(Error::CompileError(Box::new(CompileError::FeatureNotYetSupported(
                     "Subroutine Call".to_string(),
-                )));
+                ))));
             }
             Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
-                return Err(Error::CompileError(
+                return Err(Error::CompileError(Box::new(
                     CompileError::SubroutineCallTargetNotFound(name.to_string(), ix),
-                ));
+                )));
             }
             Expr::BackrefWithRelativeRecursionLevel { .. } => {
-                return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
+                return Err(Error::CompileError(Box::new(CompileError::FeatureNotYetSupported(
                     "Backref at recursion level".to_string(),
-                )));
+                ))));
             }
         };
 
@@ -284,7 +284,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
 
     let analyzed = analyzer.visit(&tree.expr);
     if analyzer.backrefs.contains(0) {
-        return Err(Error::CompileError(CompileError::InvalidBackref(0)));
+        return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(0))));
     }
     if let Some(highest_backref) = analyzer.backrefs.into_iter().last() {
         if highest_backref > analyzer.group_ix - start_group
@@ -294,9 +294,9 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
             //      `(a(b))\2` has no capture group 2
             || highest_backref == analyzer.group_ix && start_group == 0
         {
-            return Err(Error::CompileError(CompileError::InvalidBackref(
+            return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
                 highest_backref,
-            )));
+            ))));
         }
     }
     analyzed
@@ -344,33 +344,33 @@ mod tests {
         let result = analyze(&tree, false);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
         ));
 
         let result = analyze(&tree, true);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
         ));
 
         let tree = Expr::parse_tree(r"(.)\0").unwrap();
         let result = analyze(&tree, false);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
         ));
 
         let result = analyze(&tree, true);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
         ));
 
         let tree = Expr::parse_tree(r"(.)\0\1").unwrap();
         let result = analyze(&tree, false);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
         ));
     }
 
@@ -380,14 +380,14 @@ mod tests {
         let result = analyze(&tree, false);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(1)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(1))
         ));
 
         let tree = Expr::parse_tree(r"aaaa\2").unwrap();
         let result = analyze(&tree, false);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
         ));
     }
 
@@ -397,14 +397,14 @@ mod tests {
         let result = analyze(&tree, false);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
         ));
 
         let tree = Expr::parse_tree(r"a(a)\2\1").unwrap();
         let result = analyze(&tree, false);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
         ));
     }
 
@@ -414,28 +414,28 @@ mod tests {
         let result = analyze(&tree, true);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
         ));
 
         let tree = Expr::parse_tree(r"(a(b)\1\2)c").unwrap();
         let result = analyze(&tree, true);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
         ));
 
         let tree = Expr::parse_tree(r"(a\1)b").unwrap();
         let result = analyze(&tree, true);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(1)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(1))
         ));
 
         let tree = Expr::parse_tree(r"(a(b))\2").unwrap();
         let result = analyze(&tree, true);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
         ));
     }
 
@@ -475,7 +475,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::FeatureNotYetSupported(_)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::FeatureNotYetSupported(_))
         ));
 
         let tree = &Expr::parse_tree(r"(a)\k<1-0>").unwrap();
@@ -483,7 +483,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::FeatureNotYetSupported(_)))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::FeatureNotYetSupported(_))
         ));
     }
 
@@ -494,9 +494,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(
-                CompileError::SubroutineCallTargetNotFound(_, _)
-            ))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::SubroutineCallTargetNotFound(_, _))
         ));
     }
 
