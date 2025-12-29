@@ -191,7 +191,164 @@ criterion_group!(
     continue_from_end_of_prev_match_long_haystack,
 );
 
-#[cfg(feature = "variable-lookbehinds")]
+#[cfg(feature = "regex-set")]
+fn regexset_easy_patterns(c: &mut Criterion) {
+    use fancy_regex::RegexSet;
+    
+    // Benchmark with only easy patterns (can be delegated to DFA)
+    let set = RegexSet::new(&[r"\d+", r"[a-z]+", r"[A-Z]+"]).unwrap();
+    let haystack = "abc 123 XYZ def 456 GHI jkl 789 MNO";
+    
+    c.bench_function("regexset_easy_patterns", |b| {
+        b.iter(|| {
+            let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+            assert_eq!(matches.len(), 9);
+            matches
+        })
+    });
+}
+
+#[cfg(feature = "regex-set")]
+fn regexset_hard_patterns(c: &mut Criterion) {
+    use fancy_regex::RegexSet;
+    
+    // Benchmark with hard patterns (require backtracking)
+    let set = RegexSet::new(&[
+        r"(\w+)\s+\1",           // backreference
+        r"(?<=\$)\d+\.\d+",      // lookbehind
+        r"(?=\d{3})\d+",         // lookahead
+    ])
+    .unwrap();
+    let haystack = "hello hello there $29.99 today and 123 items";
+    
+    c.bench_function("regexset_hard_patterns", |b| {
+        b.iter(|| {
+            let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+            assert_eq!(matches.len(), 3);
+            matches
+        })
+    });
+}
+
+#[cfg(feature = "regex-set")]
+fn regexset_mixed_patterns(c: &mut Criterion) {
+    use fancy_regex::RegexSet;
+    
+    // Benchmark with mix of easy and hard patterns
+    let set = RegexSet::new(&[
+        r"\d+",              // easy
+        r"(\w+)\s+\1",       // hard (backref)
+        r"[a-z]+",           // easy
+        r"(?<=\$)\d+\.\d+",  // hard (lookbehind)
+    ])
+    .unwrap();
+    let haystack = "foo foo bar 123 baz $29.99 test test xyz 456";
+    
+    c.bench_function("regexset_mixed_patterns", |b| {
+        b.iter(|| {
+            let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+            assert!(matches.len() >= 7);
+            matches
+        })
+    });
+}
+
+#[cfg(feature = "regex-set")]
+fn regexset_syntax_highlighting(c: &mut Criterion) {
+    use fancy_regex::RegexSet;
+    
+    // Simulate syntax highlighting use case with realistic patterns
+    let set = RegexSet::new(&[
+        r"//.*",                         // line comments
+        r#""(?:[^"\\]|\\.)*""#,          // strings
+        r"\b(fn|let|mut|if|else|for|while|loop|match|return|struct|enum|impl|trait|pub|use|mod)\b", // keywords
+        r"\b[0-9]+(?:\.[0-9]+)?\b",      // numbers
+        r"\b[a-zA-Z_][a-zA-Z0-9_]*\b",   // identifiers
+    ])
+    .unwrap();
+    
+    let code = r#"fn main() {
+    let x = 42;
+    let name = "hello";
+    // This is a comment
+    for i in 0..10 {
+        println!("{}", i);
+    }
+}"#;
+    
+    c.bench_function("regexset_syntax_highlighting", |b| {
+        b.iter(|| {
+            let matches: Vec<_> = set.matches(code).map(|m| m.unwrap()).collect();
+            assert!(matches.len() > 10);
+            matches
+        })
+    });
+}
+
+#[cfg(feature = "regex-set")]
+fn regexset_priority_at_same_position(c: &mut Criterion) {
+    use fancy_regex::RegexSet;
+    
+    // Benchmark priority resolution when multiple patterns match at same position
+    let set = RegexSet::new(&[r"hello", r"h\w+", r"\w+"]).unwrap();
+    let haystack = "hello world hello there hello again";
+    
+    c.bench_function("regexset_priority_at_same_position", |b| {
+        b.iter(|| {
+            let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+            assert_eq!(matches.len(), 6);
+            matches
+        })
+    });
+}
+
+#[cfg(feature = "regex-set")]
+fn regexset_many_patterns(c: &mut Criterion) {
+    use fancy_regex::RegexSet;
+    
+    // Benchmark with many patterns (stress test)
+    let patterns: Vec<String> = (0..50)
+        .map(|i| format!(r"\bword{}\b", i))
+        .collect();
+    let pattern_refs: Vec<&str> = patterns.iter().map(|s| s.as_str()).collect();
+    let set = RegexSet::new(&pattern_refs).unwrap();
+    
+    let mut haystack = String::new();
+    for i in 0..50 {
+        haystack.push_str(&format!("word{} ", i));
+    }
+    
+    c.bench_function("regexset_many_patterns", |b| {
+        b.iter(|| {
+            let matches: Vec<_> = set.matches(&haystack).map(|m| m.unwrap()).collect();
+            assert_eq!(matches.len(), 50);
+            matches
+        })
+    });
+}
+
+#[cfg(feature = "regex-set")]
+criterion_group!(
+    name = regexset_benches;
+    config = Criterion::default();
+    targets = regexset_easy_patterns,
+    regexset_hard_patterns,
+    regexset_mixed_patterns,
+    regexset_syntax_highlighting,
+    regexset_priority_at_same_position,
+    regexset_many_patterns,
+);
+
+#[cfg(all(feature = "variable-lookbehinds", feature = "regex-set"))]
+criterion_main!(
+    benches,
+    slow_benches,
+    lookbehind_benches,
+    continue_from_end_of_prev_match_benches,
+    regexset_benches
+);
+
+#[cfg(all(feature = "variable-lookbehinds", not(feature = "regex-set")))]
 criterion_main!(
     benches,
     slow_benches,
@@ -199,7 +356,15 @@ criterion_main!(
     continue_from_end_of_prev_match_benches
 );
 
-#[cfg(not(feature = "variable-lookbehinds"))]
+#[cfg(all(not(feature = "variable-lookbehinds"), feature = "regex-set"))]
+criterion_main!(
+    benches,
+    slow_benches,
+    continue_from_end_of_prev_match_benches,
+    regexset_benches
+);
+
+#[cfg(all(not(feature = "variable-lookbehinds"), not(feature = "regex-set")))]
 criterion_main!(
     benches,
     slow_benches,
