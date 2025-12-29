@@ -1704,7 +1704,7 @@ pub enum LookAround {
 }
 
 /// Type of backtracking control verb which affects how backtracking will behave.
-/// See https://www.regular-expressions.info/verb.html
+/// See <https://www.regular-expressions.info/verb.html>
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum BacktrackingControlVerb {
     /// Fail this branch immediately
