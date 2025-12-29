@@ -629,7 +629,13 @@ impl<'h> Iterator for RegexSetMatches<'h> {
                             self.easy_next_match = None;
                             continue;
                         }
-                        Err(e) => return Some(Err(e)),
+                        Err(e) => {
+                            // Stop on first error: If an error is encountered, return it, and set the
+                            // current position beyond the range end, so that the next next() call will
+                            // return None, to prevent an infinite loop.
+                            self.current_pos = self.range.end + 1;
+                            return Some(Err(e));
+                        }
                     }
                 } else {
                     // Match is behind us, invalidate
@@ -658,7 +664,13 @@ impl<'h> Iterator for RegexSetMatches<'h> {
                         Ok(result) => {
                             self.pattern_cache[i] = result;
                         }
-                        Err(e) => return Some(Err(e)),
+                        Err(e) => {
+                            // Stop on first error: If an error is encountered, return it, and set the
+                            // current position beyond the range end, so that the next next() call will
+                            // return None, to prevent an infinite loop.
+                            self.current_pos = self.range.end + 1;
+                            return Some(Err(e));
+                        }
                     }
                 }
 
@@ -690,7 +702,14 @@ impl<'h> Iterator for RegexSetMatches<'h> {
                 Some((_, _, match_result)) => {
                     // Advance position for next iteration
                     let match_len = match_result.end() - match_result.start();
-                    self.current_pos = match_result.end() + if match_len == 0 { 1 } else { 0 };
+                    if match_len == 0 {
+                        // This is an empty match. To ensure we make progress, start
+                        // the next search at the smallest possible starting position
+                        // of the next match following this one.
+                        self.current_pos = crate::next_utf8(self.haystack, match_result.end());
+                    } else {
+                        self.current_pos = match_result.end();
+                    }
 
                     // Invalidate cache entries that are now behind us
                     self.invalidate_cache_before(self.current_pos);

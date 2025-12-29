@@ -1970,7 +1970,7 @@ fn codepoint_len(b: u8) -> usize {
 /// Returns the smallest possible index of the next valid UTF-8 sequence
 /// starting after `i`.
 /// Adapted from a function with the same name in the `regex` crate.
-fn next_utf8(text: &str, i: usize) -> usize {
+pub(crate) fn next_utf8(text: &str, i: usize) -> usize {
     let b = match text.as_bytes().get(i) {
         None => return i + 1,
         Some(&b) => b,

@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::{RegexSet, RegexSetBuilder};
+use fancy_regex::{Error, RegexSet, RegexSetBuilder, RuntimeError};
 
 #[test]
 fn test_basic_regexset() {
@@ -231,6 +231,79 @@ fn test_pattern_ordering() {
     assert_eq!(matches[0].as_str(), "hello");
     assert_eq!(matches[1].pattern(), 0); // "world" at pos 6
     assert_eq!(matches[1].as_str(), "world");
+}
+
+#[test]
+fn test_zero_width_matches_utf8_boundary() {
+    // Test that zero-width matches with multibyte UTF-8 characters don't cause issues
+    let set = RegexSet::new(&[r"\d*(?=é)", r"é"]).unwrap();
+
+    let text = "é1é";
+    let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+
+    // Should find zero-width matches and the é characters
+    // Pattern 0 (\d*(?=é)) should match at position 0 (zero-width before first é)
+    // Pattern 1 (é) should match the first é at position 0
+    // Pattern 0 (\d*(?=é)) should match at position 2 (after the digit, before second é)
+    // Pattern 1 (é) should match the second é at position 3
+    assert!(matches.len() >= 2, "Expected at least 2 matches");
+    
+    // Verify we got matches at expected positions
+    let positions: Vec<_> = matches.iter().map(|m| m.start()).collect();
+    assert!(positions.contains(&0), "Should have match at position 0");
+    assert!(positions.contains(&2) || positions.contains(&3), "Should have match at position 2 or 3");
+}
+
+#[test]
+fn test_backtrack_limit_error_handling() {
+    // Test that when a backtrack limit is hit, the iterator stops properly
+    let set = RegexSetBuilder::new(&[r"(x+x+)+(?>y)", r"\d+"])
+        .backtrack_limit(1)
+        .build()
+        .unwrap();
+
+    let text = "xxxxxxxxxxy 123";
+    let result: Vec<_> = set.matches(text).collect();
+
+    // Should get an error for the first pattern that exceeds the backtrack limit
+    assert!(result.len() >= 1);
+    assert!(result[0].is_err());
+    match &result[0].as_ref().err() {
+        Some(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded)) => {}
+        _ => panic!("Expected RuntimeError::BacktrackLimitExceeded"),
+    }
+    
+    // After error, iterator should stop and not continue infinitely
+    assert!(result.len() < 100, "Iterator should stop after error, got {} results", result.len());
+}
+
+#[test]
+fn test_zero_width_match_multibyte_char() {
+    // Test zero-width matches with emoji (4-byte UTF-8)
+    // This test ensures that after a zero-width match at a multibyte character boundary,
+    // the iterator correctly advances to the next UTF-8 codepoint boundary
+    let set = RegexSet::new(&[r"(?=🎯)", r"[a-z]+"]).unwrap();
+
+    let text = "foo🎯bar";
+    let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+
+    // Should find "foo" (ASCII letters), zero-width before emoji, and "bar" (ASCII letters)
+    assert_eq!(matches.len(), 3);
+    
+    // Verify the matches
+    assert_eq!(matches[0].as_str(), "foo");
+    assert_eq!(matches[0].pattern(), 1);
+    
+    // Zero-width match before emoji (at byte position 3, which is a 4-byte UTF-8 boundary)
+    assert_eq!(matches[1].as_str(), "");
+    assert_eq!(matches[1].pattern(), 0);
+    assert_eq!(matches[1].start(), 3); // Position after "foo"
+    
+    // After advancing past the zero-width match and the 4-byte emoji,
+    // we should correctly find "bar" at byte position 7
+    assert_eq!(matches[2].as_str(), "bar");
+    assert_eq!(matches[2].pattern(), 1);
+    assert_eq!(matches[2].start(), 7); // Position after "foo" + emoji (3 + 4 bytes)
 }
 
 #[test]
