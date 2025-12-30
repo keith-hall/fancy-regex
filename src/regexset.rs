@@ -31,7 +31,7 @@
 //!
 //! # Examples
 //!
-//! Basic usage:
+//! Basic usage with default options:
 //!
 //! ```rust
 //! use fancy_regex::RegexSet;
@@ -54,19 +54,25 @@
 //! # }
 //! ```
 //!
-//! Using the builder for custom options:
+//! Using `RegexBuilder` for custom options on each pattern:
 //!
 //! ```rust
-//! use fancy_regex::RegexSetBuilder;
+//! use fancy_regex::{RegexBuilder, RegexSet};
 //!
 //! # fn main() -> Result<(), fancy_regex::Error> {
-//! let set = RegexSetBuilder::new(&[
-//!     r"hello",
-//!     r"world",
-//! ])
-//! .case_insensitive(true)
-//! .multi_line(true)
-//! .build()?;
+//! // Build each pattern with desired options
+//! let patterns = [r"hello", r"world"];
+//! let regexes: Result<Vec<_>, _> = patterns
+//!     .iter()
+//!     .map(|pattern| {
+//!         RegexBuilder::new(pattern)
+//!             .case_insensitive(true)
+//!             .multi_line(true)
+//!             .build()
+//!     })
+//!     .collect();
+//!
+//! let set = RegexSet::from_regexes(regexes?)?;
 //!
 //! let text = "HELLO\nWORLD";
 //!
@@ -123,12 +129,17 @@ use crate::{Captures, Expr, Regex, RegexOptions, Result};
 
 /// A builder for a `RegexSet` to allow configuring options.
 ///
+/// **DEPRECATED:** Use [`RegexBuilder`](crate::RegexBuilder) to build individual 
+/// [`Regex`](crate::Regex) instances with their desired options, then combine them
+/// using [`RegexSet::from_regexes`].
+///
 /// This builder allows you to configure the compilation options for all patterns
 /// in a regex set. All patterns in the set share the same options.
 ///
 /// # Examples
 ///
 /// ```rust
+/// # #[allow(deprecated)]
 /// use fancy_regex::RegexSetBuilder;
 ///
 /// # fn main() -> Result<(), fancy_regex::Error> {
@@ -140,6 +151,33 @@ use crate::{Captures, Expr, Regex, RegexOptions, Result};
 /// # Ok(())
 /// # }
 /// ```
+///
+/// Prefer using `RegexBuilder` and `RegexSet::from_regexes` for more flexibility:
+///
+/// ```rust
+/// use fancy_regex::{RegexBuilder, RegexSet};
+///
+/// # fn main() -> Result<(), fancy_regex::Error> {
+/// let patterns = [r"hello", r"world"];
+/// let regexes: Result<Vec<_>, _> = patterns
+///     .iter()
+///     .map(|pattern| {
+///         RegexBuilder::new(pattern)
+///             .case_insensitive(true)
+///             .multi_line(true)
+///             .backtrack_limit(10_000_000)
+///             .build()
+///     })
+///     .collect();
+///
+/// let set = RegexSet::from_regexes(regexes?)?;
+/// # Ok(())
+/// # }
+/// ```
+#[deprecated(
+    since = "0.17.0",
+    note = "Use RegexBuilder to build individual Regex instances, then RegexSet::from_regexes to combine them"
+)]
 #[derive(Debug)]
 pub struct RegexSetBuilder {
     patterns: Vec<String>,
@@ -408,12 +446,29 @@ impl RegexSet {
     /// # Errors
     ///
     /// Returns an error if any pattern fails to compile.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use fancy_regex::RegexSet;
+    ///
+    /// # fn main() -> Result<(), fancy_regex::Error> {
+    /// let set = RegexSet::new(&[r"\d+", r"[a-z]+"])?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new<I, S>(patterns: I) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        RegexSetBuilder::new(patterns).build()
+        // Build each pattern as a Regex with default options
+        let regexes: Result<Vec<Regex>> = patterns
+            .into_iter()
+            .map(|pattern| Regex::new(pattern.as_ref()))
+            .collect();
+        
+        Self::from_regexes(regexes?)
     }
 
     /// Create a new RegexSet from pre-built `Regex` instances.
