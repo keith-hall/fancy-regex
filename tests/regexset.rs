@@ -307,7 +307,7 @@ fn test_from_regexes_mixed_easy_hard() {
     let haystack = "abc 123 send";
     let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
 
-    // The lookbehind (?<=\w)end will match "end" in "send" but it's overlapping with the 
+    // The lookbehind (?<=\w)end will match "end" in "send" but it's overlapping with the
     // [a-z]+ pattern which will match "send" first. Since we do non-overlapping matches,
     // we'll only get 3 matches: "abc", "123", and "send" (not "end" separately)
     assert_eq!(matches.len(), 3);
@@ -345,4 +345,3 @@ fn test_regexset_is_send() {
 fn test_regexset_is_sync() {
     assert_sync::<RegexSet>();
 }
-

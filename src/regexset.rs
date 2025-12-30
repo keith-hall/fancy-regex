@@ -129,7 +129,7 @@ use crate::{Captures, Expr, Regex, RegexOptions, Result};
 
 /// A builder for a `RegexSet` to allow configuring options.
 ///
-/// **DEPRECATED:** Use [`RegexBuilder`](crate::RegexBuilder) to build individual 
+/// **DEPRECATED:** Use [`RegexBuilder`](crate::RegexBuilder) to build individual
 /// [`Regex`](crate::Regex) instances with their desired options, then combine them
 /// using [`RegexSet::from_regexes`].
 ///
@@ -467,7 +467,7 @@ impl RegexSet {
             .into_iter()
             .map(|pattern| Regex::new(pattern.as_ref()))
             .collect();
-        
+
         Self::from_regexes(regexes?)
     }
 
@@ -514,7 +514,7 @@ impl RegexSet {
         I: IntoIterator<Item = Regex>,
     {
         let regexes_vec: Vec<Regex> = regexes.into_iter().collect();
-        
+
         if regexes_vec.is_empty() {
             return Ok(RegexSet {
                 inner: Arc::new(RegexSetImpl {
@@ -531,7 +531,9 @@ impl RegexSet {
         // Analyze each regex and categorize as easy or hard
         for (index, regex) in regexes_vec.into_iter().enumerate() {
             match &regex.inner {
-                crate::RegexImpl::Wrap { delegated_pattern, .. } => {
+                crate::RegexImpl::Wrap {
+                    delegated_pattern, ..
+                } => {
                     // Easy pattern - can be delegated to DFA
                     easy_pattern_strings.push(delegated_pattern.clone());
                     easy_pattern_indices.push(index);

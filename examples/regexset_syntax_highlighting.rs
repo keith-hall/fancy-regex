@@ -12,16 +12,12 @@ fn main() -> Result<()> {
         r"\b[0-9]+\b",               // 3: Numbers
         r"[a-zA-Z_][a-zA-Z0-9_]*",   // 4: Identifiers
     ];
-    
+
     let regexes: Result<Vec<_>> = patterns
         .iter()
-        .map(|pattern| {
-            RegexBuilder::new(pattern)
-                .multi_line(true)
-                .build()
-        })
+        .map(|pattern| RegexBuilder::new(pattern).multi_line(true).build())
         .collect();
-    
+
     let set = RegexSet::from_regexes(regexes?)?;
 
     let code = r#"let x = 42; // a comment
