@@ -416,6 +416,110 @@ impl RegexSet {
         RegexSetBuilder::new(patterns).build()
     }
 
+    /// Create a new RegexSet from pre-built `Regex` instances.
+    ///
+    /// This is useful when you want to use different options for different patterns
+    /// or when you already have compiled regexes that you want to combine into a set.
+    ///
+    /// The method will analyze each regex to determine if it can be delegated to a
+    /// multi-pattern DFA for better performance. Easy patterns (those without
+    /// backreferences, lookarounds, etc.) are combined into a single DFA, while
+    /// hard patterns are evaluated individually.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use fancy_regex::{Regex, RegexBuilder, RegexSet};
+    ///
+    /// # fn main() -> Result<(), fancy_regex::Error> {
+    /// // Create regexes with different options
+    /// let re1 = RegexBuilder::new(r"hello")
+    ///     .case_insensitive(true)
+    ///     .build()?;
+    /// let re2 = Regex::new(r"\d+")?;
+    /// let re3 = Regex::new(r"(?<=\w)end")?; // lookbehind - fancy pattern
+    ///
+    /// // Combine them into a RegexSet
+    /// let set = RegexSet::from_regexes([re1, re2, re3])?;
+    ///
+    /// let text = "HELLO 123 send";
+    /// for m in set.matches(text) {
+    ///     let m = m?;
+    ///     println!("Pattern {} matched: {}", m.pattern(), m.as_str());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the multi-pattern DFA construction fails for easy patterns.
+    pub fn from_regexes<I>(regexes: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = Regex>,
+    {
+        let regexes_vec: Vec<Regex> = regexes.into_iter().collect();
+        
+        if regexes_vec.is_empty() {
+            return Ok(RegexSet {
+                inner: Arc::new(RegexSetImpl {
+                    easy_patterns: None,
+                    patterns: Vec::new(),
+                }),
+            });
+        }
+
+        let mut easy_pattern_strings = Vec::new();
+        let mut easy_pattern_indices = Vec::new();
+        let mut patterns = Vec::new();
+
+        // Analyze each regex and categorize as easy or hard
+        for (index, regex) in regexes_vec.into_iter().enumerate() {
+            match &regex.inner {
+                crate::RegexImpl::Wrap { delegated_pattern, .. } => {
+                    // Easy pattern - can be delegated to DFA
+                    easy_pattern_strings.push(delegated_pattern.clone());
+                    easy_pattern_indices.push(index);
+                }
+                crate::RegexImpl::Fancy { .. } => {
+                    // Hard pattern - uses backtracking VM
+                }
+            }
+
+            patterns.push(Pattern {
+                pattern_id: index,
+                regex,
+            });
+        }
+
+        // Build multi-pattern DFA for easy patterns
+        let easy_patterns = if !easy_pattern_strings.is_empty() {
+            // Use default options for the DFA builder
+            // Note: Individual regexes already have their options baked in
+            let options = RegexOptions::default();
+            let builder = options_to_rabuilder(&options);
+
+            let dfa = builder
+                .build_many(&easy_pattern_strings)
+                .map_err(CompileError::InnerError)
+                .map_err(|e| Error::CompileError(Box::new(e)))?;
+
+            Some(EasyPatternSet {
+                dfa,
+                pattern_indices: easy_pattern_indices,
+            })
+        } else {
+            None
+        };
+
+        Ok(RegexSet {
+            inner: Arc::new(RegexSetImpl {
+                easy_patterns,
+                patterns,
+            }),
+        })
+    }
+
     /// Returns the number of patterns in the set.
     pub fn len(&self) -> usize {
         self.inner.patterns.len()

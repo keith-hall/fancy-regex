@@ -246,3 +246,103 @@ fn test_match_range() {
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].range(), 4..7);
 }
+
+#[test]
+fn test_from_regexes() {
+    use fancy_regex::Regex;
+
+    // Create regexes with different patterns
+    let re1 = Regex::new(r"\d+").unwrap();
+    let re2 = Regex::new(r"[a-z]+").unwrap();
+    let re3 = Regex::new(r"[A-Z]+").unwrap();
+
+    let set = RegexSet::from_regexes([re1, re2, re3]).unwrap();
+
+    let haystack = "abc 123 XYZ";
+    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+
+    assert_eq!(matches.len(), 3);
+    assert_eq!(matches[0].pattern(), 1); // [a-z]+
+    assert_eq!(matches[0].as_str(), "abc");
+    assert_eq!(matches[1].pattern(), 0); // \d+
+    assert_eq!(matches[1].as_str(), "123");
+    assert_eq!(matches[2].pattern(), 2); // [A-Z]+
+    assert_eq!(matches[2].as_str(), "XYZ");
+}
+
+#[test]
+fn test_from_regexes_with_different_options() {
+    use fancy_regex::{Regex, RegexBuilder};
+
+    // Create regexes with different options
+    let re1 = RegexBuilder::new(r"hello")
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+    let re2 = Regex::new(r"\d+").unwrap();
+
+    let set = RegexSet::from_regexes([re1, re2]).unwrap();
+
+    let haystack = "HELLO 123";
+    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].pattern(), 0); // case-insensitive hello
+    assert_eq!(matches[0].as_str(), "HELLO");
+    assert_eq!(matches[1].pattern(), 1); // \d+
+    assert_eq!(matches[1].as_str(), "123");
+}
+
+#[test]
+fn test_from_regexes_mixed_easy_hard() {
+    use fancy_regex::Regex;
+
+    // Mix easy and hard patterns
+    let re1 = Regex::new(r"\d+").unwrap(); // Easy
+    let re2 = Regex::new(r"(?<=\w)end").unwrap(); // Hard (lookbehind)
+    let re3 = Regex::new(r"[a-z]+").unwrap(); // Easy
+
+    let set = RegexSet::from_regexes([re1, re2, re3]).unwrap();
+
+    let haystack = "abc 123 send";
+    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+
+    // The lookbehind (?<=\w)end will match "end" in "send" but it's overlapping with the 
+    // [a-z]+ pattern which will match "send" first. Since we do non-overlapping matches,
+    // we'll only get 3 matches: "abc", "123", and "send" (not "end" separately)
+    assert_eq!(matches.len(), 3);
+    assert_eq!(matches[0].pattern(), 2); // [a-z]+
+    assert_eq!(matches[0].as_str(), "abc");
+    assert_eq!(matches[1].pattern(), 0); // \d+
+    assert_eq!(matches[1].as_str(), "123");
+    // "send" is matched by pattern 2 ([a-z]+), not the lookbehind
+    assert_eq!(matches[2].pattern(), 2); // [a-z]+
+    assert_eq!(matches[2].as_str(), "send");
+}
+
+#[test]
+fn test_from_regexes_empty() {
+    let set = RegexSet::from_regexes([]).unwrap();
+
+    assert_eq!(set.len(), 0);
+    assert!(set.is_empty());
+
+    let haystack = "hello world";
+    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+    assert_eq!(matches.len(), 0);
+}
+
+// Send/Sync tests
+fn assert_send<T: Send>() {}
+fn assert_sync<T: Sync>() {}
+
+#[test]
+fn test_regexset_is_send() {
+    assert_send::<RegexSet>();
+}
+
+#[test]
+fn test_regexset_is_sync() {
+    assert_sync::<RegexSet>();
+}
+
