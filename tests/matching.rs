@@ -631,4 +631,11 @@ fn unicode_property_cntrl_graph_print_combined() {
     assert_match(r"\p{cntrl}|\p{graph}|\p{print}", "\x00"); // cntrl
     assert_match(r"\p{cntrl}|\p{graph}|\p{print}", "a"); // graph and print
     assert_match(r"\p{cntrl}|\p{graph}|\p{print}", " "); // print but not graph
+    
+    // Test that cntrl and graph can be combined in a character class
+    // This is tricky because graph is a negated class
+    // We expect: matches cntrl OR graph, but not space
+    assert_match(r"[\p{cntrl}\x21-\x7E]", "\x00"); // control char
+    assert_match(r"[\p{cntrl}\x21-\x7E]", "a"); // visible ASCII
+    assert_no_match(r"[\p{cntrl}\x21-\x7E]", " "); // space (not in cntrl or \x21-\x7E)
 }
