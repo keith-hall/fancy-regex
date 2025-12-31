@@ -843,12 +843,12 @@ pub(crate) fn run(
                     capture_groups,
                 }) => {
                     // For variable-length lookbehinds, we need to find a match ending at ix
-                    // Try all possible start positions and find the one that matches ending at ix
-                    // We prefer the earliest (leftmost) match, which corresponds to the longest match
+                    // Try all possible start positions and find the leftmost one that matches
+                    // ending at ix (leftmost = longest match for greedy quantifiers)
 
                     let mut found_match_start = None;
 
-                    // Try positions from left to right to find the earliest/longest match
+                    // Try positions from left to right to find the leftmost/longest match
                     for start_pos in 0..ix {
                         // Try to match anchored from start_pos to ix
                         let test_input = Input::new(s).span(start_pos..ix).anchored(Anchored::Yes);

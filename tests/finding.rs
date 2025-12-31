@@ -110,7 +110,8 @@ fn lookbehind_positive_variable_sized_functionality_unicode_elsewhere() {
 #[cfg(feature = "variable-lookbehinds")]
 fn lookbehind_positive_variable_sized_functionality_unicode() {
     // Lookbehind is zero-width and matches at the end of the word
-    // "ežeras" is 7 bytes (6 characters), so the match is at byte position 7
+    // "ežeras" has 6 Unicode characters but occupies 7 bytes due to the Unicode character "ž",
+    // so the zero-width lookbehind match occurs at byte position 7
     assert_eq!(find(r"(?<=\b\w+\b)", "ežeras"), Some((7, 7)));
 }
 
