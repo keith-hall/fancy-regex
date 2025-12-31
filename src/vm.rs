@@ -71,8 +71,6 @@
 
 use alloc::collections::BTreeSet;
 use alloc::string::String;
-#[cfg(feature = "variable-lookbehinds")]
-use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex;
@@ -80,18 +78,6 @@ use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
-
-#[cfg(feature = "variable-lookbehinds")]
-use regex_automata::util::pool::Pool;
-
-#[cfg(feature = "variable-lookbehinds")]
-pub(crate) type CachePoolFn = alloc::boxed::Box<
-    dyn Fn() -> regex_automata::hybrid::dfa::Cache
-        + Send
-        + Sync
-        + core::panic::UnwindSafe
-        + core::panic::RefUnwindSafe,
->;
 
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
@@ -171,12 +157,9 @@ impl core::fmt::Debug for Delegate {
 pub struct ReverseBackwardsDelegate {
     /// The regex pattern as a string which will be matched in reverse, in a backwards direction
     pub pattern: String,
-    /// The delegate regex to match backwards (wrapped in Arc for efficient cloning)
-    pub(crate) dfa: Arc<regex_automata::hybrid::dfa::DFA>,
-    /// Cache pool for DFA searches
-    pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
-    /// The forward regex for capture group extraction
-    pub(crate) capture_group_extraction_inner: Option<Regex>,
+    /// The delegate regex to match backwards - uses forward matching to find
+    /// the rightmost match ending before the lookbehind position
+    pub(crate) inner: Regex,
     /// The range of capture groups. None if there are no capture groups.
     pub capture_groups: Option<CaptureGroupRange>,
 }
@@ -184,13 +167,9 @@ pub struct ReverseBackwardsDelegate {
 #[cfg(feature = "variable-lookbehinds")]
 impl Clone for ReverseBackwardsDelegate {
     fn clone(&self) -> Self {
-        let dfa_for_closure = Arc::clone(&self.dfa);
-        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
         Self {
             pattern: self.pattern.clone(),
-            cache_pool: Pool::new(create),
-            dfa: Arc::clone(&self.dfa),
-            capture_group_extraction_inner: self.capture_group_extraction_inner.clone(),
+            inner: self.inner.clone(),
             capture_groups: self.capture_groups,
         }
     }
@@ -202,9 +181,7 @@ impl core::fmt::Debug for ReverseBackwardsDelegate {
         // Ensures it fails to compile if the struct changes
         let Self {
             pattern,
-            dfa: _,
-            cache_pool: _,
-            capture_group_extraction_inner: _,
+            inner: _,
             capture_groups,
         } = self;
 
@@ -861,47 +838,52 @@ pub(crate) fn run(
                 }
                 #[cfg(feature = "variable-lookbehinds")]
                 Insn::BackwardsDelegate(ReverseBackwardsDelegate {
-                    ref dfa,
-                    ref cache_pool,
+                    ref inner,
                     pattern: _,
-                    ref capture_group_extraction_inner,
                     capture_groups,
                 }) => {
-                    // Use regex-automata to search backwards from current position
-                    let mut cache_guard = cache_pool.get();
-                    let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
+                    // For variable-length lookbehinds, we need to find a match ending at ix
+                    // Try all possible start positions and find the one that matches ending at ix
+                    // We prefer the earliest (leftmost) match, which corresponds to the longest match
 
-                    match dfa.try_search_rev(&mut cache_guard, &input) {
-                        Ok(Some(match_result)) => {
-                            // Update ix to the start position of the match
-                            let match_start = match_result.offset();
+                    let mut found_match_start = None;
 
-                            if let Some(inner) = capture_group_extraction_inner {
-                                if let Some(range) = capture_groups {
-                                    // There are capture groups, need to search forward to populate them
-                                    let forward_input =
-                                        Input::new(s).span(match_start..ix).anchored(Anchored::Yes);
-                                    inner_slots.resize((range.end() - range.start() + 1) * 2, None);
+                    // Try positions from left to right to find the earliest/longest match
+                    for start_pos in 0..ix {
+                        // Try to match anchored from start_pos to ix
+                        let test_input = Input::new(s).span(start_pos..ix).anchored(Anchored::Yes);
 
-                                    if inner
-                                        .search_slots(&forward_input, &mut inner_slots)
-                                        .is_some()
-                                    {
-                                        // Store capture group positions
-                                        store_capture_groups(&mut state, &inner_slots, range);
-                                    } else {
-                                        break 'fail;
-                                    }
-                                } else {
-                                    // No groups, just update ix to the match start
-                                    ix = match_start;
-                                }
-                            } else {
-                                // No groups, just update ix to the match start
-                                ix = match_start;
+                        if let Some(half_match) = inner.search_half(&test_input) {
+                            // Check if the match actually spans the full range
+                            if half_match.offset() == ix {
+                                found_match_start = Some(start_pos);
+                                break; // Found the earliest match, which is the longest
                             }
                         }
-                        _ => break 'fail,
+                    }
+
+                    if let Some(match_start) = found_match_start {
+                        if let Some(range) = capture_groups {
+                            // There are capture groups, need to extract them
+                            let forward_input =
+                                Input::new(s).span(match_start..ix).anchored(Anchored::Yes);
+                            inner_slots.resize((range.end() - range.start() + 1) * 2, None);
+
+                            if inner
+                                .search_slots(&forward_input, &mut inner_slots)
+                                .is_some()
+                            {
+                                // Store capture group positions
+                                store_capture_groups(&mut state, &inner_slots, range);
+                            } else {
+                                break 'fail;
+                            }
+                        } else {
+                            // No groups, just update ix to the match start
+                            ix = match_start;
+                        }
+                    } else {
+                        break 'fail;
                     }
                 }
                 Insn::BeginAtomic => {

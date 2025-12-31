@@ -22,19 +22,15 @@
 
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
-#[cfg(feature = "variable-lookbehinds")]
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
-#[cfg(feature = "variable-lookbehinds")]
-use regex_automata::util::pool::Pool;
 #[cfg(all(test, feature = "std"))]
 use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::analyze::Info;
 #[cfg(feature = "variable-lookbehinds")]
-use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
+use crate::vm::ReverseBackwardsDelegate;
 use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result};
@@ -483,43 +479,15 @@ impl Compiler {
                         .capture_groups
                         .expect("Expected at least one expression");
 
-                    // Use reverse matching for variable-sized lookbehinds without fancy features
-                    use regex_automata::hybrid::dfa;
-                    use regex_automata::nfa::thompson;
-                    // Build a reverse DFA for the pattern
-                    let config = dfa::Config::new().unicode_word_boundary(true); // enable word boundary support
-                    let dfa = match dfa::DFA::builder()
-                        .configure(config)
-                        .thompson(thompson::Config::new().reverse(true))
-                        .build(pattern)
-                    {
-                        Ok(dfa) => Arc::new(dfa),
-                        Err(e) => {
-                            return Err(Error::CompileError(Box::new(CompileError::DfaBuildError(
-                                e.to_string(),
-                            ))))
-                        }
-                    };
-
-                    let create: CachePoolFn = alloc::boxed::Box::new({
-                        let dfa = Arc::clone(&dfa);
-                        move || dfa.create_cache()
-                    });
-                    let cache_pool = Pool::new(create);
-
-                    // Build the forward regex for capture group extraction
-                    let forward_regex = if inner.start_group() != inner.end_group() {
-                        Some(compile_inner(pattern, &self.options)?)
-                    } else {
-                        None
-                    };
+                    // For variable-sized lookbehinds, use meta::Regex which properly
+                    // supports Unicode word boundaries. We'll search forward to find
+                    // matches ending at the lookbehind position.
+                    let inner_regex = compile_inner(pattern, &self.options)?;
 
                     self.b
                         .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
-                            dfa,
-                            cache_pool,
+                            inner: inner_regex,
                             pattern: pattern.to_string(),
-                            capture_group_extraction_inner: forward_regex,
                             capture_groups: capture_groups.to_option_if_non_empty(),
                         }));
                     Ok(())
@@ -912,7 +880,7 @@ mod tests {
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
-        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "ab+");
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, inner: _, capture_groups: None }) if pattern == "ab+");
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);
@@ -926,7 +894,7 @@ mod tests {
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(2));
-        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: ref inner, capture_groups: Some(CaptureGroupRange(0, 1)) }) if pattern == "a(b+)" && inner.is_some());
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, inner: _, capture_groups: Some(CaptureGroupRange(0, 1)) }) if pattern == "a(b+)");
         assert_matches!(prog[2], Restore(2));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);
