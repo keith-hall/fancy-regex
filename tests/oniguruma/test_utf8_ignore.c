@@ -454,6 +454,9 @@
   // Compile failed: ParseError(2, UnknownFlag("(?P"))
   x2("(?P:\\B)", "こ", 0, 0);
 
+  // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Translate(Error { kind: UnicodePropertyNotFound, pattern: "\\p{inbasiclatin}", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 16, l: 1, c: 17)) }) } }))
+  x2("\\p{InBasicLatin}", "\x41", 0, 1);
+
   // Compile failed: ParseError(1, InvalidEscape("\\Y"))
   x2(".\\Y\\O", "\x0d\x0a", 0, 2);
 
@@ -617,5 +620,5 @@
   // No match found
   x2("a{2,3}+a", "aaa", 0, 3);
 
-  // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Translate(Error { kind: UnicodePropertyNotFound, pattern: "\\p{In_Enclosed_CJK_Letters_and_Months}", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 38, l: 1, c: 39)) }) } }))
+  // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Translate(Error { kind: UnicodePropertyNotFound, pattern: "\\p{in_enclosed_cjk_letters_and_months}", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 38, l: 1, c: 39)) }) } }))
   x2("\\p{In_Enclosed_CJK_Letters_and_Months}", "\xe3\x8b\xbf", 0, 3);
