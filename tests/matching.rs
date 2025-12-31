@@ -526,6 +526,11 @@ fn unicode_property_cntrl() {
 
     assert_match(r"[\P{cntrl}]", "a");
     assert_no_match(r"[\P{cntrl}]", "\x00");
+    
+    // Test combining cntrl with other characters in a class
+    assert_match(r"[\p{cntrl}a-z]", "\x00");
+    assert_match(r"[\p{cntrl}a-z]", "a");
+    assert_no_match(r"[\p{cntrl}a-z]", "A");
 }
 
 #[test]
@@ -557,6 +562,11 @@ fn unicode_property_graph() {
 
     assert_match(r"[\P{graph}]", " ");
     assert_no_match(r"[\P{graph}]", "a");
+    
+    // Test combining graph with other characters in a class
+    assert_match(r"[\p{graph}0-9]", "a");
+    assert_match(r"[\p{graph}0-9]", "5");
+    assert_no_match(r"[\p{graph}0-9]", " ");
 }
 
 #[test]
@@ -588,6 +598,12 @@ fn unicode_property_print() {
 
     assert_match(r"[\P{print}]", "\t");
     assert_no_match(r"[\P{print}]", "a");
+    
+    // Test combining print with other characters in a class
+    assert_match(r"[\p{print}A-Z]", "a");
+    assert_match(r"[\p{print}A-Z]", "A");
+    assert_match(r"[\p{print}A-Z]", " ");
+    assert_no_match(r"[\p{print}A-Z]", "\t");
 }
 
 #[test]

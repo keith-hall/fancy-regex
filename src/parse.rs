@@ -1355,9 +1355,11 @@ fn remap_unicode_property_if_necessary(
             (r"cntrl", false, true, true) => r"[^[:cntrl:]]".to_string(),
             // graph - graphical/visible characters (excludes whitespace, control chars, etc)
             // For Unicode mode, we exclude White_Space and all Other category (\p{C})
+            // Note: When used inside a character class, we return the full negated class 
+            // because we can't easily represent a negation as positive content
             (r"graph", true, false, false) => r"[^\p{White_Space}\p{C}]".to_string(),
             (r"graph", true, false, true) => r"[\p{White_Space}\p{C}]".to_string(),
-            (r"graph", true, true, false) => r"^\p{White_Space}\p{C}".to_string(),
+            (r"graph", true, true, false) => r"[^\p{White_Space}\p{C}]".to_string(),
             (r"graph", true, true, true) => r"[\p{White_Space}\p{C}]".to_string(),
             (r"graph", false, false, false) => r"[[:graph:]]".to_string(),
             (r"graph", false, false, true) => r"[^[:graph:]]".to_string(),
@@ -1365,9 +1367,10 @@ fn remap_unicode_property_if_necessary(
             (r"graph", false, true, true) => r"[^[:graph:]]".to_string(),
             // print - printable characters (graph + space separator)
             // For Unicode mode: exclude Other category and non-space whitespace
+            // Note: When used inside a character class, we return the full negated class
             (r"print", true, false, false) => r"[^\p{C}\t\n\v\f\r]".to_string(),
             (r"print", true, false, true) => r"[\p{C}\t\n\v\f\r]".to_string(),
-            (r"print", true, true, false) => r"^\p{C}\t\n\v\f\r".to_string(),
+            (r"print", true, true, false) => r"[^\p{C}\t\n\v\f\r]".to_string(),
             (r"print", true, true, true) => r"[\p{C}\t\n\v\f\r]".to_string(),
             (r"print", false, false, false) => r"[[:print:]]".to_string(),
             (r"print", false, false, true) => r"[^[:print:]]".to_string(),
@@ -3433,7 +3436,7 @@ mod tests {
         // Test \p{graph} inside class with unicode flag
         assert_eq!(
             remap_unicode_property_if_necessary(r"\p{graph}", true, true),
-            r"^\p{White_Space}\p{C}"
+            r"[^\p{White_Space}\p{C}]"
         );
         // Test \P{graph} inside class with unicode flag
         assert_eq!(
@@ -3454,7 +3457,7 @@ mod tests {
         // Test \p{print} inside class with unicode flag
         assert_eq!(
             remap_unicode_property_if_necessary(r"\p{print}", true, true),
-            r"^\p{C}\t\n\v\f\r"
+            r"[^\p{C}\t\n\v\f\r]"
         );
         // Test \P{print} inside class with unicode flag
         assert_eq!(
