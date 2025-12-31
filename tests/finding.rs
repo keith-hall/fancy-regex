@@ -71,7 +71,7 @@ fn negative_lookbehind_variable_sized_alt() {
 
 #[test]
 #[cfg(feature = "variable-lookbehinds")]
-fn lookbehind_positive_variable_sized_functionality() {
+fn lookbehind_positive_variable_sized_functionality_ascii() {
     assert_eq!(find(r"(?<=a(?:b|cd))x", "abx"), Some((2, 3)));
     assert_eq!(find(r"(?<=a(?:b|cd))x", "acdx"), Some((3, 4)));
     assert_eq!(find(r"(?<=a(?:b|cd))x", "ax"), None);
@@ -93,6 +93,26 @@ fn lookbehind_positive_variable_sized_functionality() {
     assert_eq!(
         find(r"(?=fuly)(?<=\b(?:[A-Z][a-z]*|[a-z]+))fuly\b", "Carefuly"),
         Some((4, 8))
+    );
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_positive_variable_sized_functionality_unicode_elsewhere() {
+    // even though there is unicode in the haystack, the correct match is still found
+    assert_eq!(
+        find(r"(?m)(?<=\b\w+\b)(?=$)", "ežeras test"),
+        Some((12, 12))
+    );
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_positive_variable_sized_functionality_unicode() {
+    // NOTE: this test currently fails even though it shouldn't
+    assert_eq!(
+        find(r"(?<=\b\w+\b)", "ežeras"),
+        Some((0, 6))
     );
 }
 
