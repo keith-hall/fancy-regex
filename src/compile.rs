@@ -468,12 +468,28 @@ impl Compiler {
         Ok(())
     }
 
+    /// Check if a hard lookbehind can be compiled as normal.
+    /// This is possible when the lookbehind is a Concat expression where all children
+    /// are either easy (!hard) or have const_size && min_size == 0.
+    fn can_compile_hard_lookbehind_as_normal(&self, inner: &Info<'_>) -> bool {
+        // Check if it's a Concat expression
+        if let Expr::Concat(_) = inner.expr {
+            // All children must be either easy or const-size-0
+            inner
+                .children
+                .iter()
+                .all(|child| !child.hard || (child.const_size && child.min_size == 0))
+        } else {
+            false
+        }
+    }
+
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
             if inner.const_size {
                 self.b.add(Insn::GoBack(inner.min_size));
                 self.visit(inner, false)
-            } else if !inner.hard {
+            } else if !inner.hard || self.can_compile_hard_lookbehind_as_normal(inner) {
                 #[cfg(feature = "variable-lookbehinds")]
                 {
                     let mut delegate_builder = DelegateBuilder::new();
@@ -484,9 +500,11 @@ impl Compiler {
                         .expect("Expected at least one expression");
 
                     // Use reverse matching for variable-sized lookbehinds without fancy features
+                    use regex_automata::hybrid::dfa;
                     use regex_automata::nfa::thompson;
                     // Build a reverse DFA for the pattern
-                    let dfa = match regex_automata::hybrid::dfa::DFA::builder()
+                    let dfa = match dfa::DFA::builder()
+                        .configure(dfa::Config::new().unicode_word_boundary(true))
                         .thompson(thompson::Config::new().reverse(true))
                         .build(pattern)
                     {

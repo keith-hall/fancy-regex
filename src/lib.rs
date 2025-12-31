@@ -166,8 +166,9 @@ Look-around assertions for matching without changing the current position:
 
 **Note**: Look-behind assertions with variable length (e.g., `(?<=a+)`) are supported with the
 `variable-lookbehinds` feature (enabled by default). Without this feature, only constant-length
-look-behinds are supported. Variable-length look-behinds with backreferences or other "fancy"
-features are not currently supported.
+look-behinds are supported. Variable-length look-behinds can include word boundaries and other
+zero-width assertions (e.g., `(?<=\ba+)`) as long as the rest of the pattern doesn't use
+backreferences or other "fancy" features that require backtracking within the lookbehind.
 
 Atomic groups using `(?>exp)` to prevent backtracking within `exp`, e.g.:
 
@@ -1897,6 +1898,12 @@ impl Expr {
             Expr::Assertion(Assertion::EndLine { crlf: false }) => buf.push_str("(?m:$)"),
             Expr::Assertion(Assertion::StartLine { crlf: true }) => buf.push_str("(?Rm:^)"),
             Expr::Assertion(Assertion::EndLine { crlf: true }) => buf.push_str("(?Rm:$)"),
+            Expr::Assertion(Assertion::LeftWordBoundary) => buf.push_str(r"\b{start}"),
+            Expr::Assertion(Assertion::RightWordBoundary) => buf.push_str(r"\b{end}"),
+            Expr::Assertion(Assertion::WordBoundary) => buf.push_str(r"\b"),
+            Expr::Assertion(Assertion::NotWordBoundary) => buf.push_str(r"\B"),
+            Expr::Assertion(Assertion::LeftWordHalfBoundary) => buf.push_str(r"\b{start-half}"),
+            Expr::Assertion(Assertion::RightWordHalfBoundary) => buf.push_str(r"\b{end-half}"),
             Expr::Concat(ref children) => {
                 if precedence > 1 {
                     buf.push_str("(?:");

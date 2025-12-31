@@ -113,6 +113,27 @@ fn lookbehind_negative_variable_sized_functionality() {
 }
 
 #[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_with_word_boundary_and_variable_length() {
+    // Test (?<=\ba+)b - word boundary followed by variable-length a's
+    assert_eq!(find(r"(?<=\ba+)b", "aaab"), Some((3, 4)));
+    assert_eq!(find(r"(?<=\ba+)b", " aaab"), Some((4, 5)));
+    assert_eq!(find(r"(?<=\ba+)b", "ab"), Some((1, 2)));
+    assert_eq!(find(r"(?<=\ba+)b", "xaaab"), None); // No word boundary
+    assert_eq!(find(r"(?<=\ba+)b", "b"), None); // No 'a's before 'b'
+
+    // Test (?<=\Bx+)y - NOT word boundary followed by variable-length x's
+    assert_eq!(find(r"(?<=\Bx+)y", "xxxy"), Some((3, 4)));
+    assert_eq!(find(r"(?<=\Bx+)y", "axxxy"), Some((4, 5)));
+    assert_eq!(find(r"(?<=\Bx+)y", "xxy"), Some((2, 3)));
+
+    // Test negative lookbehind with word boundary
+    assert_eq!(find(r"(?<!\ba+)b", "xaaab"), Some((4, 5))); // 'a's not preceded by word boundary
+    assert_eq!(find(r"(?<!\ba+)b", "aaab"), None); // Word boundary before 'a's
+    assert_eq!(find(r"(?<!\ba+)b", " aaab"), None); // Word boundary after space
+}
+
+#[test]
 fn lookbehind_containing_const_size_backref() {
     assert_eq!(find(r"(..)(?<=\1\1)", "yyxxxx"), Some((4, 6)));
 }
