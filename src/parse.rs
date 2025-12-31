@@ -1339,7 +1339,7 @@ fn remap_unicode_property_if_necessary(
                 }
             }
         };
-        match (p, unicode_flag, in_class, neg) {
+        match (p.to_lowercase().as_ref(), unicode_flag, in_class, neg) {
             ("alnum", true, in_c, n) => apply_wrap(r"\p{alpha}\p{digit}", in_c, n),
             ("alnum", false, in_c, n) => apply_wrap(r"[:alnum:]", in_c, n),
             ("blank", true, in_c, n) => apply_wrap(r"\p{Zs}\x09", in_c, n),
