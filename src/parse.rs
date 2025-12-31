@@ -1313,7 +1313,7 @@ fn remap_unicode_property_if_necessary(
     unicode_flag: bool,
     in_class: bool,
 ) -> String {
-    let (neg, prop) = if let Some(p) = property_name.strip_prefix(r"\p{") {
+    let (mut neg, prop) = if let Some(p) = property_name.strip_prefix(r"\p{") {
         (false, p)
     } else if let Some(p) = property_name.strip_prefix(r"\P{") {
         (true, p)
@@ -1321,6 +1321,9 @@ fn remap_unicode_property_if_necessary(
         return String::from(property_name);
     };
     if let Some(p) = prop.strip_suffix('}') {
+        if property_name.strip_prefix(r"^").is_some() {
+            neg = !neg;
+        }
         let apply_wrap = |inner: &str, in_c: bool, n: bool| {
             if in_c {
                 if n {
