@@ -1720,6 +1720,23 @@ pub enum Expr {
     },
     /// Backtracking control verb
     BacktrackingControlVerb(BacktrackingControlVerb),
+    /// Absent repeater `(?~absent)` - works like `\O*` (match any character including newline, repeated)
+    /// but is limited by the range that does not include the string match with `absent`.
+    /// This is a written abbreviation of `(?~|absent|\O*)`.
+    AbsentRepeater(Box<Expr>),
+    /// Absent expression `(?~|absent|exp)` - works like `exp`, but is limited by the range
+    /// that does not include the string match with `absent`.
+    AbsentExpression {
+        /// The expression to avoid matching
+        absent: Box<Expr>,
+        /// The expression to match
+        exp: Box<Expr>,
+    },
+    /// Absent stopper `(?~|absent)` - after this operator, string right range is limited
+    /// at the point that does not include the string match with `absent`.
+    AbsentStopper(Box<Expr>),
+    /// Range clear `(?~|)` - clears the effects caused by absent stoppers.
+    RangeClear,
 }
 
 /// Type of look-around assertion as used for a look-around expression.

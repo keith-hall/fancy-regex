@@ -899,6 +899,9 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?P=") {
             // Backref using Python syntax: (?P=name)
             return self.parse_named_backref(ix + 3, "", ")", false);
+        } else if self.re[ix..].starts_with("?~") {
+            // Absent operators: (?~absent), (?~|absent|exp), (?~|absent), (?~|)
+            return self.parse_absent(ix + 1, depth);
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
@@ -1108,6 +1111,59 @@ impl<'a> Parser<'a> {
             ))
         } else {
             Err(Error::ParseError(ix, ParseError::TargetNotRepeatable))
+        }
+    }
+
+    // ix points to ~ after (?
+    fn parse_absent(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let ix = ix + 1; // skip ~
+        if ix >= self.re.len() {
+            return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
+        }
+
+        if self.re[ix..].starts_with('|') {
+            // (?~|...) - either absent expression, absent stopper, or range clear
+            let ix = ix + 1; // skip |
+
+            // Parse the absent part (up to | or ))
+            let (ix, absent) = self.parse_branch(ix, depth)?;
+
+            if ix >= self.re.len() {
+                return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
+            }
+
+            if self.re.as_bytes()[ix] == b'|' {
+                // (?~|absent|exp) - absent expression
+                let ix = ix + 1; // skip |
+                let (ix, exp) = self.parse_branch(ix, depth)?;
+                let ix = self.check_for_close_paren(ix)?;
+                Ok((
+                    ix,
+                    Expr::AbsentExpression {
+                        absent: Box::new(absent),
+                        exp: Box::new(exp),
+                    },
+                ))
+            } else if self.re.as_bytes()[ix] == b')' {
+                // (?~|absent) - absent stopper, or (?~|) - range clear
+                if absent == Expr::Empty {
+                    Ok((ix + 1, Expr::RangeClear))
+                } else {
+                    Ok((ix + 1, Expr::AbsentStopper(Box::new(absent))))
+                }
+            } else {
+                Err(Error::ParseError(
+                    ix,
+                    ParseError::GeneralParseError(
+                        "expected '|' or ')' in absent expression".to_string(),
+                    ),
+                ))
+            }
+        } else {
+            // (?~absent) - absent repeater
+            let (ix, absent) = self.parse_re(ix, depth)?;
+            let ix = self.check_for_close_paren(ix)?;
+            Ok((ix, Expr::AbsentRepeater(Box::new(absent))))
         }
     }
 
@@ -3119,6 +3175,95 @@ mod tests {
         assert_error(
             "(*RANDOM)",
             "Parsing error at position 1: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
+    fn absent_repeater() {
+        // (?~absent) - absent repeater
+        assert_eq!(
+            p(r"(?~abc)"),
+            Expr::AbsentRepeater(Box::new(Expr::Concat(vec![
+                make_literal("a"),
+                make_literal("b"),
+                make_literal("c"),
+            ])))
+        );
+
+        // Empty absent repeater
+        assert_eq!(p(r"(?~)"), Expr::AbsentRepeater(Box::new(Expr::Empty)));
+    }
+
+    #[test]
+    fn absent_expression() {
+        // (?~|absent|exp) - absent expression
+        assert_eq!(
+            p(r"(?~|abc|\d+)"),
+            Expr::AbsentExpression {
+                absent: Box::new(Expr::Concat(vec![
+                    make_literal("a"),
+                    make_literal("b"),
+                    make_literal("c"),
+                ])),
+                exp: Box::new(Expr::Repeat {
+                    child: Box::new(Expr::Delegate {
+                        inner: "\\d".to_string(),
+                        size: 1,
+                        casei: false
+                    }),
+                    lo: 1,
+                    hi: usize::MAX,
+                    greedy: true
+                }),
+            }
+        );
+
+        // With empty exp
+        assert_eq!(
+            p(r"(?~|abc|)"),
+            Expr::AbsentExpression {
+                absent: Box::new(Expr::Concat(vec![
+                    make_literal("a"),
+                    make_literal("b"),
+                    make_literal("c"),
+                ])),
+                exp: Box::new(Expr::Empty),
+            }
+        );
+    }
+
+    #[test]
+    fn absent_stopper() {
+        // (?~|absent) - absent stopper
+        assert_eq!(
+            p(r"(?~|abc)"),
+            Expr::AbsentStopper(Box::new(Expr::Concat(vec![
+                make_literal("a"),
+                make_literal("b"),
+                make_literal("c"),
+            ])))
+        );
+    }
+
+    #[test]
+    fn range_clear() {
+        // (?~|) - range clear
+        assert_eq!(p(r"(?~|)"), Expr::RangeClear);
+    }
+
+    #[test]
+    fn absent_in_complex_expression() {
+        // Test absent operators in a more complex expression
+        assert_eq!(
+            p(r"a(?~|b|c)d"),
+            Expr::Concat(vec![
+                make_literal("a"),
+                Expr::AbsentExpression {
+                    absent: Box::new(make_literal("b")),
+                    exp: Box::new(make_literal("c")),
+                },
+                make_literal("d"),
+            ])
         );
     }
 }

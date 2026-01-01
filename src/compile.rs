@@ -209,6 +209,26 @@ impl Compiler {
             }
             Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
+            Expr::AbsentRepeater(_) => {
+                return Err(Error::CompileError(Box::new(
+                    CompileError::FeatureNotYetSupported("Absent repeater".to_string()),
+                )));
+            }
+            Expr::AbsentExpression { .. } => {
+                return Err(Error::CompileError(Box::new(
+                    CompileError::FeatureNotYetSupported("Absent expression".to_string()),
+                )));
+            }
+            Expr::AbsentStopper(_) => {
+                return Err(Error::CompileError(Box::new(
+                    CompileError::FeatureNotYetSupported("Absent stopper".to_string()),
+                )));
+            }
+            Expr::RangeClear => {
+                return Err(Error::CompileError(Box::new(
+                    CompileError::FeatureNotYetSupported("Range clear".to_string()),
+                )));
+            }
         }
         Ok(())
     }
@@ -936,6 +956,49 @@ mod tests {
         // the backref to a capture group inside the variable lookbehind makes the capture group hard
         let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
         let info = analyze(&tree, false).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+    }
+
+    #[test]
+    fn absent_operators_error() {
+        // Test that absent repeater returns feature not supported
+        let tree = Expr::parse_tree(r"(?~abc)").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+
+        // Test that absent expression returns feature not supported
+        let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+
+        // Test that absent stopper returns feature not supported
+        let tree = Expr::parse_tree(r"(?~|abc)").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+
+        // Test that range clear returns feature not supported
+        let tree = Expr::parse_tree(r"(?~|)").unwrap();
+        let info = analyze(&tree, true).unwrap();
         let result = compile(&info, true);
         assert!(result.is_err());
         assert_matches!(

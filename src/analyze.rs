@@ -326,6 +326,42 @@ impl<'a> Analyzer<'a> {
                     CompileError::FeatureNotYetSupported("Backref at recursion level".to_string()),
                 )));
             }
+            Expr::AbsentRepeater(ref child) => {
+                let child_info = self.visit(child, min_pos_in_group)?;
+                // For absent repeater, the min_size is 0 (it's like .* which can match nothing)
+                // and it's not const size
+                min_size = 0;
+                const_size = false;
+                hard = true;
+                children.push(child_info);
+            }
+            Expr::AbsentExpression {
+                ref absent,
+                ref exp,
+            } => {
+                let absent_info = self.visit(absent, min_pos_in_group)?;
+                let exp_info = self.visit(exp, min_pos_in_group)?;
+                // For absent expression, min_size comes from exp
+                min_size = exp_info.min_size;
+                const_size = false;
+                hard = true;
+                children.push(absent_info);
+                children.push(exp_info);
+            }
+            Expr::AbsentStopper(ref child) => {
+                let child_info = self.visit(child, min_pos_in_group)?;
+                // Absent stopper doesn't consume any characters itself
+                min_size = 0;
+                const_size = false;
+                hard = true;
+                children.push(child_info);
+            }
+            Expr::RangeClear => {
+                // Range clear doesn't consume any characters
+                min_size = 0;
+                const_size = true;
+                hard = true;
+            }
         };
 
         Ok(Info {
@@ -1197,5 +1233,42 @@ mod tests {
             result.is_ok(),
             "Pattern should not be left-recursive because group m has min_size > 0"
         );
+    }
+
+    #[test]
+    fn absent_repeater_is_hard_and_not_const_size() {
+        let tree = Expr::parse_tree(r"(?~abc)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        assert_eq!(info.min_size, 0);
+        assert!(!info.const_size);
+        assert!(info.hard);
+    }
+
+    #[test]
+    fn absent_expression_is_hard_and_not_const_size() {
+        let tree = Expr::parse_tree(r"(?~|abc|\d+)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        // min_size comes from exp part (\d+ has min_size 1)
+        assert_eq!(info.min_size, 1);
+        assert!(!info.const_size);
+        assert!(info.hard);
+    }
+
+    #[test]
+    fn absent_stopper_is_hard_and_not_const_size() {
+        let tree = Expr::parse_tree(r"(?~|abc)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        assert_eq!(info.min_size, 0);
+        assert!(!info.const_size);
+        assert!(info.hard);
+    }
+
+    #[test]
+    fn range_clear_is_hard_and_const_size() {
+        let tree = Expr::parse_tree(r"(?~|)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        assert_eq!(info.min_size, 0);
+        assert!(info.const_size);
+        assert!(info.hard);
     }
 }
