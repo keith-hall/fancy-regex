@@ -310,6 +310,14 @@ pub enum Insn {
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     BackwardsDelegate(ReverseBackwardsDelegate),
+    /// Absent operator - matches if delegate does not match from current position
+    /// Includes caching for the delegate match result
+    Absent {
+        /// The delegate pattern to check
+        delegate: Delegate,
+        /// Program counter for continuing after absent check
+        next: usize,
+    },
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -926,6 +934,52 @@ pub(crate) fn run(
                             Some(m) => ix = m.offset(),
                             _ => break 'fail,
                         }
+                    }
+                }
+                Insn::Absent { ref delegate, next } => {
+                    // The absent operator matches and consumes the shortest string not containing the delegate pattern
+                    // We check if delegate matches at current position:
+                    // - If yes, we've found the boundary - continue to next instruction at current position (consumed 0 chars)
+                    // - If no, try advancing one character and loop back to check again
+                    // - If we reach end of string, continue to next instruction
+                    
+                    // Pre-allocate inner_slots if needed for capture groups
+                    if let Some(range) = delegate.capture_groups {
+                        let required_size = (range.end() - range.start() + 1) * 2;
+                        if inner_slots.len() < required_size {
+                            inner_slots.resize(required_size, None);
+                        }
+                    }
+                    
+                    // Check if delegate matches at current position
+                    let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
+                    let delegate_matches_here = if delegate.capture_groups.is_some() {
+                        delegate.inner.search_slots(&input, &mut inner_slots).is_some()
+                    } else {
+                        delegate.inner.search_half(&input).is_some()
+                    };
+                    
+                    if delegate_matches_here {
+                        // Delegate matches at current position - we've reached the boundary
+                        // The absent operator has consumed from its start position to here
+                        // Continue to next instruction at current position
+                        pc = next;
+                        continue;
+                    }
+                    
+                    // Delegate doesn't match at current position
+                    if ix < s.len() {
+                        // Advance one character and check again
+                        // Push a backtrack point for continuing to next instruction (if advancing fails)
+                        state.push(next, ix)?;
+                        ix += codepoint_len_at(s, ix);
+                        // Loop back to same pc to check delegate match at new position
+                        continue;
+                    } else {
+                        // Reached end of string - delegate never matched
+                        // The absent operator has consumed from its start to end of string
+                        pc = next;
+                        continue;
                     }
                 }
                 Insn::ContinueFromPreviousMatchEnd { at_start } => {

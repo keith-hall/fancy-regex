@@ -265,6 +265,53 @@ impl<'a> Analyzer<'a> {
                     CompileError::FeatureNotYetSupported("Backref at recursion level".to_string()),
                 )));
             }
+            Expr::Absent(ref child) => {
+                let child_info = self.visit(child, min_pos_in_group)?;
+                
+                // Check if pattern is valid for absent operator
+                // It should not directly contain | (Alt at top level), nested (?~, capture groups, or be hard
+                let has_top_level_alt = matches!(child.as_ref(), Expr::Alt(_));
+                let has_nested_absent = contains_nested_absent(child);
+                let has_capture_groups = child_info.start_group() < child_info.end_group();
+                
+                if has_top_level_alt {
+                    return Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported(
+                            "Absent operator with alternation (|)".to_string()
+                        ),
+                    )));
+                }
+                
+                if has_nested_absent {
+                    return Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported(
+                            "Nested absent operators".to_string()
+                        ),
+                    )));
+                }
+                
+                if has_capture_groups {
+                    return Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported(
+                            "Absent operator with capture groups".to_string()
+                        ),
+                    )));
+                }
+                
+                if child_info.hard {
+                    return Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported(
+                            "Absent operator with hard pattern".to_string()
+                        ),
+                    )));
+                }
+                
+                // Absent operator consumes a variable number of characters (0 to end of string)
+                min_size = 0;
+                const_size = false; // Variable length
+                hard = true;
+                children.push(child_info);
+            }
         };
 
         Ok(Info {
@@ -276,6 +323,27 @@ impl<'a> Analyzer<'a> {
             hard,
             min_pos_in_group,
         })
+    }
+}
+
+fn contains_nested_absent(expr: &Expr) -> bool {
+    match expr {
+        Expr::Absent(_) => true,
+        Expr::Concat(v) | Expr::Alt(v) => v.iter().any(contains_nested_absent),
+        Expr::Group(child) 
+        | Expr::LookAround(child, _) 
+        | Expr::AtomicGroup(child) => contains_nested_absent(child),
+        Expr::Repeat { child, .. } => contains_nested_absent(child),
+        Expr::Conditional {
+            condition,
+            true_branch,
+            false_branch,
+        } => {
+            contains_nested_absent(condition)
+                || contains_nested_absent(true_branch)
+                || contains_nested_absent(false_branch)
+        }
+        _ => false,
     }
 }
 

@@ -909,6 +909,12 @@ impl<'a> Parser<'a> {
             return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with("?P>") {
             return self.parse_named_subroutine_call(ix + 3, "", ")", false);
+        } else if self.re[ix..].starts_with("?~") {
+            // Absent operator: (?~pattern)
+            let ix = ix + 2;
+            let (ix, child) = self.parse_re(ix, depth)?;
+            let ix = self.check_for_close_paren(ix)?;
+            return Ok((ix, Expr::Absent(Box::new(child))));
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
