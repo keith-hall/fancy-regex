@@ -476,7 +476,9 @@ impl Compiler {
             } else if !inner.hard {
                 #[cfg(feature = "variable-lookbehinds")]
                 {
-                    self.compile_variable_lookbehind(inner)
+                    let mut delegate_builder = DelegateBuilder::new();
+                    delegate_builder.push(inner);
+                    self.compile_variable_lookbehind(delegate_builder)
                 }
                 #[cfg(not(feature = "variable-lookbehinds"))]
                 {
@@ -497,12 +499,23 @@ impl Compiler {
                     if can_compile {
                         #[cfg(feature = "variable-lookbehinds")]
                         {
+                            let mut delegate_builder = DelegateBuilder::new();
+                            let mut empty_delegate = true;
                             for child in inner.children.iter().rev() {
                                 if child.hard {
+                                    if !empty_delegate {
+                                        self.compile_variable_lookbehind(delegate_builder)?;
+                                        delegate_builder = DelegateBuilder::new();
+                                        empty_delegate = true;
+                                    }
                                     self.visit(&child, false)?;
                                 } else {
-                                    self.compile_variable_lookbehind(child)?;
+                                    delegate_builder.push(child);
+                                    empty_delegate = false;
                                 }
+                            }
+                            if !empty_delegate {
+                                self.compile_variable_lookbehind(delegate_builder)?;
                             }
                             Ok(())
                         }
@@ -534,9 +547,7 @@ impl Compiler {
         }
     }
 
-    fn compile_variable_lookbehind(&mut self, inner: &Info<'_>) -> Result<()> {
-        let mut delegate_builder = DelegateBuilder::new();
-        delegate_builder.push(inner);
+    fn compile_variable_lookbehind(&mut self, delegate_builder: DelegateBuilder) -> Result<()> {
         let pattern = &delegate_builder.re;
         let capture_groups = delegate_builder
             .capture_groups
@@ -566,7 +577,7 @@ impl Compiler {
         let cache_pool = Pool::new(create);
 
         // Build the forward regex for capture group extraction
-        let forward_regex = if inner.start_group() != inner.end_group() {
+        let forward_regex = if capture_groups.start() != capture_groups.end() {
             Some(compile_inner(pattern, &self.options)?)
         } else {
             None
@@ -959,6 +970,21 @@ mod tests {
         let prog = compile_prog(r"(?<=ab+)x");
 
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "ab+");
+        assert_matches!(prog[2], Restore(0));
+        assert_matches!(prog[3], Lit(ref l) if l == "x");
+        assert_matches!(prog[4], End);
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_lookbehind_with_required_feature_no_captures_hard_const_size_zero_length() {
+        let prog = compile_prog(r"(?<=\bab+)x");
+
+        assert_eq!(prog.len(), 5, "prog: {:?}", prog);
+        //[Save(0), BackwardsDelegate(ReverseBackwardsDelegate { pattern: "b+", capture_groups: None }), BackwardsDelegate(ReverseBackwardsDelegate { pattern: "a", capture_groups: None }), Assertion(WordBoundary), Restore(0), Lit("x"), End]
 
         assert_matches!(prog[0], Save(0));
         assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "ab+");
