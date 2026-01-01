@@ -468,76 +468,15 @@ impl Compiler {
         Ok(())
     }
 
-    /// Check if a hard lookbehind can be compiled as normal.
-    /// This is possible when the lookbehind is a Concat expression where all children
-    /// are either easy (!hard) or have const_size && min_size == 0.
-    fn can_compile_hard_lookbehind_as_normal(&self, inner: &Info<'_>) -> bool {
-        // Check if it's a Concat expression
-        if let Expr::Concat(_) = inner.expr {
-            // All children must be either easy or const-size-0
-            inner
-                .children
-                .iter()
-                .all(|child| !child.hard || (child.const_size && child.min_size == 0))
-        } else {
-            false
-        }
-    }
-
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
             if inner.const_size {
                 self.b.add(Insn::GoBack(inner.min_size));
                 self.visit(inner, false)
-            } else if !inner.hard || self.can_compile_hard_lookbehind_as_normal(inner) {
+            } else if !inner.hard {
                 #[cfg(feature = "variable-lookbehinds")]
                 {
-                    let mut delegate_builder = DelegateBuilder::new();
-                    delegate_builder.push(inner);
-                    let pattern = &delegate_builder.re;
-                    let capture_groups = delegate_builder
-                        .capture_groups
-                        .expect("Expected at least one expression");
-
-                    // Use reverse matching for variable-sized lookbehinds without fancy features
-                    use regex_automata::hybrid::dfa;
-                    use regex_automata::nfa::thompson;
-                    // Build a reverse DFA for the pattern
-                    let dfa = match dfa::DFA::builder()
-                        .configure(dfa::Config::new().unicode_word_boundary(true))
-                        .thompson(thompson::Config::new().reverse(true))
-                        .build(pattern)
-                    {
-                        Ok(dfa) => Arc::new(dfa),
-                        Err(e) => {
-                            return Err(Error::CompileError(Box::new(CompileError::DfaBuildError(
-                                e.to_string(),
-                            ))))
-                        }
-                    };
-
-                    let create: CachePoolFn = alloc::boxed::Box::new({
-                        let dfa = Arc::clone(&dfa);
-                        move || dfa.create_cache()
-                    });
-                    let cache_pool = Pool::new(create);
-
-                    // Build the forward regex for capture group extraction
-                    let forward_regex = if inner.start_group() != inner.end_group() {
-                        Some(compile_inner(pattern, &self.options)?)
-                    } else {
-                        None
-                    };
-
-                    self.b
-                        .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
-                            dfa,
-                            cache_pool,
-                            pattern: pattern.to_string(),
-                            capture_group_extraction_inner: forward_regex,
-                            capture_groups: capture_groups.to_option_if_non_empty(),
-                        }));
-                    Ok(())
+                    self.compile_variable_lookbehind(inner)
                 }
                 #[cfg(not(feature = "variable-lookbehinds"))]
                 {
@@ -546,16 +485,102 @@ impl Compiler {
                     )))
                 }
             } else {
-                // variable sized lookbehinds with fancy features are currently unsupported
-                Err(Error::CompileError(Box::new(
-                    CompileError::FeatureNotYetSupported(
-                        "Variable length lookbehinds with fancy features".to_string(),
-                    ),
-                )))
+                // If the variable lookbehind is a Concat expression where all children
+                // are either easy or are guaranteed to consume 0 characters, then we can
+                // compile it as variable lookbehind.
+                if let Expr::Concat(_) = inner.expr {
+                    let can_compile = inner
+                        .children
+                        .iter()
+                        .all(|child| !child.hard || (child.const_size && child.min_size == 0));
+
+                    if can_compile {
+                        #[cfg(feature = "variable-lookbehinds")]
+                        {
+                            for child in &inner.children {
+                                if child.hard {
+                                    self.visit(&child, false)?;
+                                } else {
+                                    self.compile_variable_lookbehind(inner)?;
+                                }
+                            }
+                            Ok(())
+                        }
+                        #[cfg(not(feature = "variable-lookbehinds"))]
+                        {
+                            Err(Error::CompileError(Box::new(
+                                CompileError::VariableLookBehindRequiresFeature,
+                            )))
+                        }
+                    } else {
+                        //unreachable!("Either the lookbehind is constant size and already handled or variable size and 
+                        Err(Error::CompileError(Box::new(
+                            CompileError::FeatureNotYetSupported(
+                                "Variable length lookbehinds with fancy features".to_string(),
+                            ),
+                        )))
+                    }
+                } else {
+                    // variable sized lookbehinds with fancy features are currently unsupported
+                    Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported(
+                            "Variable length lookbehinds with fancy features".to_string(),
+                        ),
+                    )))
+                }
             }
         } else {
             self.visit(inner, false)
         }
+    }
+
+    fn compile_variable_lookbehind(&mut self, inner: &Info<'_>) -> Result<()> {
+        let mut delegate_builder = DelegateBuilder::new();
+        delegate_builder.push(inner);
+        let pattern = &delegate_builder.re;
+        let capture_groups = delegate_builder
+            .capture_groups
+            .expect("Expected at least one expression");
+
+        // Use reverse matching for variable-sized lookbehinds without fancy features
+        use regex_automata::hybrid::dfa;
+        use regex_automata::nfa::thompson;
+        // Build a reverse DFA for the pattern
+        let dfa = match dfa::DFA::builder()
+            .configure(dfa::Config::new().unicode_word_boundary(true))
+            .thompson(thompson::Config::new().reverse(true))
+            .build(pattern)
+        {
+            Ok(dfa) => Arc::new(dfa),
+            Err(e) => {
+                return Err(Error::CompileError(Box::new(CompileError::DfaBuildError(
+                    e.to_string(),
+                ))))
+            }
+        };
+
+        let create: CachePoolFn = alloc::boxed::Box::new({
+            let dfa = Arc::clone(&dfa);
+            move || dfa.create_cache()
+        });
+        let cache_pool = Pool::new(create);
+
+        // Build the forward regex for capture group extraction
+        let forward_regex = if inner.start_group() != inner.end_group() {
+            Some(compile_inner(pattern, &self.options)?)
+        } else {
+            None
+        };
+
+        self.b
+            .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
+                dfa,
+                cache_pool,
+                pattern: pattern.to_string(),
+                capture_group_extraction_inner: forward_regex,
+                capture_groups: capture_groups.to_option_if_non_empty(),
+            }));
+        Ok(())
     }
 
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {
