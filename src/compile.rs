@@ -499,22 +499,21 @@ impl Compiler {
                     if can_compile {
                         #[cfg(feature = "variable-lookbehinds")]
                         {
-                            let mut delegate_builder = DelegateBuilder::new();
-                            let mut empty_delegate = true;
+                            let mut delegate_nodes = vec![];
                             for child in inner.children.iter().rev() {
                                 if child.hard {
-                                    if !empty_delegate {
+                                    if !delegate_nodes.is_empty() {
+                                        let mut delegate_builder = DelegateBuilder::new();
+                                        
                                         self.compile_variable_lookbehind(delegate_builder)?;
-                                        delegate_builder = DelegateBuilder::new();
-                                        empty_delegate = true;
                                     }
                                     self.visit(&child, false)?;
                                 } else {
-                                    delegate_builder.push(child);
-                                    empty_delegate = false;
+                                    delegate_nodes.push(child); // TODO: prepend
                                 }
                             }
                             if !empty_delegate {
+                                // TODO:
                                 self.compile_variable_lookbehind(delegate_builder)?;
                             }
                             Ok(())
