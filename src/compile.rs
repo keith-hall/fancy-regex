@@ -487,7 +487,7 @@ impl Compiler {
             } else {
                 // If the variable lookbehind is a Concat expression where all children
                 // are either easy or are guaranteed to consume 0 characters, then we can
-                // compile it as variable lookbehind.
+                // compile it as variable lookbehind without additional goback instructions.
                 if let Expr::Concat(_) = inner.expr {
                     let can_compile = inner
                         .children
@@ -497,7 +497,7 @@ impl Compiler {
                     if can_compile {
                         #[cfg(feature = "variable-lookbehinds")]
                         {
-                            for child in &inner.children {
+                            for child in inner.children.iter().rev() {
                                 if child.hard {
                                     self.visit(&child, false)?;
                                 } else {

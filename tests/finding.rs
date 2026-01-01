@@ -134,6 +134,12 @@ fn lookbehind_with_word_boundary_and_variable_length() {
 }
 
 #[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_positive_variable_sized_functionality_unicode() {
+    assert_eq!(find(r"(?<=\b\w+\b)", "ežeras"), Some((7, 7)));
+}
+
+#[test]
 fn lookbehind_containing_const_size_backref() {
     assert_eq!(find(r"(..)(?<=\1\1)", "yyxxxx"), Some((4, 6)));
 }
