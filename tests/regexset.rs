@@ -218,3 +218,212 @@ fn test_match_range() {
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].range(), 4..7);
 }
+
+#[test]
+fn test_disable_easy_pattern() {
+    // Test disabling an easy pattern (one without fancy features)
+    let set = RegexSet::new(&[r"\d+", r"[a-z]+", r"[A-Z]+"]).unwrap();
+
+    // Verify all patterns are enabled by default
+    assert!(set.is_pattern_enabled(0));
+    assert!(set.is_pattern_enabled(1));
+    assert!(set.is_pattern_enabled(2));
+
+    // Disable pattern 1 (lowercase letters)
+    set.disable_pattern(1);
+    assert!(set.is_pattern_enabled(0));
+    assert!(!set.is_pattern_enabled(1));
+    assert!(set.is_pattern_enabled(2));
+
+    let text = "abc 123 XYZ";
+    let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+
+    // Should only match patterns 0 and 2
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].pattern(), 0); // \d+
+    assert_eq!(matches[0].as_str(), "123");
+    assert_eq!(matches[1].pattern(), 2); // [A-Z]+
+    assert_eq!(matches[1].as_str(), "XYZ");
+}
+
+#[test]
+fn test_disable_hard_pattern() {
+    // Test disabling a hard pattern (one with fancy features like backreferences)
+    let set = RegexSet::new(&[r"(\w+)\s+\1", r"\d+"]).unwrap();
+
+    // Disable pattern 0 (backreference pattern)
+    set.disable_pattern(0);
+
+    let text = "hello hello 123";
+    let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+
+    // Should only match pattern 1
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].pattern(), 1); // \d+
+    assert_eq!(matches[0].as_str(), "123");
+}
+
+#[test]
+fn test_enable_pattern() {
+    let set = RegexSet::new(&[r"\d+", r"[a-z]+"]).unwrap();
+
+    // Disable and then re-enable a pattern
+    set.disable_pattern(1);
+    assert!(!set.is_pattern_enabled(1));
+
+    set.enable_pattern(1);
+    assert!(set.is_pattern_enabled(1));
+
+    let text = "abc 123";
+    let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+
+    // Pattern 1 should be working again
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].pattern(), 1); // [a-z]+
+    assert_eq!(matches[0].as_str(), "abc");
+    assert_eq!(matches[1].pattern(), 0); // \d+
+    assert_eq!(matches[1].as_str(), "123");
+}
+
+#[test]
+fn test_disable_all_patterns() {
+    let set = RegexSet::new(&[r"\d+", r"[a-z]+", r"[A-Z]+"]).unwrap();
+
+    // Disable all patterns
+    set.disable_pattern(0);
+    set.disable_pattern(1);
+    set.disable_pattern(2);
+
+    let text = "abc 123 XYZ";
+    let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+
+    // Should find no matches
+    assert_eq!(matches.len(), 0);
+}
+
+#[test]
+fn test_disable_multiple_easy_patterns() {
+    // Test priority resolution when some easy patterns are disabled
+    let set = RegexSet::new(&[r"hello", r"h\w+", r"\w+"]).unwrap();
+
+    // Disable patterns 0 and 1
+    set.disable_pattern(0);
+    set.disable_pattern(1);
+
+    let text = "hello world";
+    let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+
+    // Should only match pattern 2
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].pattern(), 2);
+    assert_eq!(matches[0].as_str(), "hello");
+    assert_eq!(matches[1].pattern(), 2);
+    assert_eq!(matches[1].as_str(), "world");
+}
+
+#[test]
+fn test_disable_mixed_patterns() {
+    // Test with both easy and hard patterns disabled
+    let set = RegexSet::new(&[r"(\w+)\s+\1", r"\d+", r"[a-z]+"]).unwrap();
+
+    // Disable patterns 0 (hard) and 2 (easy)
+    set.disable_pattern(0);
+    set.disable_pattern(2);
+
+    let text = "hello hello abc 123";
+    let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+
+    // Should only match pattern 1
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].pattern(), 1);
+    assert_eq!(matches[0].as_str(), "123");
+}
+
+#[test]
+fn test_disable_pattern_priority() {
+    // Test that when higher priority patterns are disabled, lower priority ones win
+    let set = RegexSet::new(&[r"\w+", r"[a-z]+", r"hello"]).unwrap();
+
+    // Disable patterns 0 and 1
+    set.disable_pattern(0);
+    set.disable_pattern(1);
+
+    let text = "hello world";
+    let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+
+    // Should match pattern 2 twice (hello and world won't match)
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].pattern(), 2);
+    assert_eq!(matches[0].as_str(), "hello");
+}
+
+#[test]
+#[should_panic(expected = "pattern_id out of bounds")]
+fn test_disable_pattern_out_of_bounds() {
+    let set = RegexSet::new(&[r"\d+", r"[a-z]+"]).unwrap();
+    set.disable_pattern(5); // Out of bounds
+}
+
+#[test]
+#[should_panic(expected = "pattern_id out of bounds")]
+fn test_enable_pattern_out_of_bounds() {
+    let set = RegexSet::new(&[r"\d+", r"[a-z]+"]).unwrap();
+    set.enable_pattern(5); // Out of bounds
+}
+
+#[test]
+#[should_panic(expected = "pattern_id out of bounds")]
+fn test_is_pattern_enabled_out_of_bounds() {
+    let set = RegexSet::new(&[r"\d+", r"[a-z]+"]).unwrap();
+    set.is_pattern_enabled(5); // Out of bounds
+}
+
+#[test]
+fn test_disable_with_clone() {
+    // Test that enabling/disabling works correctly with cloned RegexSet
+    let set1 = RegexSet::new(&[r"\d+", r"[a-z]+"]).unwrap();
+    let set2 = set1.clone();
+
+    // Disable pattern on set1
+    set1.disable_pattern(1);
+
+    // Both sets should see the change (they share the enabled_patterns Arc<RwLock>)
+    assert!(!set1.is_pattern_enabled(1));
+    assert!(!set2.is_pattern_enabled(1));
+
+    let text = "abc 123";
+    let matches1: Vec<_> = set1.matches(text).map(|m| m.unwrap()).collect();
+    let matches2: Vec<_> = set2.matches(text).map(|m| m.unwrap()).collect();
+
+    // Both should only match pattern 0
+    assert_eq!(matches1.len(), 1);
+    assert_eq!(matches1[0].pattern(), 0);
+    assert_eq!(matches2.len(), 1);
+    assert_eq!(matches2[0].pattern(), 0);
+}
+
+#[test]
+fn test_hard_pattern_not_executed_when_disabled() {
+    // Test that hard patterns are not executed at all when disabled
+    // This is important for performance - we shouldn't waste time on backtracking
+    // if the pattern is disabled
+    let mut options = RegexOptionsBuilder::new();
+    options.backtrack_limit(10); // Set a very low backtrack limit
+
+    // This pattern would normally exceed the backtrack limit
+    let set = RegexSet::new_with_options(&[r"(x+x+)+(?>y)", r"\d+"], &options).unwrap();
+
+    // Disable the problematic pattern
+    set.disable_pattern(0);
+
+    let text = "xxxxxxxxxxy 123";
+    let matches: Vec<_> = set.matches(text).collect();
+
+    // Should succeed and find pattern 1, not error on pattern 0
+    // because pattern 0 should not be executed at all
+    assert_eq!(matches.len(), 1);
+    assert!(matches[0].is_ok());
+    let m = matches[0].as_ref().unwrap();
+    assert_eq!(m.pattern(), 1);
+    assert_eq!(m.as_str(), "123");
+}

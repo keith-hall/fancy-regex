@@ -83,12 +83,13 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
+use std::sync::RwLock;
 
 use crate::RegexOptionsBuilder;
 
+use bit_set::BitSet;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::Input as RaInput;
-use regex_automata::PatternSet;
 
 use crate::compile::options_to_rabuilder;
 use crate::CompileError;
@@ -148,6 +149,9 @@ use crate::{Captures, Regex, RegexOptions, Result};
 #[derive(Clone, Debug)]
 pub struct RegexSet {
     inner: Arc<RegexSetImpl>,
+    /// Tracks which patterns are enabled (true = enabled, false = disabled)
+    /// Using RwLock for interior mutability with thread safety
+    enabled_patterns: Arc<RwLock<BitSet>>,
 }
 
 #[derive(Debug)]
@@ -249,6 +253,7 @@ impl RegexSet {
         I: IntoIterator<Item = Regex>,
     {
         let regexes_vec: Vec<Regex> = regexes.into_iter().collect();
+        let num_patterns = regexes_vec.len();
 
         if regexes_vec.is_empty() {
             return Ok(RegexSet {
@@ -256,6 +261,7 @@ impl RegexSet {
                     easy_patterns: None,
                     patterns: Vec::new(),
                 }),
+                enabled_patterns: Arc::new(RwLock::new(BitSet::new())),
             });
         }
 
@@ -304,11 +310,18 @@ impl RegexSet {
             None
         };
 
+        // Initialize all patterns as enabled
+        let mut enabled_patterns = BitSet::new();
+        for i in 0..num_patterns {
+            enabled_patterns.insert(i);
+        }
+
         Ok(RegexSet {
             inner: Arc::new(RegexSetImpl {
                 easy_patterns,
                 patterns,
             }),
+            enabled_patterns: Arc::new(RwLock::new(enabled_patterns)),
         })
     }
 
@@ -320,6 +333,121 @@ impl RegexSet {
     /// Returns true if the set contains no patterns.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Disable a pattern in the set.
+    ///
+    /// When a pattern is disabled, it will not be matched by the iterator.
+    /// For easy patterns (those delegated to the DFA), they still participate
+    /// in the DFA but their matches are filtered out. For hard patterns
+    /// (those using backtracking), they are not executed at all when disabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern_id` - The index of the pattern to disable (0-based)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `pattern_id` is out of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use fancy_regex::RegexSet;
+    ///
+    /// # fn main() -> Result<(), fancy_regex::Error> {
+    /// let set = RegexSet::new(&[r"\d+", r"[a-z]+", r"[A-Z]+"])?;
+    ///
+    /// // Disable the second pattern (lowercase letters)
+    /// set.disable_pattern(1);
+    ///
+    /// let text = "abc 123 XYZ";
+    /// let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+    ///
+    /// // Only patterns 0 and 2 should match
+    /// assert_eq!(matches.len(), 2);
+    /// assert_eq!(matches[0].pattern(), 0); // \d+
+    /// assert_eq!(matches[1].pattern(), 2); // [A-Z]+
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn disable_pattern(&self, pattern_id: usize) {
+        assert!(pattern_id < self.len(), "pattern_id out of bounds");
+        self.enabled_patterns.write().unwrap().remove(pattern_id);
+    }
+
+    /// Enable a pattern in the set.
+    ///
+    /// Re-enables a previously disabled pattern. Patterns are enabled by default
+    /// when the RegexSet is created.
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern_id` - The index of the pattern to enable (0-based)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `pattern_id` is out of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use fancy_regex::RegexSet;
+    ///
+    /// # fn main() -> Result<(), fancy_regex::Error> {
+    /// let set = RegexSet::new(&[r"\d+", r"[a-z]+"])?;
+    ///
+    /// // Disable then re-enable pattern 1
+    /// set.disable_pattern(1);
+    /// set.enable_pattern(1);
+    ///
+    /// let text = "abc";
+    /// let matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
+    ///
+    /// assert_eq!(matches.len(), 1);
+    /// assert_eq!(matches[0].pattern(), 1); // Pattern is enabled again
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn enable_pattern(&self, pattern_id: usize) {
+        assert!(pattern_id < self.len(), "pattern_id out of bounds");
+        self.enabled_patterns.write().unwrap().insert(pattern_id);
+    }
+
+    /// Check if a pattern is enabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern_id` - The index of the pattern to check (0-based)
+    ///
+    /// # Returns
+    ///
+    /// `true` if the pattern is enabled, `false` if it's disabled.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `pattern_id` is out of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use fancy_regex::RegexSet;
+    ///
+    /// # fn main() -> Result<(), fancy_regex::Error> {
+    /// let set = RegexSet::new(&[r"\d+", r"[a-z]+"])?;
+    ///
+    /// assert!(set.is_pattern_enabled(0));
+    /// assert!(set.is_pattern_enabled(1));
+    ///
+    /// set.disable_pattern(1);
+    /// assert!(set.is_pattern_enabled(0));
+    /// assert!(!set.is_pattern_enabled(1));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn is_pattern_enabled(&self, pattern_id: usize) -> bool {
+        assert!(pattern_id < self.len(), "pattern_id out of bounds");
+        self.enabled_patterns.read().unwrap().contains(pattern_id)
     }
 
     /// Create a new matches iterator for the given haystack.
@@ -367,7 +495,6 @@ impl RegexSet {
             current_pos: range.start,
             pattern_cache: vec![None; self.inner.patterns.len()],
             easy_next_match: None,
-            pattern_set: None,
         }
     }
 }
@@ -477,8 +604,6 @@ pub struct RegexSetMatches<'h> {
     pattern_cache: Vec<Option<(usize, usize, Captures<'h>)>>,
     // For easy patterns: stores the DFA pattern index from the next dfa.find()
     easy_next_match: Option<(usize, Range<usize>)>,
-    // Reusable PatternSet for which_overlapping_matches
-    pattern_set: Option<PatternSet>,
 }
 
 impl<'h> Iterator for RegexSetMatches<'h> {
@@ -511,20 +636,18 @@ impl<'h> Iterator for RegexSetMatches<'h> {
             }
 
             // If we have a possible DFA match, check the matching easy patterns at that position
-            if let Some((dfa_pattern_idx, ref dfa_range)) = self.easy_next_match {
+            if let Some((_dfa_pattern_idx, ref dfa_range)) = self.easy_next_match {
                 if dfa_range.start >= self.current_pos {
-                    match self.check_easy_patterns_at_position(
-                        dfa_range.start,
-                        dfa_pattern_idx,
-                        &dfa_range.clone(),
-                    ) {
+                    match self.check_easy_patterns_at_position(dfa_range.start) {
                         Ok(Some(m)) => {
                             earliest_match = Some((m.start(), m.pattern(), m));
                         }
                         Ok(None) => {
-                            // No match, invalidate and continue
-                            self.easy_next_match = None;
-                            continue;
+                            // No enabled patterns match at this DFA position (all are disabled).
+                            // Keep easy_next_match set so we can skip past this position later.
+                            // We'll continue checking hard patterns in this iteration, and if none
+                            // match earlier, the None branch at the end will advance past this DFA
+                            // match and search for the next one.
                         }
                         Err(e) => {
                             // Stop on first error: If an error is encountered, return it, and set the
@@ -549,6 +672,17 @@ impl<'h> Iterator for RegexSetMatches<'h> {
                         // This is an easy pattern, already handled above
                         continue;
                     }
+                }
+
+                // Skip if this pattern is disabled
+                if !self
+                    .set
+                    .enabled_patterns
+                    .read()
+                    .unwrap()
+                    .contains(pattern.pattern_id)
+                {
+                    continue;
                 }
 
                 // Search this pattern if not cached
@@ -610,7 +744,27 @@ impl<'h> Iterator for RegexSetMatches<'h> {
                     return Some(Ok(match_result));
                 }
                 None => {
-                    // No matches found
+                    // No matches found in this iteration.
+                    // Check if we have a disabled DFA match that we need to skip past.
+                    if let Some((_, ref dfa_range)) = self.easy_next_match {
+                        // We have a DFA match but all patterns at that position are disabled.
+                        // We need to advance past the END of this match to avoid finding
+                        // overlapping matches of the same disabled pattern.
+                        let match_len = dfa_range.end - dfa_range.start;
+                        if match_len == 0 {
+                            // Zero-width match, advance by one character
+                            self.current_pos = crate::next_utf8(self.haystack, dfa_range.start);
+                        } else {
+                            // Non-zero width match, advance to the end
+                            self.current_pos = dfa_range.end;
+                        }
+                        // Invalidate the DFA match so we search for the next one
+                        self.easy_next_match = None;
+                        // Continue to next iteration
+                        continue;
+                    }
+
+                    // No matches found at all
                     return None;
                 }
             }
@@ -621,68 +775,41 @@ impl<'h> Iterator for RegexSetMatches<'h> {
 impl<'h> RegexSetMatches<'h> {
     /// Check all easy patterns at a specific position to find the best match.
     ///
-    /// Uses which_overlapping_matches to find all patterns that match at the position,
-    /// then selects the one with the lowest index and extracts its captures.
-    fn check_easy_patterns_at_position(
-        &mut self,
-        pos: usize,
-        dfa_pattern_idx: usize,
-        dfa_range: &Range<usize>,
-    ) -> Result<Option<RegexSetMatch<'h>>> {
+    /// Checks each easy pattern individually to find the lowest-index enabled pattern
+    /// that matches at the given position.
+    fn check_easy_patterns_at_position(&mut self, pos: usize) -> Result<Option<RegexSetMatch<'h>>> {
         if let Some(ref easy_set) = self.set.inner.easy_patterns {
-            // Initialize pattern_set if needed
-            if self.pattern_set.is_none() {
-                self.pattern_set = Some(PatternSet::new(easy_set.pattern_indices.len()));
-            }
+            let enabled_patterns = self.set.enabled_patterns.read().unwrap();
 
-            // Use which_overlapping_matches to find all patterns that match starting at pos
-            let input = RaInput::new(self.haystack).span(pos..self.range.end);
+            // Check each easy pattern in priority order (lowest index first)
+            for (_dfa_idx, &pattern_idx) in easy_set.pattern_indices.iter().enumerate() {
+                // Skip if this pattern is disabled
+                if !enabled_patterns.contains(pattern_idx) {
+                    continue;
+                }
 
-            let pattern_set = self.pattern_set.as_mut().unwrap();
-            pattern_set.clear();
-            easy_set.dfa.which_overlapping_matches(&input, pattern_set);
-
-            // Find the pattern with the lowest index that matches at this position
-            if let Some(dfa_pattern_id) = pattern_set.iter().next() {
-                let dfa_idx = dfa_pattern_id.as_usize();
-                // Map DFA pattern index to actual pattern index
-                let pattern_idx = easy_set.pattern_indices[dfa_idx];
                 let pattern = &self.set.inner.patterns[pattern_idx];
 
-                // Determine the match range
-                let range = if dfa_idx == dfa_pattern_idx && dfa_range.start == pos {
-                    // Use cached range from DFA
-                    dfa_range.clone()
-                } else {
-                    // Need to find the actual range for this pattern
-                    let search_input = RaInput::new(self.haystack)
-                        .range(self.range.clone())
-                        .span(pos..self.range.end);
-
-                    if let Some(mat) = easy_set.dfa.find(search_input) {
-                        if mat.pattern().as_usize() == dfa_idx && mat.start() == pos {
-                            mat.start()..mat.end()
-                        } else {
-                            // DFA found a different pattern, skip this
-                            return Ok(None);
+                // Check if this pattern matches at pos
+                // Use the pattern's individual Regex to check
+                match pattern.regex.find_from_pos(self.haystack, pos)? {
+                    Some(m) if m.start() == pos => {
+                        // This pattern matches at the expected position
+                        // Extract captures
+                        match pattern.regex.captures_from_pos(self.haystack, pos)? {
+                            Some(captures) => {
+                                return Ok(Some(RegexSetMatch {
+                                    pattern_index: pattern.pattern_id,
+                                    captures,
+                                }));
+                            }
+                            None => continue,
                         }
-                    } else {
-                        return Ok(None);
                     }
-                };
-
-                // Use the pattern's Regex to extract captures
-                match pattern
-                    .regex
-                    .captures_from_pos(self.haystack, range.start)?
-                {
-                    Some(captures) => {
-                        return Ok(Some(RegexSetMatch {
-                            pattern_index: pattern.pattern_id,
-                            captures,
-                        }));
+                    _ => {
+                        // Pattern doesn't match at this position
+                        continue;
                     }
-                    None => return Ok(None),
                 }
             }
         }
