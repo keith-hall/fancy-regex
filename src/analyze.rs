@@ -38,7 +38,7 @@ use alloc::collections::BTreeMap as Map;
 #[cfg(feature = "std")]
 use std::collections::HashMap as Map;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Info<'a> {
     pub(crate) capture_groups: CaptureGroupRange,
     pub(crate) min_size: usize,
@@ -112,11 +112,55 @@ struct Analyzer<'a> {
     inside_zero_rep: bool,
     /// Groups that are directly executed from root (not inside {0})
     root_groups: BitSet,
-    /// Contains subroutine calls to groups which weren't analyzed yet at the time of the call
-    contains_forward_referenced_subroutines: bool,
+    /// Maps capture group numbers to their Expr (the child of Expr::Group)
+    group_exprs: Map<usize, &'a Expr>,
+    /// Stores the analyzed Info for each capture group to enable reuse
+    analyzed_groups: Map<usize, Info<'a>>,
+    /// Tracks groups currently being analyzed to prevent infinite recursion
+    currently_analyzing: BitSet,
 }
 
 impl<'a> Analyzer<'a> {
+    /// Collects all capture groups and their expressions from the tree
+    fn collect_groups(&mut self, expr: &'a Expr, start_group: usize) {
+        let mut group_ix = start_group;
+        self.collect_groups_impl(expr, &mut group_ix);
+    }
+
+    fn collect_groups_impl(&mut self, expr: &'a Expr, group_ix: &mut usize) {
+        match expr {
+            Expr::Group(child) => {
+                let group = *group_ix;
+                *group_ix += 1;
+                // Store the reference to the inner expression of this group
+                self.group_exprs.insert(group, child.as_ref());
+                // Recursively collect from the child
+                self.collect_groups_impl(child, group_ix);
+            }
+            Expr::Concat(children) | Expr::Alt(children) => {
+                for child in children {
+                    self.collect_groups_impl(child, group_ix);
+                }
+            }
+            Expr::Repeat { child, .. }
+            | Expr::LookAround(child, _)
+            | Expr::AtomicGroup(child) => {
+                self.collect_groups_impl(child, group_ix);
+            }
+            Expr::Conditional {
+                condition,
+                true_branch,
+                false_branch,
+            } => {
+                self.collect_groups_impl(condition, group_ix);
+                self.collect_groups_impl(true_branch, group_ix);
+                self.collect_groups_impl(false_branch, group_ix);
+            }
+            // Other expressions don't contain groups
+            _ => {}
+        }
+    }
+
     fn visit(&mut self, expr: &'a Expr, min_pos_in_group: usize) -> Result<Info<'a>> {
         let start_group = self.group_ix;
         let mut children = Vec::new();
@@ -169,25 +213,45 @@ impl<'a> Analyzer<'a> {
             Expr::Group(ref child) => {
                 let group = self.group_ix;
                 self.group_ix += 1;
-                let prev_group = self.current_group;
-                self.current_group = group;
-                let child_info = self.visit(child, 0)?;
-                self.current_group = prev_group;
-                min_size = child_info.min_size;
-                const_size = child_info.const_size;
-                // Store the group info for use by backrefs
-                self.group_info.insert(
-                    group,
-                    SizeInfo {
-                        min_size,
-                        const_size,
-                    },
-                );
-                // If there's a backref to this group, we potentially have to backtrack within the
-                // group. E.g. with `(x|xy)\1` and input `xyxy`, `x` matches but then the backref
-                // doesn't, so we have to backtrack and try `xy`.
-                hard = child_info.hard | self.backrefs.contains(group);
-                children.push(child_info);
+                
+                // Track if this group is executed from root (not inside {0})
+                if self.current_group == 0 && !self.inside_zero_rep {
+                    self.root_groups.insert(group);
+                }
+                
+                // Check if we've already analyzed this group
+                if let Some(cached_info) = self.analyzed_groups.get(&group) {
+                    // Reuse the previously analyzed Info
+                    min_size = cached_info.min_size;
+                    const_size = cached_info.const_size;
+                    hard = cached_info.hard;
+                    // Clone the cached info for this node's children
+                    children.push(cached_info.clone());
+                } else {
+                    // Analyze the group for the first time
+                    let prev_group = self.current_group;
+                    self.current_group = group;
+                    let child_info = self.visit(child, 0)?;
+                    self.current_group = prev_group;
+                    min_size = child_info.min_size;
+                    const_size = child_info.const_size;
+                    // Store the group info for use by backrefs
+                    self.group_info.insert(
+                        group,
+                        SizeInfo {
+                            min_size,
+                            const_size,
+                        },
+                    );
+                    // If there's a backref to this group, we potentially have to backtrack within the
+                    // group. E.g. with `(x|xy)\1` and input `xyxy`, `x` matches but then the backref
+                    // doesn't, so we have to backtrack and try `xy`.
+                    hard = child_info.hard | self.backrefs.contains(group);
+                    
+                    // Store in analyzed_groups for future reuse
+                    self.analyzed_groups.insert(group, child_info.clone());
+                    children.push(child_info);
+                }
             }
             Expr::LookAround(ref child, _) => {
                 // NOTE: min_pos_in_group might seem weird for lookbehinds
@@ -307,12 +371,45 @@ impl<'a> Analyzer<'a> {
                 {
                     min_size = group_min_size;
                     const_size = group_const_size;
-                } else {
-                    // If the group hasn't been seen yet (forward reference),
-                    // use conservative defaults
+                } else if self.currently_analyzing.contains(target_group) {
+                    // We're already analyzing this group - this is a recursive call
+                    // Use conservative defaults to avoid infinite recursion
                     min_size = 0;
                     const_size = false;
-                    self.contains_forward_referenced_subroutines = true;
+                } else if let Some(&group_expr) = self.group_exprs.get(&target_group) {
+                    // If the group hasn't been analyzed yet (forward reference),
+                    // analyze it now before continuing
+                    let prev_group_ix = self.group_ix;
+                    let prev_current_group = self.current_group;
+                    let prev_inside_zero_rep = self.inside_zero_rep;
+                    
+                    // Mark this group as being analyzed
+                    self.currently_analyzing.insert(target_group);
+                    
+                    // Set up state for analyzing the target group
+                    self.group_ix = target_group + 1; // Will be incremented when we visit the Group
+                    self.current_group = target_group;
+                    self.inside_zero_rep = false; // The group being called is reachable via subroutine
+                    
+                    // Analyze the target group
+                    let target_info = self.visit(group_expr, 0)?;
+                    
+                    // Unmark this group
+                    self.currently_analyzing.remove(target_group);
+                    
+                    // Restore state
+                    self.group_ix = prev_group_ix;
+                    self.current_group = prev_current_group;
+                    self.inside_zero_rep = prev_inside_zero_rep;
+                    
+                    // Use the analyzed info
+                    min_size = target_info.min_size;
+                    const_size = target_info.const_size;
+                } else {
+                    // Group doesn't exist - this shouldn't happen in well-formed regexes
+                    // Use conservative defaults
+                    min_size = 0;
+                    const_size = false;
                 }
                 hard = true;
             }
@@ -408,144 +505,6 @@ impl<'a> Analyzer<'a> {
         reachable
     }
 
-    /// Rebuild subroutine_calls map by walking the Info tree with correct group sizes
-    /// This fixes issues with forward references where min_size was unknown during first pass
-    fn rebuild_subroutine_calls(
-        &mut self,
-        info: &Info<'a>,
-        current_group: usize,
-        inside_zero_rep: bool,
-    ) {
-        self.rebuild_subroutine_calls_impl(info, current_group, 0, inside_zero_rep);
-    }
-
-    fn rebuild_subroutine_calls_impl(
-        &mut self,
-        info: &Info<'a>,
-        current_group: usize,
-        min_pos_in_group: usize,
-        inside_zero_rep: bool,
-    ) {
-        match info.expr {
-            Expr::Group(_) => {
-                let group = info.start_group();
-                // Track if this group is executed from root (not inside {0})
-                if current_group == 0 && !inside_zero_rep {
-                    self.root_groups.insert(group);
-                }
-                // Recurse into the group with position reset to 0
-                if !info.children.is_empty() {
-                    self.rebuild_subroutine_calls_impl(
-                        &info.children[0],
-                        group,
-                        0,
-                        inside_zero_rep,
-                    );
-                }
-            }
-            Expr::Concat(ref _v) => {
-                let mut pos = min_pos_in_group;
-                for child in info.children.iter() {
-                    self.rebuild_subroutine_calls_impl(child, current_group, pos, inside_zero_rep);
-
-                    // For SubroutineCalls, use the actual group's min_size, not the Info's min_size
-                    // (which might be 0 due to forward references)
-                    let child_min_size = if let Expr::SubroutineCall(target_group) = child.expr {
-                        self.group_info
-                            .get(target_group)
-                            .map(|si| si.min_size)
-                            .unwrap_or(child.min_size)
-                    } else {
-                        child.min_size
-                    };
-
-                    pos += child_min_size;
-                }
-            }
-            Expr::Alt(_) => {
-                // All alternatives start at the same position
-                for child in &info.children {
-                    self.rebuild_subroutine_calls_impl(
-                        child,
-                        current_group,
-                        min_pos_in_group,
-                        inside_zero_rep,
-                    );
-                }
-            }
-            Expr::Repeat { hi, .. } => {
-                let new_inside_zero_rep = inside_zero_rep || *hi == 0;
-                if !info.children.is_empty() {
-                    self.rebuild_subroutine_calls_impl(
-                        &info.children[0],
-                        current_group,
-                        min_pos_in_group,
-                        new_inside_zero_rep,
-                    );
-                }
-            }
-            Expr::SubroutineCall(target_group) => {
-                // Track this call with the correct position
-                // Always track calls inside groups (they can be reached via subroutine calls)
-                // Only skip calls at root level that are inside {0}
-                if !inside_zero_rep || current_group != 0 {
-                    self.subroutine_calls
-                        .entry(current_group)
-                        .or_insert_with(Vec::new)
-                        .push(SubroutineCallInfo {
-                            target_group: *target_group,
-                            min_pos: min_pos_in_group,
-                        });
-                }
-            }
-            Expr::LookAround(_, _) | Expr::AtomicGroup(_) => {
-                if !info.children.is_empty() {
-                    self.rebuild_subroutine_calls_impl(
-                        &info.children[0],
-                        current_group,
-                        min_pos_in_group,
-                        inside_zero_rep,
-                    );
-                }
-            }
-            Expr::Conditional { .. } => {
-                // Conditional has 3 children: condition, true_branch, false_branch
-                if info.children.len() >= 3 {
-                    self.rebuild_subroutine_calls_impl(
-                        &info.children[0],
-                        current_group,
-                        min_pos_in_group,
-                        inside_zero_rep,
-                    );
-                    let cond_size = info.children[0].min_size;
-                    self.rebuild_subroutine_calls_impl(
-                        &info.children[1],
-                        current_group,
-                        min_pos_in_group + cond_size,
-                        inside_zero_rep,
-                    );
-                    self.rebuild_subroutine_calls_impl(
-                        &info.children[2],
-                        current_group,
-                        min_pos_in_group,
-                        inside_zero_rep,
-                    );
-                }
-            }
-            _ => {
-                // For other expressions, just recurse into children
-                for child in &info.children {
-                    self.rebuild_subroutine_calls_impl(
-                        child,
-                        current_group,
-                        min_pos_in_group,
-                        inside_zero_rep,
-                    );
-                }
-            }
-        }
-    }
-
     /// Depth-first search to detect left recursion
     /// Returns true if left recursion is detected
     fn dfs_check_left_recursion(
@@ -606,8 +565,13 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         current_group: 0, // Always start at group 0 (the implicit whole-pattern group)
         inside_zero_rep: false,
         root_groups: BitSet::new(),
-        contains_forward_referenced_subroutines: false,
+        group_exprs: Map::new(),
+        analyzed_groups: Map::new(),
+        currently_analyzing: BitSet::new(),
     };
+
+    // First, collect all capture groups and their expressions
+    analyzer.collect_groups(&tree.expr, start_group);
 
     let analyzed = analyzer.visit(&tree.expr, 0);
     if analyzer.backrefs.contains(0) {
@@ -631,13 +595,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
 
     // Check for left-recursive subroutine calls (only if subroutines are present)
     if tree.contains_subroutines {
-        if let Ok(analyzed_ref) = analyzed.as_ref() {
-            if analyzer.contains_forward_referenced_subroutines {
-                // Clear and rebuild subroutine_calls with correct positions
-                // This is necessary because forward references may have caused incorrect positions
-                analyzer.subroutine_calls.clear();
-                analyzer.rebuild_subroutine_calls(analyzed_ref, 0, false);
-            }
+        if let Ok(_) = analyzed.as_ref() {
             analyzer.check_left_recursion(&tree.named_groups)?;
         }
     }
