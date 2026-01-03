@@ -82,8 +82,8 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::cell::RefCell;
 use core::ops::Range;
+use std::sync::RwLock;
 
 use crate::RegexOptionsBuilder;
 
@@ -150,8 +150,8 @@ use crate::{Captures, Regex, RegexOptions, Result};
 pub struct RegexSet {
     inner: Arc<RegexSetImpl>,
     /// Tracks which patterns are enabled (true = enabled, false = disabled)
-    /// Using RefCell for interior mutability since RegexSet needs to be cheaply cloneable
-    enabled_patterns: Arc<RefCell<BitSet>>,
+    /// Using RwLock for interior mutability with thread safety
+    enabled_patterns: Arc<RwLock<BitSet>>,
 }
 
 #[derive(Debug)]
@@ -261,7 +261,7 @@ impl RegexSet {
                     easy_patterns: None,
                     patterns: Vec::new(),
                 }),
-                enabled_patterns: Arc::new(RefCell::new(BitSet::new())),
+                enabled_patterns: Arc::new(RwLock::new(BitSet::new())),
             });
         }
 
@@ -321,7 +321,7 @@ impl RegexSet {
                 easy_patterns,
                 patterns,
             }),
-            enabled_patterns: Arc::new(RefCell::new(enabled_patterns)),
+            enabled_patterns: Arc::new(RwLock::new(enabled_patterns)),
         })
     }
 
@@ -373,7 +373,7 @@ impl RegexSet {
     /// ```
     pub fn disable_pattern(&self, pattern_id: usize) {
         assert!(pattern_id < self.len(), "pattern_id out of bounds");
-        self.enabled_patterns.borrow_mut().remove(pattern_id);
+        self.enabled_patterns.write().unwrap().remove(pattern_id);
     }
 
     /// Enable a pattern in the set.
@@ -411,7 +411,7 @@ impl RegexSet {
     /// ```
     pub fn enable_pattern(&self, pattern_id: usize) {
         assert!(pattern_id < self.len(), "pattern_id out of bounds");
-        self.enabled_patterns.borrow_mut().insert(pattern_id);
+        self.enabled_patterns.write().unwrap().insert(pattern_id);
     }
 
     /// Check if a pattern is enabled.
@@ -447,7 +447,7 @@ impl RegexSet {
     /// ```
     pub fn is_pattern_enabled(&self, pattern_id: usize) -> bool {
         assert!(pattern_id < self.len(), "pattern_id out of bounds");
-        self.enabled_patterns.borrow().contains(pattern_id)
+        self.enabled_patterns.read().unwrap().contains(pattern_id)
     }
 
     /// Create a new matches iterator for the given haystack.
@@ -678,7 +678,13 @@ impl<'h> Iterator for RegexSetMatches<'h> {
                 }
 
                 // Skip if this pattern is disabled
-                if !self.set.enabled_patterns.borrow().contains(pattern.pattern_id) {
+                if !self
+                    .set
+                    .enabled_patterns
+                    .read()
+                    .unwrap()
+                    .contains(pattern.pattern_id)
+                {
                     continue;
                 }
 
@@ -760,7 +766,7 @@ impl<'h> Iterator for RegexSetMatches<'h> {
                         // Continue to next iteration
                         continue;
                     }
-                    
+
                     // No matches found at all
                     return None;
                 }
@@ -781,15 +787,15 @@ impl<'h> RegexSetMatches<'h> {
         _dfa_range: &Range<usize>,
     ) -> Result<Option<RegexSetMatch<'h>>> {
         if let Some(ref easy_set) = self.set.inner.easy_patterns {
-            let enabled_patterns = self.set.enabled_patterns.borrow();
-            
+            let enabled_patterns = self.set.enabled_patterns.read().unwrap();
+
             // Check each easy pattern in priority order (lowest index first)
             for (_dfa_idx, &pattern_idx) in easy_set.pattern_indices.iter().enumerate() {
                 // Skip if this pattern is disabled
                 if !enabled_patterns.contains(pattern_idx) {
                     continue;
                 }
-                
+
                 let pattern = &self.set.inner.patterns[pattern_idx];
 
                 // Check if this pattern matches at pos
