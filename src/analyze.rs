@@ -128,36 +128,19 @@ impl<'a> Analyzer<'a> {
     }
 
     fn collect_groups_impl(&mut self, expr: &'a Expr, group_ix: &mut usize) {
-        match expr {
-            Expr::Group(child) => {
-                let group = *group_ix;
-                *group_ix += 1;
-                // Store the reference to the inner expression of this group
-                self.group_exprs.insert(group, child.as_ref());
-                // Recursively collect from the child
+        // Special handling for Group nodes
+        if let Expr::Group(child) = expr {
+            let group = *group_ix;
+            *group_ix += 1;
+            // Store the reference to the inner expression of this group
+            self.group_exprs.insert(group, child.as_ref());
+            // Recursively collect from the child
+            self.collect_groups_impl(child, group_ix);
+        } else {
+            // For all other nodes, recursively process their children
+            for child in expr.children_iter() {
                 self.collect_groups_impl(child, group_ix);
             }
-            Expr::Concat(children) | Expr::Alt(children) => {
-                for child in children {
-                    self.collect_groups_impl(child, group_ix);
-                }
-            }
-            Expr::Repeat { child, .. }
-            | Expr::LookAround(child, _)
-            | Expr::AtomicGroup(child) => {
-                self.collect_groups_impl(child, group_ix);
-            }
-            Expr::Conditional {
-                condition,
-                true_branch,
-                false_branch,
-            } => {
-                self.collect_groups_impl(condition, group_ix);
-                self.collect_groups_impl(true_branch, group_ix);
-                self.collect_groups_impl(false_branch, group_ix);
-            }
-            // Other expressions don't contain groups
-            _ => {}
         }
     }
 
@@ -213,12 +196,12 @@ impl<'a> Analyzer<'a> {
             Expr::Group(ref child) => {
                 let group = self.group_ix;
                 self.group_ix += 1;
-                
+
                 // Track if this group is executed from root (not inside {0})
                 if self.current_group == 0 && !self.inside_zero_rep {
                     self.root_groups.insert(group);
                 }
-                
+
                 // Check if we've already analyzed this group
                 if let Some(cached_info) = self.analyzed_groups.get(&group) {
                     // Reuse the previously analyzed Info
@@ -247,7 +230,7 @@ impl<'a> Analyzer<'a> {
                     // group. E.g. with `(x|xy)\1` and input `xyxy`, `x` matches but then the backref
                     // doesn't, so we have to backtrack and try `xy`.
                     hard = child_info.hard | self.backrefs.contains(group);
-                    
+
                     // Store in analyzed_groups for future reuse
                     self.analyzed_groups.insert(group, child_info.clone());
                     children.push(child_info);
@@ -382,26 +365,26 @@ impl<'a> Analyzer<'a> {
                     let prev_group_ix = self.group_ix;
                     let prev_current_group = self.current_group;
                     let prev_inside_zero_rep = self.inside_zero_rep;
-                    
+
                     // Mark this group as being analyzed
                     self.currently_analyzing.insert(target_group);
-                    
+
                     // Set up state for analyzing the target group
                     self.group_ix = target_group + 1; // Will be incremented when we visit the Group
                     self.current_group = target_group;
                     self.inside_zero_rep = false; // The group being called is reachable via subroutine
-                    
+
                     // Analyze the target group
                     let target_info = self.visit(group_expr, 0)?;
-                    
+
                     // Unmark this group
                     self.currently_analyzing.remove(target_group);
-                    
+
                     // Restore state
                     self.group_ix = prev_group_ix;
                     self.current_group = prev_current_group;
                     self.inside_zero_rep = prev_inside_zero_rep;
-                    
+
                     // Use the analyzed info
                     min_size = target_info.min_size;
                     const_size = target_info.const_size;
@@ -570,8 +553,11 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         currently_analyzing: BitSet::new(),
     };
 
-    // First, collect all capture groups and their expressions
-    analyzer.collect_groups(&tree.expr, start_group);
+    // Only collect groups if the tree contains subroutines
+    // This avoids iterating over the entire ExprTree twice when subroutines are not present
+    if tree.contains_subroutines {
+        analyzer.collect_groups(&tree.expr, start_group);
+    }
 
     let analyzed = analyzer.visit(&tree.expr, 0);
     if analyzer.backrefs.contains(0) {
