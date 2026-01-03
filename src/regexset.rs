@@ -636,21 +636,18 @@ impl<'h> Iterator for RegexSetMatches<'h> {
             }
 
             // If we have a possible DFA match, check the matching easy patterns at that position
-            if let Some((dfa_pattern_idx, ref dfa_range)) = self.easy_next_match {
+            if let Some((_dfa_pattern_idx, ref dfa_range)) = self.easy_next_match {
                 if dfa_range.start >= self.current_pos {
-                    match self.check_easy_patterns_at_position(
-                        dfa_range.start,
-                        dfa_pattern_idx,
-                        &dfa_range.clone(),
-                    ) {
+                    match self.check_easy_patterns_at_position(dfa_range.start) {
                         Ok(Some(m)) => {
                             earliest_match = Some((m.start(), m.pattern(), m));
                         }
                         Ok(None) => {
-                            // No enabled pattern matched at this DFA position.
-                            // We'll check hard patterns, and if none match before this position,
-                            // we'll advance past it in the None branch below.
-                            // Don't invalidate easy_next_match yet - we need it to know to skip past this.
+                            // No enabled patterns match at this DFA position (all are disabled).
+                            // Keep easy_next_match set so we can skip past this position later.
+                            // We'll continue checking hard patterns in this iteration, and if none
+                            // match earlier, the None branch at the end will advance past this DFA
+                            // match and search for the next one.
                         }
                         Err(e) => {
                             // Stop on first error: If an error is encountered, return it, and set the
@@ -780,12 +777,7 @@ impl<'h> RegexSetMatches<'h> {
     ///
     /// Checks each easy pattern individually to find the lowest-index enabled pattern
     /// that matches at the given position.
-    fn check_easy_patterns_at_position(
-        &mut self,
-        pos: usize,
-        _dfa_pattern_idx: usize,
-        _dfa_range: &Range<usize>,
-    ) -> Result<Option<RegexSetMatch<'h>>> {
+    fn check_easy_patterns_at_position(&mut self, pos: usize) -> Result<Option<RegexSetMatch<'h>>> {
         if let Some(ref easy_set) = self.set.inner.easy_patterns {
             let enabled_patterns = self.set.enabled_patterns.read().unwrap();
 

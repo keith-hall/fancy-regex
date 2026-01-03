@@ -387,7 +387,7 @@ fn test_disable_with_clone() {
     // Disable pattern on set1
     set1.disable_pattern(1);
 
-    // Both sets should see the change (they share the enabled_patterns Arc<RefCell>)
+    // Both sets should see the change (they share the enabled_patterns Arc<RwLock>)
     assert!(!set1.is_pattern_enabled(1));
     assert!(!set2.is_pattern_enabled(1));
 
