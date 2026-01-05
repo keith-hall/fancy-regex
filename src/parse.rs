@@ -31,7 +31,7 @@ use regex_syntax::escape_into;
 
 use crate::parse_flags::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
-use crate::{Assertion, BacktrackingControlVerb, LookAround::*};
+use crate::{Absent, Assertion, BacktrackingControlVerb, LookAround::*};
 
 #[cfg(not(feature = "std"))]
 pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
@@ -1139,17 +1139,17 @@ impl<'a> Parser<'a> {
                 let ix = self.check_for_close_paren(ix)?;
                 Ok((
                     ix,
-                    Expr::AbsentExpression {
+                    Expr::Absent(Absent::Expression {
                         absent: Box::new(absent),
                         exp: Box::new(exp),
-                    },
+                    }),
                 ))
             } else if self.re.as_bytes()[ix] == b')' {
                 // (?~|absent) - absent stopper, or (?~|) - range clear
                 if absent == Expr::Empty {
-                    Ok((ix + 1, Expr::RangeClear))
+                    Ok((ix + 1, Expr::Absent(Absent::Clear)))
                 } else {
-                    Ok((ix + 1, Expr::AbsentStopper(Box::new(absent))))
+                    Ok((ix + 1, Expr::Absent(Absent::Stopper(Box::new(absent)))))
                 }
             } else {
                 Err(Error::ParseError(
@@ -1163,7 +1163,7 @@ impl<'a> Parser<'a> {
             // (?~absent) - absent repeater
             let (ix, absent) = self.parse_re(ix, depth)?;
             let ix = self.check_for_close_paren(ix)?;
-            Ok((ix, Expr::AbsentRepeater(Box::new(absent))))
+            Ok((ix, Expr::Absent(Absent::Repeater(Box::new(absent)))))
         }
     }
 
@@ -1350,7 +1350,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_literal, make_literal_case_insensitive, parse_id};
-    use crate::{Assertion, BacktrackingControlVerb, Expr};
+    use crate::{Absent, Assertion, BacktrackingControlVerb, Expr};
     use crate::{LookAround::*, RegexOptions, SyntaxConfig};
 
     fn p(s: &str) -> Expr {
@@ -3183,15 +3183,18 @@ mod tests {
         // (?~absent) - absent repeater
         assert_eq!(
             p(r"(?~abc)"),
-            Expr::AbsentRepeater(Box::new(Expr::Concat(vec![
+            Expr::Absent(Absent::Repeater(Box::new(Expr::Concat(vec![
                 make_literal("a"),
                 make_literal("b"),
                 make_literal("c"),
-            ])))
+            ]))))
         );
 
         // Empty absent repeater
-        assert_eq!(p(r"(?~)"), Expr::AbsentRepeater(Box::new(Expr::Empty)));
+        assert_eq!(
+            p(r"(?~)"),
+            Expr::Absent(Absent::Repeater(Box::new(Expr::Empty)))
+        );
     }
 
     #[test]
@@ -3199,7 +3202,7 @@ mod tests {
         // (?~|absent|exp) - absent expression
         assert_eq!(
             p(r"(?~|abc|\d+)"),
-            Expr::AbsentExpression {
+            Expr::Absent(Absent::Expression {
                 absent: Box::new(Expr::Concat(vec![
                     make_literal("a"),
                     make_literal("b"),
@@ -3215,20 +3218,20 @@ mod tests {
                     hi: usize::MAX,
                     greedy: true
                 }),
-            }
+            })
         );
 
         // With empty exp
         assert_eq!(
             p(r"(?~|abc|)"),
-            Expr::AbsentExpression {
+            Expr::Absent(Absent::Expression {
                 absent: Box::new(Expr::Concat(vec![
                     make_literal("a"),
                     make_literal("b"),
                     make_literal("c"),
                 ])),
                 exp: Box::new(Expr::Empty),
-            }
+            })
         );
     }
 
@@ -3237,18 +3240,18 @@ mod tests {
         // (?~|absent) - absent stopper
         assert_eq!(
             p(r"(?~|abc)"),
-            Expr::AbsentStopper(Box::new(Expr::Concat(vec![
+            Expr::Absent(Absent::Stopper(Box::new(Expr::Concat(vec![
                 make_literal("a"),
                 make_literal("b"),
                 make_literal("c"),
-            ])))
+            ]))))
         );
     }
 
     #[test]
     fn range_clear() {
         // (?~|) - range clear
-        assert_eq!(p(r"(?~|)"), Expr::RangeClear);
+        assert_eq!(p(r"(?~|)"), Expr::Absent(Absent::Clear));
     }
 
     #[test]
@@ -3258,10 +3261,10 @@ mod tests {
             p(r"a(?~|b|c)d"),
             Expr::Concat(vec![
                 make_literal("a"),
-                Expr::AbsentExpression {
+                Expr::Absent(Absent::Expression {
                     absent: Box::new(make_literal("b")),
                     exp: Box::new(make_literal("c")),
-                },
+                }),
                 make_literal("d"),
             ])
         );

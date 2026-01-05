@@ -209,24 +209,16 @@ impl Compiler {
             }
             Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
-            Expr::AbsentRepeater(_) => {
+            Expr::Absent(ref absent) => {
+                use crate::Absent::*;
+                let error_msg = match absent {
+                    Repeater(_) => "Absent repeater",
+                    Expression { .. } => "Absent expression",
+                    Stopper(_) => "Absent stopper",
+                    Clear => "Range clear",
+                };
                 return Err(Error::CompileError(Box::new(
-                    CompileError::FeatureNotYetSupported("Absent repeater".to_string()),
-                )));
-            }
-            Expr::AbsentExpression { .. } => {
-                return Err(Error::CompileError(Box::new(
-                    CompileError::FeatureNotYetSupported("Absent expression".to_string()),
-                )));
-            }
-            Expr::AbsentStopper(_) => {
-                return Err(Error::CompileError(Box::new(
-                    CompileError::FeatureNotYetSupported("Absent stopper".to_string()),
-                )));
-            }
-            Expr::RangeClear => {
-                return Err(Error::CompileError(Box::new(
-                    CompileError::FeatureNotYetSupported("Range clear".to_string()),
+                    CompileError::FeatureNotYetSupported(error_msg.to_string()),
                 )));
             }
         }

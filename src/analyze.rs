@@ -326,41 +326,46 @@ impl<'a> Analyzer<'a> {
                     CompileError::FeatureNotYetSupported("Backref at recursion level".to_string()),
                 )));
             }
-            Expr::AbsentRepeater(ref child) => {
-                let child_info = self.visit(child, min_pos_in_group)?;
-                // For absent repeater, the min_size is 0 (it's like .* which can match nothing)
-                // and it's not const size
-                min_size = 0;
-                const_size = false;
-                hard = true;
-                children.push(child_info);
-            }
-            Expr::AbsentExpression {
-                ref absent,
-                ref exp,
-            } => {
-                let absent_info = self.visit(absent, min_pos_in_group)?;
-                let exp_info = self.visit(exp, min_pos_in_group)?;
-                // For absent expression, min_size comes from exp
-                min_size = exp_info.min_size;
-                const_size = false;
-                hard = true;
-                children.push(absent_info);
-                children.push(exp_info);
-            }
-            Expr::AbsentStopper(ref child) => {
-                let child_info = self.visit(child, min_pos_in_group)?;
-                // Absent stopper doesn't consume any characters itself
-                min_size = 0;
-                const_size = false;
-                hard = true;
-                children.push(child_info);
-            }
-            Expr::RangeClear => {
-                // Range clear doesn't consume any characters
-                min_size = 0;
-                const_size = true;
-                hard = true;
+            Expr::Absent(ref absent) => {
+                use crate::Absent::*;
+                match absent {
+                    Repeater(ref child) => {
+                        let child_info = self.visit(child, min_pos_in_group)?;
+                        // For absent repeater, the min_size is 0 (it's like .* which can match nothing)
+                        // and it's not const size
+                        min_size = 0;
+                        const_size = false;
+                        hard = true;
+                        children.push(child_info);
+                    }
+                    Expression {
+                        ref absent,
+                        ref exp,
+                    } => {
+                        let absent_info = self.visit(absent, min_pos_in_group)?;
+                        let exp_info = self.visit(exp, min_pos_in_group)?;
+                        // For absent expression, min_size comes from exp
+                        min_size = exp_info.min_size;
+                        const_size = false;
+                        hard = true;
+                        children.push(absent_info);
+                        children.push(exp_info);
+                    }
+                    Stopper(ref child) => {
+                        let child_info = self.visit(child, min_pos_in_group)?;
+                        // Absent stopper doesn't consume any characters itself
+                        min_size = 0;
+                        const_size = false;
+                        hard = true;
+                        children.push(child_info);
+                    }
+                    Clear => {
+                        // Range clear doesn't consume any characters
+                        min_size = 0;
+                        const_size = true;
+                        hard = true;
+                    }
+                }
             }
         };
 

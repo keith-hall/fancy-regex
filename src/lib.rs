@@ -1720,23 +1720,9 @@ pub enum Expr {
     },
     /// Backtracking control verb
     BacktrackingControlVerb(BacktrackingControlVerb),
-    /// Absent repeater `(?~absent)` - works like `\O*` (match any character including newline, repeated)
-    /// but is limited by the range that does not include the string match with `absent`.
-    /// This is a written abbreviation of `(?~|absent|\O*)`.
-    AbsentRepeater(Box<Expr>),
-    /// Absent expression `(?~|absent|exp)` - works like `exp`, but is limited by the range
-    /// that does not include the string match with `absent`.
-    AbsentExpression {
-        /// The expression to avoid matching
-        absent: Box<Expr>,
-        /// The expression to match
-        exp: Box<Expr>,
-    },
-    /// Absent stopper `(?~|absent)` - after this operator, string right range is limited
-    /// at the point that does not include the string match with `absent`.
-    AbsentStopper(Box<Expr>),
-    /// Range clear `(?~|)` - clears the effects caused by absent stoppers.
-    RangeClear,
+    /// Absent operator - Oniguruma's absent repeater/expression/stopper/range clear operators.
+    /// These work by limiting the matching range to exclude certain patterns.
+    Absent(Absent),
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -1750,6 +1736,29 @@ pub enum LookAround {
     LookBehind,
     /// Negative look-behind assertion, e.g. `(?<!a)`
     LookBehindNeg,
+}
+
+/// Type of absent operator as used for Oniguruma's absent functionality.
+/// See the Oniguruma documentation for details on absent operators.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Absent {
+    /// Absent repeater `(?~absent)` - works like `\O*` (match any character including newline, repeated)
+    /// but is limited by the range that does not include the string match with `absent`.
+    /// This is a written abbreviation of `(?~|absent|\O*)`.
+    Repeater(Box<Expr>),
+    /// Absent expression `(?~|absent|exp)` - works like `exp`, but is limited by the range
+    /// that does not include the string match with `absent`.
+    Expression {
+        /// The expression to avoid matching
+        absent: Box<Expr>,
+        /// The expression to match
+        exp: Box<Expr>,
+    },
+    /// Absent stopper `(?~|absent)` - after this operator, string right range is limited
+    /// at the point that does not include the string match with `absent`.
+    Stopper(Box<Expr>),
+    /// Range clear `(?~|)` - clears the effects caused by absent stoppers.
+    Clear,
 }
 
 /// Type of backtracking control verb which affects how backtracking will behave.
