@@ -156,6 +156,9 @@ impl Compiler {
             Expr::LookAround(_, la) => {
                 self.compile_lookaround(info, la)?;
             }
+            Expr::Absent(_) => {
+                self.compile_absent(info)?;
+            }
             Expr::Backref { group, casei } => {
                 self.b.add(Insn::Backref {
                     slot: group * 2,
@@ -529,6 +532,57 @@ impl Compiler {
         } else {
             self.visit(inner, false)
         }
+    }
+
+    fn compile_absent(&mut self, info: &Info<'_>) -> Result<()> {
+        // The absent operator (?~pattern) matches the longest string that does not contain pattern
+        // It needs to be backtrackable so that the rest of the regex can be matched.
+        // 
+        // Implementation: greedy loop that consumes characters as long as pattern doesn't match
+        // 
+        // loop_start:
+        //   Split(consume_char, done)     ; Greedy: try consuming first
+        // consume_char:
+        //   Split(check_pattern, continue_consume)  ; Does pattern match here?
+        // check_pattern:
+        //   [pattern match attempt]
+        //   FailNegativeLookAround        ; If matched, fail (we found the pattern)
+        // continue_consume:
+        //   Any                           ; Pattern doesn't match, consume a character
+        //   Jmp(loop_start)               ; Loop back
+        // done:
+        //   (continue with rest of regex)
+        
+        let inner = &info.children[0];
+        
+        let loop_start = self.b.pc();
+        // Greedy: try to consume a character first, but can also exit
+        self.b.add(Insn::Split(loop_start + 1, usize::MAX)); // will update second target to done
+        
+        // Try to match the pattern (negative lookahead)
+        let check_split = self.b.pc();
+        self.b.add(Insn::Split(check_split + 1, usize::MAX)); // will update second target to continue_consume
+        
+        // check_pattern: Try to match pattern
+        let save = self.b.newsave();
+        self.b.add(Insn::Save(save));
+        self.visit(inner, false)?;
+        self.b.add(Insn::Restore(save));
+        // If pattern matched, fail this thread
+        self.b.add(Insn::FailNegativeLookAround);
+        
+        // continue_consume: Pattern didn't match, consume character
+        let continue_consume = self.b.pc();
+        self.b.set_split_target(check_split, continue_consume, true);
+        
+        self.b.add(Insn::Any);
+        self.b.add(Insn::Jmp(loop_start));
+        
+        // done:
+        let done = self.b.pc();
+        self.b.set_split_target(loop_start, done, true);
+        
+        Ok(())
     }
 
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {

@@ -874,6 +874,15 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::RecursionExceeded));
         }
         let ix = self.optional_whitespace(ix + 1)?;
+        
+        // Check for absent operator first (?~)
+        if self.re[ix..].starts_with("?~") {
+            let ix = ix + 2;
+            let (ix, child) = self.parse_re(ix, depth)?;
+            let ix = self.check_for_close_paren(ix)?;
+            return Ok((ix, Expr::Absent(Box::new(child))));
+        }
+        
         let (la, skip) = if self.re[ix..].starts_with("?=") {
             (Some(LookAhead), 2)
         } else if self.re[ix..].starts_with("?!") {

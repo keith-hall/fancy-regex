@@ -1678,6 +1678,9 @@ pub enum Expr {
         /// The position in the original regex pattern where the subroutine call is made
         ix: usize,
     },
+    /// Absent operator (Oniguruma), e.g. `(?~pattern)` matches the longest string that does NOT
+    /// contain a match for `pattern`. It's similar to a negative lookahead but consumes characters.
+    Absent(Box<Expr>),
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -1913,6 +1916,11 @@ impl Expr {
                 if casei {
                     buf.push(')');
                 }
+            }
+            Expr::Absent(ref child) => {
+                buf.push_str("(?~");
+                child.to_str(buf, 0);
+                buf.push(')');
             }
             _ => panic!("attempting to format hard expr {:?}", self),
         }
