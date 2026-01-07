@@ -21,7 +21,8 @@
 //! A simple test app for exercising and debugging the regex engine.
 
 use fancy_regex::internal::{
-    analyze, can_compile_as_anchored, compile, optimize, run_trace, Insn, Prog,
+    analyze, can_compile_as_anchored, compile, optimize, resolve_backreferences, run_trace, Insn,
+    Prog,
 };
 use fancy_regex::*;
 use std::env;
@@ -87,8 +88,9 @@ fn main() {
             run_trace(&prog, &text, 0).unwrap();
         } else if cmd == "trace-inner" {
             let re = args.next().expect("expected regexp argument");
-            let tree = Expr::parse_tree(&re).unwrap();
+            let mut tree = Expr::parse_tree(&re).unwrap();
             let text = args.next().expect("expected text argument");
+            resolve_backreferences(&mut tree).unwrap();
             let a = analyze(&tree, false).unwrap();
             let p = compile(&a, true).unwrap();
             run_trace(&p, &text, 0).unwrap();
@@ -130,6 +132,7 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let mut tree = Expr::parse_tree(&re).unwrap();
     let requires_capture_group_fixup = optimize(&mut tree);
+    resolve_backreferences(&mut tree).unwrap();
     let a = analyze(&tree, requires_capture_group_fixup);
     writeln!(writer, "{:#?}", a)
 }
@@ -145,6 +148,7 @@ fn prog(re: &str) -> Prog {
     // which means that "toy" behaves differently to tests etc.
     let mut tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
     let requires_capture_group_fixup = optimize(&mut tree);
+    resolve_backreferences(&mut tree).expect("Expected backref resolution to succeed");
     let result = analyze(&tree, requires_capture_group_fixup).expect("Expected analyze to succeed");
     compile(&result, can_compile_as_anchored(&tree.expr)).expect("Expected compile to succeed")
 }

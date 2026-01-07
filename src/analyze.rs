@@ -326,6 +326,27 @@ impl<'a> Analyzer<'a> {
                     CompileError::FeatureNotYetSupported("Backref at recursion level".to_string()),
                 )));
             }
+            Expr::RelativeBackref { .. } => {
+                return Err(Error::CompileError(Box::new(
+                    CompileError::FeatureNotYetSupported(
+                        "Unresolved relative backref - should have been resolved before analysis"
+                            .to_string(),
+                    ),
+                )));
+            }
+            Expr::UnresolvedNamedBackref { ref name, ix, .. } => {
+                return Err(Error::ParseError(
+                    ix,
+                    crate::ParseError::InvalidGroupNameBackref(name.clone()),
+                ));
+            }
+            Expr::RelativeSubroutineCall { .. } => {
+                return Err(Error::CompileError(Box::new(
+                    CompileError::FeatureNotYetSupported(
+                        "Unresolved relative subroutine call - should have been resolved before analysis".to_string()
+                    ),
+                )));
+            }
         };
 
         Ok(Info {
@@ -593,6 +614,109 @@ fn literal_const_size(_: &str, _: bool) -> bool {
     // test below will fail when that changes, then we need to
     // do something fancier here.
     true
+}
+
+/// Resolve relative and unresolved named backreferences in the expression tree.
+/// This should be called before analysis to convert RelativeBackref and UnresolvedNamedBackref
+/// nodes into concrete Backref nodes.
+pub fn resolve_backreferences(tree: &mut ExprTree) -> Result<()> {
+    resolve_backrefs_recursive(&mut tree.expr, &tree.named_groups, 0)?;
+    Ok(())
+}
+
+fn resolve_backrefs_recursive(
+    expr: &mut Expr,
+    named_groups: &crate::parse::NamedGroups,
+    current_group: usize,
+) -> Result<usize> {
+    match expr {
+        Expr::RelativeBackref {
+            relative_index,
+            casei,
+        } => {
+            // Resolve relative backreference to absolute group number
+            let resolved_group = current_group.checked_add_signed(if *relative_index < 0 {
+                *relative_index + 1
+            } else {
+                *relative_index
+            });
+
+            if let Some(group) = resolved_group {
+                *expr = Expr::Backref {
+                    group,
+                    casei: *casei,
+                };
+                Ok(current_group)
+            } else {
+                Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
+                    0, // We don't know the exact group yet
+                ))))
+            }
+        }
+        Expr::UnresolvedNamedBackref { name, casei, ix } => {
+            // Resolve named backreference to group number
+            if let Some(&group) = named_groups.get(name) {
+                *expr = Expr::Backref {
+                    group,
+                    casei: *casei,
+                };
+                Ok(current_group)
+            } else {
+                Err(Error::ParseError(
+                    *ix,
+                    crate::ParseError::InvalidGroupNameBackref(name.clone()),
+                ))
+            }
+        }
+        Expr::RelativeSubroutineCall { relative_index } => {
+            // Resolve relative subroutine call to absolute group number
+            let resolved_group = current_group.checked_add_signed(if *relative_index < 0 {
+                *relative_index + 1
+            } else {
+                *relative_index
+            });
+
+            if let Some(group) = resolved_group {
+                *expr = Expr::SubroutineCall(group);
+                Ok(current_group)
+            } else {
+                Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
+                    0, // We don't know the exact group yet
+                ))))
+            }
+        }
+        Expr::Group(inner) => {
+            let next_group = current_group + 1;
+            resolve_backrefs_recursive(inner, named_groups, next_group)?;
+            Ok(next_group)
+        }
+        Expr::LookAround(inner, _) | Expr::AtomicGroup(inner) => {
+            resolve_backrefs_recursive(inner, named_groups, current_group)?;
+            Ok(current_group)
+        }
+        Expr::Concat(children) | Expr::Alt(children) => {
+            let mut curr_grp = current_group;
+            for child in children {
+                curr_grp = resolve_backrefs_recursive(child, named_groups, curr_grp)?;
+            }
+            Ok(curr_grp)
+        }
+        Expr::Repeat { child, .. } => {
+            resolve_backrefs_recursive(child, named_groups, current_group)?;
+            Ok(current_group)
+        }
+        Expr::Conditional {
+            condition,
+            true_branch,
+            false_branch,
+        } => {
+            let curr_grp = resolve_backrefs_recursive(condition, named_groups, current_group)?;
+            resolve_backrefs_recursive(true_branch, named_groups, curr_grp)?;
+            resolve_backrefs_recursive(false_branch, named_groups, curr_grp)?;
+            Ok(curr_grp)
+        }
+        _ => Ok(current_group),
+    }
 }
 
 /// Analyze the parsed expression to determine whether it requires fancy features.

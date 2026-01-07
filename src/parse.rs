@@ -65,6 +65,8 @@ struct NamedBackrefOrSubroutine<'a> {
     group_ix: Option<usize>,
     group_name: Option<&'a str>,
     recursion_level: Option<isize>,
+    /// If this is a pure relative reference (e.g., \k<+1>) without a name
+    is_pure_relative: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -318,7 +320,22 @@ impl<'a> Parser<'a> {
             group_ix,
             group_name,
             recursion_level,
+            is_pure_relative,
         } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
+
+        // Handle pure relative backreferences like \k<+1> or \k<-1>
+        if is_pure_relative {
+            if let Some(relative_index) = recursion_level {
+                return Ok((
+                    end,
+                    Expr::RelativeBackref {
+                        relative_index,
+                        casei: self.flag(FLAG_CASEI),
+                    },
+                ));
+            }
+        }
+
         if let Some(group) = group_ix {
             self.backrefs.insert(group);
             return Ok((
@@ -339,9 +356,14 @@ impl<'a> Parser<'a> {
         }
         if let Some(group_name) = group_name {
             // here the name was parsed but doesn't match a capture group we have already parsed
-            return Err(Error::ParseError(
-                ix,
-                ParseError::InvalidGroupNameBackref(group_name.to_string()),
+            // Instead of returning an error, return an UnresolvedNamedBackref
+            return Ok((
+                end,
+                Expr::UnresolvedNamedBackref {
+                    name: group_name.to_string(),
+                    casei: self.flag(FLAG_CASEI),
+                    ix,
+                },
             ));
         }
         unreachable!()
@@ -359,10 +381,22 @@ impl<'a> Parser<'a> {
             group_ix,
             group_name,
             recursion_level,
+            is_pure_relative,
         } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
-        if recursion_level.is_some() {
+
+        // For subroutines, only pure relative (e.g. \g<+1>) is allowed, not named+recursion_level (e.g. \g<name+1>)
+        if recursion_level.is_some() && !is_pure_relative {
             return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
         }
+
+        // Handle pure relative subroutine calls like \g<+1> or \g<-1>
+        if is_pure_relative {
+            if let Some(relative_index) = recursion_level {
+                self.contains_subroutines = true;
+                return Ok((end, Expr::RelativeSubroutineCall { relative_index }));
+            }
+        }
+
         if let Some(group) = group_ix {
             self.contains_subroutines = true;
             if group == 0 {
@@ -390,28 +424,23 @@ impl<'a> Parser<'a> {
         close: &str,
         allow_relative: bool,
     ) -> Result<NamedBackrefOrSubroutine<'_>> {
-        if let Some(ParsedId {
-            id,
-            mut relative,
-            skip,
-        }) = parse_id(&self.re[ix..], open, close, allow_relative)
+        if let Some(ParsedId { id, relative, skip }) =
+            parse_id(&self.re[ix..], open, close, allow_relative)
         {
+            // Check if this is a pure relative reference (no name, just +N or -N)
+            let is_pure_relative = relative.is_some() && id.is_empty();
+
             let group = if let Some(group) = self.named_groups.get(id) {
+                // Named group that's already been seen
                 Some(*group)
             } else if let Ok(group) = id.parse::<usize>() {
+                // Numeric reference
                 Some(group)
-            } else if let Some(relative_group) = relative {
-                if id.is_empty() {
-                    relative = None;
-                    self.curr_group.checked_add_signed(if relative_group < 0 {
-                        relative_group + 1
-                    } else {
-                        relative_group
-                    })
-                } else {
-                    None
-                }
+            } else if is_pure_relative {
+                // Pure relative reference like \k<+1> or \k<-1> - don't resolve yet
+                None
             } else {
+                // Unresolved name or error
                 None
             };
             if let Some(group) = group {
@@ -420,6 +449,16 @@ impl<'a> Parser<'a> {
                     group_ix: Some(group),
                     group_name: None,
                     recursion_level: relative,
+                    is_pure_relative: false,
+                })
+            } else if is_pure_relative {
+                // Return the relative offset without resolving
+                Ok(NamedBackrefOrSubroutine {
+                    ix: ix + skip,
+                    group_ix: None,
+                    group_name: None,
+                    recursion_level: relative,
+                    is_pure_relative: true,
                 })
             } else {
                 // here the name was parsed but doesn't match a capture group we have already parsed
@@ -428,6 +467,7 @@ impl<'a> Parser<'a> {
                     group_ix: None,
                     group_name: Some(id),
                     recursion_level: relative,
+                    is_pure_relative: false,
                 })
             }
         } else {
@@ -1025,7 +1065,24 @@ impl<'a> Parser<'a> {
         let (end, child) = self.parse_re(next, depth)?;
         if end == next {
             // Backreference validity checker
-            if let Expr::Backref { group, .. } = condition {
+            let backref_group = match condition {
+                Expr::Backref { group, .. } => Some(group),
+                Expr::RelativeBackref { relative_index, .. } => {
+                    // Resolve relative backref in conditional
+                    self.curr_group.checked_add_signed(if relative_index < 0 {
+                        relative_index + 1
+                    } else {
+                        relative_index
+                    })
+                }
+                Expr::UnresolvedNamedBackref { ref name, .. } => {
+                    // Resolve named backref in conditional
+                    self.named_groups.get(name).copied()
+                }
+                _ => None,
+            };
+
+            if let Some(group) = backref_group {
                 let after = self.check_for_close_paren(end)?;
                 return Ok((after, Expr::BackrefExistsCondition(group)));
             } else {
@@ -1053,10 +1110,32 @@ impl<'a> Parser<'a> {
             // there is only one branch - the truth branch. i.e. "if" without "else"
             if_true = child;
         }
-        let inner_condition = if let Expr::Backref { group, .. } = condition {
-            Expr::BackrefExistsCondition(group)
-        } else {
-            condition
+        let inner_condition = match condition {
+            Expr::Backref { group, .. } => Expr::BackrefExistsCondition(group),
+            Expr::RelativeBackref { relative_index, .. } => {
+                // Resolve relative backref in conditional
+                if let Some(group) = self.curr_group.checked_add_signed(if relative_index < 0 {
+                    relative_index + 1
+                } else {
+                    relative_index
+                }) {
+                    Expr::BackrefExistsCondition(group)
+                } else {
+                    return Err(Error::ParseError(ix, ParseError::InvalidBackref));
+                }
+            }
+            Expr::UnresolvedNamedBackref { ref name, ix, .. } => {
+                // Resolve named backref in conditional
+                if let Some(&group) = self.named_groups.get(name) {
+                    Expr::BackrefExistsCondition(group)
+                } else {
+                    return Err(Error::ParseError(
+                        ix,
+                        ParseError::InvalidGroupNameBackref(name.clone()),
+                    ));
+                }
+            }
+            _ => condition,
         };
 
         let after = self.check_for_close_paren(end)?;
@@ -1886,8 +1965,37 @@ mod tests {
 
     #[test]
     fn relative_backref() {
+        // Parser now returns unresolved relative backrefs
         assert_eq!(
             p(r"(a)(.)\k<-1>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::RelativeBackref {
+                    relative_index: -1,
+                    casei: false,
+                },
+            ])
+        );
+
+        assert_eq!(
+            p(r"(a)\k<+1>(.)"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::RelativeBackref {
+                    relative_index: 1,
+                    casei: false,
+                },
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+            ])
+        );
+
+        // Test that resolution works
+        use crate::analyze::*;
+        let mut tree = Expr::parse_tree(r"(a)(.)\k<-1>").unwrap();
+        resolve_backreferences(&mut tree).unwrap();
+        assert_eq!(
+            tree.expr,
             Expr::Concat(vec![
                 Expr::Group(Box::new(make_literal("a"))),
                 Expr::Group(Box::new(Expr::Any { newline: false })),
@@ -1898,8 +2006,10 @@ mod tests {
             ])
         );
 
+        let mut tree = Expr::parse_tree(r"(a)\k<+1>(.)").unwrap();
+        resolve_backreferences(&mut tree).unwrap();
         assert_eq!(
-            p(r"(a)\k<+1>(.)"),
+            tree.expr,
             Expr::Concat(vec![
                 Expr::Group(Box::new(make_literal("a"))),
                 Expr::Backref {
@@ -1993,8 +2103,31 @@ mod tests {
 
     #[test]
     fn relative_subroutine_call() {
+        // Parser now returns unresolved relative subroutine calls
         assert_eq!(
             p(r"(a)(.)\g<-1>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::RelativeSubroutineCall { relative_index: -1 },
+            ])
+        );
+
+        assert_eq!(
+            p(r"(a)\g<+1>(.)"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::RelativeSubroutineCall { relative_index: 1 },
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+            ])
+        );
+
+        // Test that resolution works
+        use crate::analyze::*;
+        let mut tree = Expr::parse_tree(r"(a)(.)\g<-1>").unwrap();
+        resolve_backreferences(&mut tree).unwrap();
+        assert_eq!(
+            tree.expr,
             Expr::Concat(vec![
                 Expr::Group(Box::new(make_literal("a"))),
                 Expr::Group(Box::new(Expr::Any { newline: false })),
@@ -2002,8 +2135,10 @@ mod tests {
             ])
         );
 
+        let mut tree = Expr::parse_tree(r"(a)\g<+1>(.)").unwrap();
+        resolve_backreferences(&mut tree).unwrap();
         assert_eq!(
-            p(r"(a)\g<+1>(.)"),
+            tree.expr,
             Expr::Concat(vec![
                 Expr::Group(Box::new(make_literal("a"))),
                 Expr::SubroutineCall(2),
@@ -2233,10 +2368,14 @@ mod tests {
 
     #[test]
     fn invalid_group_name_backref() {
-        assert_error(
-            "\\k<id>(?<id>.)",
-            "Parsing error at position 2: Invalid group name in back reference: id",
-        );
+        // Forward references are now allowed at parse time, but will fail at analysis/compile time
+        // if the group doesn't exist
+        assert!(Expr::parse_tree("\\k<id>(?<id>.)").is_ok());
+
+        // A truly invalid group name that never gets defined should still error at analysis
+        let tree = Expr::parse_tree("\\k<nonexistent>").unwrap();
+        use crate::analyze::*;
+        assert!(resolve_backreferences(&mut tree.clone()).is_err());
     }
 
     #[test]
