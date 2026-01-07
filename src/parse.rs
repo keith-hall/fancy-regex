@@ -924,6 +924,8 @@ impl<'a> Parser<'a> {
             return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with("?P>") {
             return self.parse_named_subroutine_call(ix + 3, "", ")", false);
+        } else if self.re[ix..].starts_with("?~") {
+            return self.parse_absent(ix + 2, depth);
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -952,6 +954,109 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(ix + 1)
+    }
+
+    // ix points to character after "?~" in "(?~"
+    fn parse_absent(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let ix = self.optional_whitespace(ix)?;
+        if ix >= self.re.len() {
+            return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
+        }
+        
+        // Check if this is the pipe-based syntax: (?~|...)
+        if self.re.as_bytes()[ix] == b'|' {
+            // Parse (?~|absent|exp), (?~|absent), or (?~|)
+            let ix = self.optional_whitespace(ix + 1)?;
+            
+            // Check for (?~|) - range clear
+            if ix < self.re.len() && self.re.as_bytes()[ix] == b')' {
+                return Ok((ix + 1, Expr::Absent {
+                    absent: Box::new(Expr::Empty),
+                    expr: None,
+                }));
+            }
+            
+            // Parse the absent pattern
+            let (ix, absent) = self.parse_re_until_pipe_or_paren(ix, depth)?;
+            let ix = self.optional_whitespace(ix)?;
+            
+            if ix >= self.re.len() {
+                return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
+            }
+            
+            // Check what comes next
+            let b = self.re.as_bytes()[ix];
+            if b == b')' {
+                // (?~|absent) - absent stopper
+                Ok((ix + 1, Expr::Absent {
+                    absent: Box::new(absent),
+                    expr: None,
+                }))
+            } else if b == b'|' {
+                // (?~|absent|exp) - absent expression
+                let ix = self.optional_whitespace(ix + 1)?;
+                let (ix, expr) = self.parse_re(ix, depth)?;
+                let ix = self.check_for_close_paren(ix)?;
+                Ok((ix, Expr::Absent {
+                    absent: Box::new(absent),
+                    expr: Some(Box::new(expr)),
+                }))
+            } else {
+                Err(Error::ParseError(
+                    ix,
+                    ParseError::GeneralParseError("expected '|' or ')' in absent expression".to_string()),
+                ))
+            }
+        } else {
+            // Parse (?~absent) - absent repeater (equivalent to (?~|absent|\O*))
+            let (ix, absent) = self.parse_re(ix, depth)?;
+            let ix = self.check_for_close_paren(ix)?;
+            
+            // Convert to (?~|absent|.*) where .* matches any character including newlines
+            let any_repeater = Expr::Repeat {
+                child: Box::new(Expr::Any { newline: true }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true,
+            };
+            
+            Ok((ix, Expr::Absent {
+                absent: Box::new(absent),
+                expr: Some(Box::new(any_repeater)),
+            }))
+        }
+    }
+
+    // Parse regex until we hit | or ), used for parsing absent patterns
+    fn parse_re_until_pipe_or_paren(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let mut start = ix;
+        let mut exprs = Vec::new();
+        
+        loop {
+            if start >= self.re.len() {
+                return Err(Error::ParseError(start, ParseError::UnclosedOpenParen));
+            }
+            
+            let b = self.re.as_bytes()[start];
+            if b == b'|' || b == b')' {
+                break;
+            }
+            
+            let (next, expr) = self.parse_atom(start, depth)?;
+            if next == start {
+                break;
+            }
+            exprs.push(expr);
+            start = next;
+        }
+        
+        if exprs.is_empty() {
+            Ok((start, Expr::Empty))
+        } else if exprs.len() == 1 {
+            Ok((start, exprs.into_iter().next().unwrap()))
+        } else {
+            Ok((start, Expr::Concat(exprs)))
+        }
     }
 
     // ix points to `?` in `(?`

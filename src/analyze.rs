@@ -265,6 +265,24 @@ impl<'a> Analyzer<'a> {
                     CompileError::FeatureNotYetSupported("Backref at recursion level".to_string()),
                 )));
             }
+            Expr::Absent { ref absent, ref expr } => {
+                hard = true;
+                
+                // Visit the absent pattern
+                let absent_info = self.visit(absent, min_pos_in_group)?;
+                children.push(absent_info);
+                
+                // If there's an expression part, visit it
+                if let Some(ref e) = expr {
+                    let expr_info = self.visit(e, min_pos_in_group)?;
+                    min_size = expr_info.min_size;
+                    const_size = expr_info.const_size;
+                    children.push(expr_info);
+                } else {
+                    // Stopper or range clear - no minimum size
+                    const_size = true;
+                }
+            }
         };
 
         Ok(Info {
