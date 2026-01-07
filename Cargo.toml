@@ -37,6 +37,10 @@ default-features = false
 version = "0.8"
 default-features = false
 
+[dependencies.im]
+version = "15.1"
+default-features = false
+
 [dev-dependencies]
 criterion = "0.5"
 matches = "0.1.10"
