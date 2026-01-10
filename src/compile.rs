@@ -211,15 +211,28 @@ impl Compiler {
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
             Expr::Absent(ref absent) => {
                 use crate::Absent::*;
-                let error_msg = match absent {
-                    Repeater(_) => "Absent repeater",
-                    Expression { .. } => "Absent expression",
-                    Stopper(_) => "Absent stopper",
-                    Clear => "Range clear",
-                };
-                return Err(Error::CompileError(Box::new(
-                    CompileError::FeatureNotYetSupported(error_msg.to_string()),
-                )));
+                match absent {
+                    Repeater(_) => {
+                        // Compile absent repeater as: (?((?=absent))|\O)*
+                        // This means: repeat while the absent pattern is not present
+                        self.compile_absent_repeater(info)?;
+                    }
+                    Expression { .. } => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::FeatureNotYetSupported("Absent expression".to_string()),
+                        )));
+                    }
+                    Stopper(_) => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::FeatureNotYetSupported("Absent stopper".to_string()),
+                        )));
+                    }
+                    Clear => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::FeatureNotYetSupported("Range clear".to_string()),
+                        )));
+                    }
+                }
             }
         }
         Ok(())
@@ -292,6 +305,76 @@ impl Compiler {
 
         // update the jump target for jumping over the false branch
         self.b.set_jmp_target(jump_over_false_pc, self.b.pc());
+
+        Ok(())
+    }
+
+    fn compile_absent_repeater(&mut self, info: &Info<'_>) -> Result<()> {
+        // Compile absent repeater (?~absent) as (?((?!absent))\O|)*
+        // Using negative lookahead: if pattern is NOT ahead, match Any; if pattern IS ahead, match Empty
+
+        let absent_child = &info.children[0];
+
+        // Use RepeatEpsilon instructions to prevent empty repeat
+        let repeat = self.b.newsave();
+        let check = self.b.newsave();
+        self.b.add(Insn::Save0(repeat));
+        let repeat_pc = self.b.pc();
+
+        // Greedy repeat with lo=0 (match as much as possible)
+        self.b.add(Insn::RepeatEpsilonGr {
+            lo: 0,
+            next: usize::MAX,
+            repeat,
+            check,
+        });
+
+        // Now emit the conditional: (?((?!absent))\O|)
+        // Start with atomic group to ensure condition success removes backtracking option
+        self.b.add(Insn::BeginAtomic);
+
+        let split_pc = self.b.pc();
+        self.b.add(Insn::Split(split_pc + 1, usize::MAX));
+
+        // Compile the condition: negative lookahead (?!absent)
+        // This is implemented as: try the pattern, if it succeeds, fail
+        let neg_split_pc = self.b.pc();
+        self.b.add(Insn::Split(neg_split_pc + 1, usize::MAX));
+
+        let save = self.b.newsave();
+        self.b.add(Insn::Save(save));
+        self.visit(absent_child, false)?;
+        self.b.add(Insn::Restore(save));
+        self.b.add(Insn::FailNegativeLookAround);
+
+        // Set the second branch of negative lookahead split to here (pattern didn't match)
+        let neg_success_pc = self.b.pc();
+        self.b.set_split_target(neg_split_pc, neg_success_pc, true);
+
+        // End atomic - if negative lookahead succeeded, this commits to the true branch
+        self.b.add(Insn::EndAtomic);
+
+        // True branch: when negative lookahead succeeds (absent pattern NOT found), match Any
+        self.b.add(Insn::Any); // Match any character including newline (like \O)
+
+        // Jump over false branch
+        let jump_over_false_pc = self.b.pc();
+        self.b.add(Insn::Jmp(0));
+
+        // False branch: when negative lookahead fails (absent pattern IS found), match empty
+        // This will cause the repeat to exit since we matched nothing new
+        self.b.set_split_target(split_pc, self.b.pc(), true);
+        // (no instruction needed for empty match)
+
+        // Update jump target
+        self.b.set_jmp_target(jump_over_false_pc, self.b.pc());
+
+        // Jump back to repeat
+        self.b.add(Insn::Jmp(repeat_pc));
+
+        // Set the repeat's next target to here
+        let next_pc = self.b.pc();
+        self.b.set_repeat_target(repeat_pc, next_pc);
 
         Ok(())
     }
@@ -956,15 +1039,11 @@ mod tests {
 
     #[test]
     fn absent_operators_error() {
-        // Test that absent repeater returns feature not supported
+        // Test that absent repeater is now supported (no longer returns error)
         let tree = Expr::parse_tree(r"(?~abc)").unwrap();
         let info = analyze(&tree, true).unwrap();
         let result = compile(&info, true);
-        assert!(result.is_err());
-        assert_matches!(
-            result.err().unwrap(),
-            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
-        );
+        assert!(result.is_ok(), "Absent repeater should now be supported");
 
         // Test that absent expression returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
