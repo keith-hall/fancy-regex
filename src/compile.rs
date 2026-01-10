@@ -312,15 +312,15 @@ impl Compiler {
     fn compile_absent_repeater(&mut self, info: &Info<'_>) -> Result<()> {
         // Compile absent repeater (?~absent) as (?((?!absent))\O|)*
         // Using negative lookahead: if pattern is NOT ahead, match Any; if pattern IS ahead, match Empty
-        
+
         let absent_child = &info.children[0];
-        
+
         // Use RepeatEpsilon instructions to prevent empty repeat
         let repeat = self.b.newsave();
         let check = self.b.newsave();
         self.b.add(Insn::Save0(repeat));
         let repeat_pc = self.b.pc();
-        
+
         // Greedy repeat with lo=0 (match as much as possible)
         self.b.add(Insn::RepeatEpsilonGr {
             lo: 0,
@@ -328,54 +328,54 @@ impl Compiler {
             repeat,
             check,
         });
-        
+
         // Now emit the conditional: (?((?!absent))\O|)
         // Start with atomic group to ensure condition success removes backtracking option
         self.b.add(Insn::BeginAtomic);
-        
+
         let split_pc = self.b.pc();
         self.b.add(Insn::Split(split_pc + 1, usize::MAX));
-        
+
         // Compile the condition: negative lookahead (?!absent)
         // This is implemented as: try the pattern, if it succeeds, fail
         let neg_split_pc = self.b.pc();
         self.b.add(Insn::Split(neg_split_pc + 1, usize::MAX));
-        
+
         let save = self.b.newsave();
         self.b.add(Insn::Save(save));
         self.visit(absent_child, false)?;
         self.b.add(Insn::Restore(save));
         self.b.add(Insn::FailNegativeLookAround);
-        
+
         // Set the second branch of negative lookahead split to here (pattern didn't match)
         let neg_success_pc = self.b.pc();
         self.b.set_split_target(neg_split_pc, neg_success_pc, true);
-        
+
         // End atomic - if negative lookahead succeeded, this commits to the true branch
         self.b.add(Insn::EndAtomic);
-        
+
         // True branch: when negative lookahead succeeds (absent pattern NOT found), match Any
-        self.b.add(Insn::Any);  // Match any character including newline (like \O)
-        
+        self.b.add(Insn::Any); // Match any character including newline (like \O)
+
         // Jump over false branch
         let jump_over_false_pc = self.b.pc();
         self.b.add(Insn::Jmp(0));
-        
+
         // False branch: when negative lookahead fails (absent pattern IS found), match empty
         // This will cause the repeat to exit since we matched nothing new
         self.b.set_split_target(split_pc, self.b.pc(), true);
         // (no instruction needed for empty match)
-        
+
         // Update jump target
         self.b.set_jmp_target(jump_over_false_pc, self.b.pc());
-        
+
         // Jump back to repeat
         self.b.add(Insn::Jmp(repeat_pc));
-        
+
         // Set the repeat's next target to here
         let next_pc = self.b.pc();
         self.b.set_repeat_target(repeat_pc, next_pc);
-        
+
         Ok(())
     }
 
