@@ -130,6 +130,8 @@ Escapes:
 : anchor to where the previous match ended ([docs](https://www.regular-expressions.info/continue.html))\
 `\Z`
 : anchor to the end of the text before any trailing newlines\
+`\R`
+: any Unicode newline sequence: `\r\n`, `\n`, `\v`, `\f`, `\r`, or `\u{0085}` (NEL). Note: matches atomically - doesn't backtrack from `\r\n` to `\r`\
 `\O`
 : any character including newline\
 `\N`

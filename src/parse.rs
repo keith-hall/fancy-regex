@@ -599,6 +599,28 @@ impl<'a> Parser<'a> {
             (end, Expr::Any { newline: true })
         } else if b == b'N' && !in_class {
             (end, Expr::Any { newline: false })
+        } else if b == b'R' && !in_class {
+            // \R matches any Unicode newline sequence: \r\n, \n, \v, \f, \r, or \u{0085}
+            // It's atomic - doesn't backtrack from \r\n to \r
+            // We use an atomic group with alternation to achieve this
+            // Order matters: \r\n must be first to match before individual \r
+            (
+                end,
+                Expr::AtomicGroup(Box::new(Expr::Alt(vec![
+                    // \r\n - CRLF (must be first)
+                    Expr::Concat(vec![make_literal("\r"), make_literal("\n")]),
+                    // \n - LF
+                    make_literal("\n"),
+                    // \v - VT (vertical tab)
+                    make_literal("\x0b"),
+                    // \f - FF (form feed)
+                    make_literal("\x0c"),
+                    // \r - CR
+                    make_literal("\r"),
+                    // \u{0085} - NEL (Next Line)
+                    make_literal("\u{0085}"),
+                ]))),
+            )
         } else if b == b'g' && !in_class {
             if end == self.re.len() {
                 return Err(Error::ParseError(
@@ -633,7 +655,7 @@ impl<'a> Parser<'a> {
                         if b.is_ascii_alphabetic()
                             && !matches!(
                                 b,
-                                b'k' | b'A' | b'z' | b'b' | b'B' | b'<' | b'>' | b'K' | b'G'
+                                b'k' | b'A' | b'z' | b'b' | b'B' | b'<' | b'>' | b'K' | b'G' | b'R'
                             )
                         {
                             return Err(Error::ParseError(
