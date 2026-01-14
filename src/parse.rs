@@ -599,6 +599,19 @@ impl<'a> Parser<'a> {
             (end, Expr::Any { newline: true })
         } else if b == b'N' && !in_class {
             (end, Expr::Any { newline: false })
+        } else if b == b'R' && !in_class {
+            // \R matches any Unicode newline sequence: \r\n, \n, \v, \f, \r, or \u{0085}
+            // It's atomic - doesn't backtrack from \r\n to \r
+            // We use an atomic group with alternation to achieve this
+            // The (?R:...) flag enables CRLF mode in the underlying regex engine
+            (
+                end,
+                Expr::AtomicGroup(Box::new(Expr::Delegate {
+                    inner: String::from("(?R:\\r\\n)|\\n|\\x0B|\\x0C|\\r|\\u{0085}"),
+                    size: 1,
+                    casei: false,
+                })),
+            )
         } else if b == b'g' && !in_class {
             if end == self.re.len() {
                 return Err(Error::ParseError(
@@ -633,7 +646,7 @@ impl<'a> Parser<'a> {
                         if b.is_ascii_alphabetic()
                             && !matches!(
                                 b,
-                                b'k' | b'A' | b'z' | b'b' | b'B' | b'<' | b'>' | b'K' | b'G'
+                                b'k' | b'A' | b'z' | b'b' | b'B' | b'<' | b'>' | b'K' | b'G' | b'R'
                             )
                         {
                             return Err(Error::ParseError(
