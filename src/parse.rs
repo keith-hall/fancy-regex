@@ -603,14 +603,23 @@ impl<'a> Parser<'a> {
             // \R matches any Unicode newline sequence: \r\n, \n, \v, \f, \r, or \u{0085}
             // It's atomic - doesn't backtrack from \r\n to \r
             // We use an atomic group with alternation to achieve this
-            // The (?R:...) flag enables CRLF mode in the underlying regex engine
+            // Order matters: \r\n must be first to match before individual \r
             (
                 end,
-                Expr::AtomicGroup(Box::new(Expr::Delegate {
-                    inner: String::from("(?R:\\r\\n)|\\n|\\x0B|\\x0C|\\r|\\u{0085}"),
-                    size: 1,
-                    casei: false,
-                })),
+                Expr::AtomicGroup(Box::new(Expr::Alt(vec![
+                    // \r\n - CRLF (must be first)
+                    Expr::Concat(vec![make_literal("\r"), make_literal("\n")]),
+                    // \n - LF
+                    make_literal("\n"),
+                    // \v - VT (vertical tab)
+                    make_literal("\x0b"),
+                    // \f - FF (form feed)
+                    make_literal("\x0c"),
+                    // \r - CR
+                    make_literal("\r"),
+                    // \u{0085} - NEL (Next Line)
+                    make_literal("\u{0085}"),
+                ]))),
             )
         } else if b == b'g' && !in_class {
             if end == self.re.len() {

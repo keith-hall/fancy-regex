@@ -62,14 +62,17 @@ fn test_r_escape_no_backtracking() {
     // because \R matches \r\n atomically and doesn't backtrack to just \r
     let re = Regex::new(r"\R\n").unwrap();
     let result = re.find("\r\n").unwrap();
-    assert!(result.is_none(), "\\R\\n should not match \\r\\n due to atomic matching");
+    assert!(
+        result.is_none(),
+        "\\R\\n should not match \\r\\n due to atomic matching"
+    );
 }
 
 #[test]
 fn test_r_escape_with_following_pattern() {
     // \R\n should match when there's \n followed by another \n
     let re = Regex::new(r"\R\n").unwrap();
-    
+
     // Test with \n followed by another \n
     let m = re.find("a\n\nb").unwrap().unwrap();
     assert_eq!(m.start(), 1);
@@ -83,7 +86,7 @@ fn test_r_escape_in_oniguruma_mode() {
         .oniguruma_mode(true)
         .build()
         .unwrap();
-    
+
     let m = re.find("\r\n").unwrap().unwrap();
     assert_eq!(m.start(), 0);
     assert_eq!(m.end(), 2);
