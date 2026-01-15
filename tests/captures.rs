@@ -423,3 +423,58 @@ fn expander_errors() {
         exp.check("${xx}", &with_names),
         Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidGroupNameBackref(ref name) if name == "xx")));
 }
+
+#[test]
+fn capture_group_with_dash() {
+    let regex = common::regex(r"(?<type-name>\w+)");
+    let caps = regex.captures("hello").unwrap().unwrap();
+    assert_eq!(&caps["type-name"], "hello");
+}
+
+#[test]
+fn capture_group_with_plus() {
+    let regex = common::regex(r"(?<name+plus>\w+)");
+    let caps = regex.captures("world").unwrap().unwrap();
+    assert_eq!(&caps["name+plus"], "world");
+}
+
+#[test]
+fn subroutine_call_with_dash() {
+    // Test that parsing works for subroutine calls with dashes in names
+    use fancy_regex::RegexBuilder;
+    let result = RegexBuilder::new(r"(?<type-name>\d+)\g<type-name>").build();
+    // The regex should parse successfully even though subroutine calls aren't fully compiled yet
+    assert!(result.is_ok() || matches!(result.unwrap_err(), fancy_regex::Error::CompileError(_)));
+}
+
+#[test]
+fn subroutine_call_with_plus() {
+    // Test that parsing works for subroutine calls with pluses in names
+    use fancy_regex::RegexBuilder;
+    let result = RegexBuilder::new(r"(?<a+b>\w)\g<a+b>").build();
+    // The regex should parse successfully even though subroutine calls aren't fully compiled yet
+    assert!(result.is_ok() || matches!(result.unwrap_err(), fancy_regex::Error::CompileError(_)));
+}
+
+#[test]
+fn complex_name_with_dashes_and_pluses() {
+    // Test that parsing works for complex names with both dashes and pluses
+    use fancy_regex::RegexBuilder;
+    let result = RegexBuilder::new(r"(?<a-b+c-d>\w+)-\g<a-b+c-d>").build();
+    // The regex should parse successfully even though subroutine calls aren't fully compiled yet
+    assert!(result.is_ok() || matches!(result.unwrap_err(), fancy_regex::Error::CompileError(_)));
+}
+
+#[test]
+fn backref_with_dash_should_fail() {
+    // Backreferences should not allow - in names (reserved for relative refs)
+    let result = fancy_regex::Regex::new(r"(?<type-name>\w+)\k<type-name>");
+    assert!(result.is_err());
+}
+
+#[test]
+fn relative_backref_still_works() {
+    let regex = common::regex(r"(a)(b)\k<-1>");
+    assert!(regex.is_match("abb").unwrap());
+    assert!(!regex.is_match("abc").unwrap());
+}
