@@ -396,8 +396,13 @@ impl<'a> Parser<'a> {
             id,
             mut relative,
             skip,
-        }) = parse_id(&self.re[ix..], open, close, allow_relative, allow_name_with_sign)
-        {
+        }) = parse_id(
+            &self.re[ix..],
+            open,
+            close,
+            allow_relative,
+            allow_name_with_sign,
+        ) {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
             } else if let Ok(group) = id.parse::<usize>() {
@@ -1255,7 +1260,7 @@ pub(crate) struct ParsedId<'a> {
 /// Attempts to parse an identifier, optionally followed by a relative number between the
 /// specified opening and closing delimiters.  On success, returns
 /// `Some((id, relative, skip))`, where `skip` is how much of the string was used.
-/// 
+///
 /// When `allow_name_with_sign` is true, the identifier can contain `-` and `+` characters,
 /// making it compatible with Oniguruma's more lenient parsing. This is used for capture group
 /// definitions and subroutine calls. When false (for backreferences and conditionals), `-` and
@@ -1274,7 +1279,7 @@ pub(crate) fn parse_id<'a>(
     }
 
     let id_start = open.len();
-    
+
     // New strategy: first find the closing delimiter, then work backwards
     // to determine the group name and relative parts
     let content_end = if close.is_empty() {
@@ -1295,34 +1300,34 @@ pub(crate) fn parse_id<'a>(
         let close_pos = s[id_start..].find(close)?;
         id_start + close_pos
     };
-    
+
     // If we allow relative references, try to parse patterns like "+1" or "-3" or "name+1"
     // We look for the LAST occurrence of + or - followed by digits, which indicates a
     // relative reference or recursion level.
     if allow_relative && content_end > id_start {
         let content = &s[id_start..content_end];
-        
+
         // Find the last occurrence of + or - that could be a relative reference
         if let Some(sign_pos) = content.rfind(&['+', '-'][..]) {
             let after_sign = &content[sign_pos + 1..];
-            
+
             // Check if everything after the sign is digits
             if !after_sign.is_empty() && after_sign.chars().all(|c| c.is_ascii_digit()) {
                 if let Ok(relative_amount) = after_sign.parse::<usize>() {
                     let id_len = sign_pos;
-                    
+
                     // Don't allow "+0" or "-0" without a name
                     if relative_amount == 0 && id_len == 0 {
                         return None;
                     }
-                    
+
                     let relative_sign = content.as_bytes()[sign_pos];
                     let relative_amount_signed = if relative_sign == b'-' {
                         -(relative_amount as isize)
                     } else {
                         relative_amount as isize
                     };
-                    
+
                     return Some(ParsedId {
                         id: &content[..id_len],
                         relative: Some(relative_amount_signed),
@@ -1332,28 +1337,28 @@ pub(crate) fn parse_id<'a>(
             }
         }
     }
-    
+
     // No relative reference found, or we allow signs in names
     // Parse the entire content as the identifier
     let content = &s[id_start..content_end];
-    
+
     // Validate that the identifier is valid
     let is_valid_id_char = if allow_name_with_sign {
         |c: char| c.is_alphanumeric() || c == '_' || c == '-' || c == '+'
     } else {
         is_id_char
     };
-    
+
     if content.is_empty() || !content.chars().all(is_valid_id_char) {
         return None;
     }
-    
+
     // When allow_name_with_sign is true, ensure the name contains at least one alphanumeric or underscore
     // (not just + and - characters)
     if allow_name_with_sign && !content.chars().any(|c| c.is_alphanumeric() || c == '_') {
         return None;
     }
-    
+
     Some(ParsedId {
         id: content,
         relative: None,
@@ -1485,25 +1490,46 @@ mod tests {
             Some(ParsedId { id, relative, skip })
         }
         // Tests with allow_relative=true, allow_name_with_sign=false (backref context)
-        assert_eq!(parse_id("foo.", "", "", true, false), create_id("foo", None, 3));
+        assert_eq!(
+            parse_id("foo.", "", "", true, false),
+            create_id("foo", None, 3)
+        );
         assert_eq!(parse_id("1.", "", "", true, false), create_id("1", None, 1));
-        assert_eq!(parse_id("{foo}", "{", "}", true, false), create_id("foo", None, 5));
+        assert_eq!(
+            parse_id("{foo}", "{", "}", true, false),
+            create_id("foo", None, 5)
+        );
         assert_eq!(parse_id("{foo.", "{", "}", true, false), None);
         assert_eq!(parse_id("{foo", "{", "}", true, false), None);
         assert_eq!(parse_id("{}", "{", "}", true, false), None);
         assert_eq!(parse_id("", "", "", true, false), None);
-        assert_eq!(parse_id("{-1}", "{", "}", true, false), create_id("", Some(-1), 4));
+        assert_eq!(
+            parse_id("{-1}", "{", "}", true, false),
+            create_id("", Some(-1), 4)
+        );
         assert_eq!(parse_id("{-1}", "{", "}", false, false), None);
         assert_eq!(parse_id("{-a}", "{", "}", true, false), None);
         assert_eq!(parse_id("{-a}", "{", "}", false, false), None);
         assert_eq!(parse_id("{+a}", "{", "}", false, false), None);
         assert_eq!(parse_id("+a", "", "", false, false), None);
         assert_eq!(parse_id("-a", "", "", false, false), None);
-        assert_eq!(parse_id("2+a", "", "", false, false), create_id("2", None, 1));
-        assert_eq!(parse_id("2-a", "", "", false, false), create_id("2", None, 1));
+        assert_eq!(
+            parse_id("2+a", "", "", false, false),
+            create_id("2", None, 1)
+        );
+        assert_eq!(
+            parse_id("2-a", "", "", false, false),
+            create_id("2", None, 1)
+        );
 
-        assert_eq!(parse_id("<+1>", "<", ">", true, false), create_id("", Some(1), 4));
-        assert_eq!(parse_id("<-3>", "<", ">", true, false), create_id("", Some(-3), 4));
+        assert_eq!(
+            parse_id("<+1>", "<", ">", true, false),
+            create_id("", Some(1), 4)
+        );
+        assert_eq!(
+            parse_id("<-3>", "<", ">", true, false),
+            create_id("", Some(-3), 4)
+        );
         assert_eq!(
             parse_id("<n+1>", "<", ">", true, false),
             create_id("n", Some(1), 5)
@@ -1540,11 +1566,20 @@ mod tests {
             parse_id("<2-1>", "<", ">", true, false),
             create_id("2", Some(-1), 5)
         );
-        
+
         // Tests with allow_name_with_sign=true (capture group/subroutine context)
-        assert_eq!(parse_id("<type-name>", "<", ">", false, true), create_id("type-name", None, 11));
-        assert_eq!(parse_id("<name+with+plus>", "<", ">", false, true), create_id("name+with+plus", None, 16));
-        assert_eq!(parse_id("<a-b-c>", "<", ">", false, true), create_id("a-b-c", None, 7));
+        assert_eq!(
+            parse_id("<type-name>", "<", ">", false, true),
+            create_id("type-name", None, 11)
+        );
+        assert_eq!(
+            parse_id("<name+with+plus>", "<", ">", false, true),
+            create_id("name+with+plus", None, 16)
+        );
+        assert_eq!(
+            parse_id("<a-b-c>", "<", ">", false, true),
+            create_id("a-b-c", None, 7)
+        );
     }
 
     #[test]
@@ -3279,17 +3314,14 @@ mod tests {
             p(r"(?<type-name>a)"),
             Expr::Group(Box::new(make_literal("a")))
         );
-        
+
         assert_eq!(
             p(r"(?<name+with+plus>b)"),
             Expr::Group(Box::new(make_literal("b")))
         );
-        
-        assert_eq!(
-            p(r"(?P<a-b-c>c)"),
-            Expr::Group(Box::new(make_literal("c")))
-        );
-        
+
+        assert_eq!(p(r"(?P<a-b-c>c)"), Expr::Group(Box::new(make_literal("c"))));
+
         // Subroutine calls should work with - and + in names
         assert_eq!(
             p(r"(?<type-name>a)\g<type-name>"),
@@ -3298,7 +3330,7 @@ mod tests {
                 Expr::SubroutineCall(1)
             ])
         );
-        
+
         assert_eq!(
             p(r"(?<name+plus>b)\g<name+plus>"),
             Expr::Concat(vec![
@@ -3306,12 +3338,12 @@ mod tests {
                 Expr::SubroutineCall(1)
             ])
         );
-        
+
         // Backreferences should NOT allow - and + as part of the name
         // (they are reserved for relative references)
         fail(r"(?<type-name>a)\k<type-name>");
         fail(r"(?<name+plus>b)\k<name+plus>");
-        
+
         // But relative backreferences should still work
         assert_eq!(
             p(r"(a)(b)\k<-1>"),
