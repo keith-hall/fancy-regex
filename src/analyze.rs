@@ -338,6 +338,12 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
     };
 
     let analyzed = analyzer.visit(&tree.expr, 0);
+    // If analysis failed, return the error immediately before validating backrefs
+    // Otherwise backref validation might use an incomplete group count
+    if let Err(e) = analyzed {
+        return Err(e);
+    }
+
     if analyzer.backrefs.contains(0) {
         return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
             0,
@@ -493,6 +499,26 @@ mod tests {
         assert!(matches!(
             result.err(),
             Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
+        ));
+    }
+
+    #[test]
+    fn subroutine_call_error_takes_precedence_over_invalid_backref() {
+        // Regression test for issue where encountering a subroutine call would cause
+        // the analyzer to stop visiting groups, leading to an incomplete group count.
+        // This would then cause a misleading "Invalid back reference" error instead of
+        // the correct "Subroutine Call" feature not supported error.
+        // Pattern has a subroutine call \g<square> followed by groups with backrefs.
+        let tree = Expr::parse_tree(
+            r"(?<open>a)(?<raw>b)(?<square>c|\[\g<square>*+])(?<title>d)\k<title>\k<open>",
+        )
+        .unwrap();
+        let result = analyze(&tree, false);
+        // Should get the subroutine call error, not an invalid backref error
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::FeatureNotYetSupported(ref s) if s == "Subroutine Call")
         ));
     }
 
