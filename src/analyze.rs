@@ -337,13 +337,8 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         group_info: Map::new(),
     };
 
-    let analyzed = analyzer.visit(&tree.expr, 0);
-    // If analysis failed, return the error immediately before validating backrefs
-    // Otherwise backref validation might use an incomplete group count
-    if let Err(e) = analyzed {
-        return Err(e);
-    }
-
+    let analyzed = analyzer.visit(&tree.expr, 0)?;
+    // If analysis succeeded, validate backrefs with the complete group count
     if analyzer.backrefs.contains(0) {
         return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
             0,
@@ -362,7 +357,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
             ))));
         }
     }
-    analyzed
+    Ok(analyzed)
 }
 
 /// Determine if the expression will always only ever match at position 0.
