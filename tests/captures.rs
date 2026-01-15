@@ -440,31 +440,28 @@ fn capture_group_with_plus() {
 
 #[test]
 fn subroutine_call_with_dash() {
-    // Subroutine calls are not enabled by default, so we skip this test
-    // But the parsing should work
+    // Test that parsing works for subroutine calls with dashes in names
     use fancy_regex::RegexBuilder;
     let result = RegexBuilder::new(r"(?<type-name>\d+)\g<type-name>").build();
-    // The regex should parse successfully even though subroutine calls aren't compiled yet
+    // The regex should parse successfully even though subroutine calls aren't fully compiled yet
     assert!(result.is_ok() || matches!(result.unwrap_err(), fancy_regex::Error::CompileError(_)));
 }
 
 #[test]
 fn subroutine_call_with_plus() {
-    // Subroutine calls are not enabled by default, so we skip this test
-    // But the parsing should work
+    // Test that parsing works for subroutine calls with pluses in names
     use fancy_regex::RegexBuilder;
     let result = RegexBuilder::new(r"(?<a+b>\w)\g<a+b>").build();
-    // The regex should parse successfully even though subroutine calls aren't compiled yet
+    // The regex should parse successfully even though subroutine calls aren't fully compiled yet
     assert!(result.is_ok() || matches!(result.unwrap_err(), fancy_regex::Error::CompileError(_)));
 }
 
 #[test]
 fn complex_name_with_dashes_and_pluses() {
-    // Subroutine calls are not enabled by default, so we skip this test
-    // But the parsing should work
+    // Test that parsing works for complex names with both dashes and pluses
     use fancy_regex::RegexBuilder;
     let result = RegexBuilder::new(r"(?<a-b+c-d>\w+)-\g<a-b+c-d>").build();
-    // The regex should parse successfully even though subroutine calls aren't compiled yet
+    // The regex should parse successfully even though subroutine calls aren't fully compiled yet
     assert!(result.is_ok() || matches!(result.unwrap_err(), fancy_regex::Error::CompileError(_)));
 }
 
