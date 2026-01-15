@@ -239,9 +239,9 @@ impl Expander {
                     id,
                     relative: None,
                     skip,
-                }) = parse_id(tail, self.open, self.close, false).or_else(|| {
+                }) = parse_id(tail, self.open, self.close, false, false).or_else(|| {
                     if self.allow_undelimited_name {
-                        parse_id(tail, "", "", false)
+                        parse_id(tail, "", "", false, false)
                     } else {
                         None
                     }
