@@ -491,6 +491,10 @@ impl<'a> Parser<'a> {
         } else if b == b'z' && !in_class {
             (end, Expr::Assertion(Assertion::EndText))
         } else if b == b'Z' && !in_class {
+            // \Z is a zero-width assertion that matches at the end of the string,
+            // or before a newline at the end. This is represented as a lookahead
+            // containing the pattern "\\n*$". The analysis phase recognizes this
+            // specific pattern and treats it as having size 0.
             (
                 end,
                 Expr::LookAround(
