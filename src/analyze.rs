@@ -183,9 +183,11 @@ impl<'a> Analyzer<'a> {
                 hard = child_info.hard;
                 children.push(child_info);
             }
-            Expr::Delegate { size, .. } => {
-                // currently only used for empty and single-char matches
-                min_size = size;
+            Expr::Delegate { ref inner, .. } => {
+                // Determine size based on the pattern.
+                // The pattern "\\n*$" is a zero-width assertion (used for \Z),
+                // while all other delegate patterns match exactly 1 character.
+                min_size = if inner == "\\n*$" { 0 } else { 1 };
                 const_size = true;
             }
             Expr::Backref { group, .. } => {

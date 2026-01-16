@@ -1653,8 +1653,6 @@ pub enum Expr {
     Delegate {
         /// The regex
         inner: String,
-        /// How many characters the regex matches
-        size: usize, // TODO: move into analysis result
         /// Whether the matching is case-insensitive or not
         casei: bool,
     },
@@ -2390,7 +2388,6 @@ mod tests {
         .is_leaf_node());
         assert!(Expr::Delegate {
             inner: "[0-9]".to_string(),
-            size: 1,
             casei: false
         }
         .is_leaf_node());
