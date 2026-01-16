@@ -259,27 +259,27 @@ fn word_boundary_brace_syntax() {
 fn general_newline_escape() {
     // Test \R matching \r\n (two characters)
     assert_match(r"\R", "\r\n");
-    
+
     // Test \R matching single newline characters
     assert_match(r"\R", "\n");
     assert_match(r"\R", "\r");
     assert_match(r"\R", "\x0B"); // \v
     assert_match(r"\R", "\x0C"); // \f
-    
+
     // Test \R in patterns
     assert_match(r"a\Rb", "a\r\nb");
     assert_match(r"a\Rb", "a\nb");
     assert_match(r"a\Rb", "a\rb");
-    
+
     // Test that \R doesn't backtrack from \r\n to \r
-    // If we have \r\n followed by something that must match \n, 
+    // If we have \r\n followed by something that must match \n,
     // \R should match \r\n as a unit and fail, not backtrack to match just \r
     assert_no_match(r"\R\n", "\r\n");
-    
+
     // Test multiple \R in a pattern
     assert_match(r"\R\R", "\n\r");
     assert_match(r"\R\R", "\r\n\n");
-    
+
     // Test \R doesn't match other characters
     assert_no_match(r"^\R$", "a");
     assert_no_match(r"^\R$", " ");
@@ -292,7 +292,7 @@ fn general_newline_escape_unicode() {
     assert_match(r"\R", "\u{0085}"); // NEL (Next Line)
     assert_match(r"\R", "\u{2028}"); // LS (Line Separator)
     assert_match(r"\R", "\u{2029}"); // PS (Paragraph Separator)
-    
+
     // Test in patterns
     assert_match(r"a\Rb", "a\u{0085}b");
     assert_match(r"a\Rb", "a\u{2028}b");

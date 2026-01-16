@@ -594,23 +594,23 @@ impl Compiler {
         // Compile \R as: try \r\n first, then try single newline chars
         // The entire \R is atomic - once it matches, we don't backtrack
         // This prevents \r\n from backtracking to \r
-        
+
         self.b.add(Insn::BeginAtomic);
-        
+
         let split_pc = self.b.pc();
         self.b.add(Insn::Split(split_pc + 1, usize::MAX)); // Will fix second target later
-        
+
         // First alternative: \r\n
         self.b.add(Insn::Lit("\r\n".to_string()));
-        
+
         // Jump over other alternatives
         let jmp_pc = self.b.pc();
         self.b.add(Insn::Jmp(0)); // Will fix target later
-        
+
         // Second alternative: single newline characters
         let singles_pc = self.b.pc();
         self.b.set_split_target(split_pc, singles_pc, true);
-        
+
         // Compile a delegate for matching single newline characters
         let pattern = if unicode {
             // Unicode mode: \n, \v, \f, \r, U+0085, U+2028, U+2029
@@ -619,20 +619,20 @@ impl Compiler {
             // Non-Unicode mode: \n, \v, \f, \r
             "[\n\x0B\x0C\r]"
         };
-        
+
         let compiled = compile_inner(pattern, &self.options)?;
         self.b.add(Insn::Delegate(Delegate {
             inner: compiled,
             pattern: pattern.to_string(),
             capture_groups: None,
         }));
-        
+
         // Fix the jump target
         let next_pc = self.b.pc();
         self.b.set_jmp_target(jmp_pc, next_pc);
-        
+
         self.b.add(Insn::EndAtomic);
-        
+
         Ok(())
     }
 }
