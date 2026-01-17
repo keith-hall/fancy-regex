@@ -1830,7 +1830,7 @@ pub enum Assertion {
     StartText,
     /// End of input text
     EndText,
-    /// End of input text, or before a newline at the end (for `\Z`)
+    /// End of input text, or before any trailing newlines at the end (Oniguruma's `\Z`)
     EndTextBeforeOptionalNewline,
     /// Start of a line
     StartLine {
