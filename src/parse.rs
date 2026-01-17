@@ -491,19 +491,10 @@ impl<'a> Parser<'a> {
         } else if b == b'z' && !in_class {
             (end, Expr::Assertion(Assertion::EndText))
         } else if b == b'Z' && !in_class {
-            // \Z is a zero-width assertion that matches at the end of the string,
-            // or before a newline at the end. This is represented as a lookahead
-            // containing the pattern "\\n*$". The analysis phase recognizes this
-            // specific pattern and treats it as having size 0.
+            // \Z matches at the end of the string, or before a newline at the end
             (
                 end,
-                Expr::LookAround(
-                    Box::new(Expr::Delegate {
-                        inner: "\\n*$".to_string(),
-                        casei: false,
-                    }),
-                    LookAhead,
-                ),
+                Expr::Assertion(Assertion::EndTextBeforeOptionalNewline),
             )
         } else if (b == b'b' || b == b'B') && !in_class {
             let check_pos = self.optional_whitespace(end)?;
@@ -1403,13 +1394,7 @@ mod tests {
     fn end_text_before_empty_lines() {
         assert_eq!(
             p("\\Z"),
-            Expr::LookAround(
-                Box::new(Expr::Delegate {
-                    inner: "\\n*$".to_string(),
-                    casei: false,
-                }),
-                LookAhead,
-            )
+            Expr::Assertion(Assertion::EndTextBeforeOptionalNewline)
         );
     }
 

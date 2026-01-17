@@ -1650,6 +1650,10 @@ pub enum Expr {
     },
     /// Delegate a regex to the regex crate. This is used as a simplification so that we don't have
     /// to represent all the expressions in the AST, e.g. character classes.
+    ///
+    /// **Constraint**: All Delegate expressions must match exactly 1 character. This ensures
+    /// consistent analysis and compilation behavior. For zero-width or multi-character patterns,
+    /// use the appropriate Expr variants instead (e.g., Assertion, Repeat, Concat).
     Delegate {
         /// The regex
         inner: String,
@@ -1826,6 +1830,8 @@ pub enum Assertion {
     StartText,
     /// End of input text
     EndText,
+    /// End of input text, or before a newline at the end (for `\Z`)
+    EndTextBeforeOptionalNewline,
     /// Start of a line
     StartLine {
         /// CRLF mode
@@ -1862,6 +1868,7 @@ impl Assertion {
                 | RightWordHalfBoundary
                 | WordBoundary
                 | NotWordBoundary
+                | EndTextBeforeOptionalNewline
         )
     }
 }
