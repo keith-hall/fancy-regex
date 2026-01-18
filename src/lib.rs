@@ -1608,7 +1608,7 @@ pub enum Expr {
     Alt(Vec<Expr>),
     /// Capturing group of expression, e.g. `(a.)` matches `a` and any character and "captures"
     /// (remembers) the match
-    Group(Box<Expr>),
+    Group(Arc<Expr>),
     /// Look-around (e.g. positive/negative look-ahead or look-behind) with an expression, e.g.
     /// `(?=a)` means the next character must be `a` (but the match is not consumed)
     LookAround(Box<Expr>, LookAround),
@@ -1993,6 +1993,7 @@ mod tests {
     use alloc::borrow::Cow;
     use alloc::boxed::Box;
     use alloc::string::String;
+    use alloc::sync::Arc;
     use alloc::{format, vec};
 
     use crate::parse::make_literal;
@@ -2030,7 +2031,7 @@ mod tests {
 
     #[test]
     fn to_str_group_alt() {
-        let e = Expr::Group(Box::new(Expr::Alt(vec![
+        let e = Expr::Group(Arc::new(Expr::Alt(vec![
             make_literal("a"),
             make_literal("b"),
         ])));
