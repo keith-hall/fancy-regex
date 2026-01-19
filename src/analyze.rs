@@ -456,6 +456,24 @@ impl<'a> Analyzer<'a> {
         self.rebuild_subroutine_calls_impl(info, current_group, 0, inside_zero_rep);
     }
 
+    fn info_children<'b>(info: &'b Info<'a>) -> impl Iterator<Item = &'b Info<'a>> {
+        info.expr
+            .children_iter()
+            .zip(info.children.iter())
+            .map(|(_, child)| child)
+    }
+
+    fn concat_child_min_size(&self, child: &Info<'a>) -> usize {
+        if let Expr::SubroutineCall(target_group) = child.expr {
+            self.group_info
+                .get(target_group)
+                .map(|si| si.min_size)
+                .unwrap_or(child.min_size)
+        } else {
+            child.min_size
+        }
+    }
+
     fn rebuild_subroutine_calls_impl(
         &mut self,
         info: &Info<'a>,
@@ -471,50 +489,22 @@ impl<'a> Analyzer<'a> {
                     self.root_groups.insert(group);
                 }
                 // Recurse into the group with position reset to 0
-                if !info.children.is_empty() {
-                    self.rebuild_subroutine_calls_impl(
-                        &info.children[0],
-                        group,
-                        0,
-                        inside_zero_rep,
-                    );
+                if let Some(child) = Self::info_children(info).next() {
+                    self.rebuild_subroutine_calls_impl(child, group, 0, inside_zero_rep);
                 }
             }
             Expr::Concat(ref _v) => {
                 let mut pos = min_pos_in_group;
-                for child in info.children.iter() {
+                for child in Self::info_children(info) {
                     self.rebuild_subroutine_calls_impl(child, current_group, pos, inside_zero_rep);
-
-                    // For SubroutineCalls, use the actual group's min_size, not the Info's min_size
-                    // (which might be 0 due to forward references)
-                    let child_min_size = if let Expr::SubroutineCall(target_group) = child.expr {
-                        self.group_info
-                            .get(target_group)
-                            .map(|si| si.min_size)
-                            .unwrap_or(child.min_size)
-                    } else {
-                        child.min_size
-                    };
-
-                    pos += child_min_size;
-                }
-            }
-            Expr::Alt(_) => {
-                // All alternatives start at the same position
-                for child in &info.children {
-                    self.rebuild_subroutine_calls_impl(
-                        child,
-                        current_group,
-                        min_pos_in_group,
-                        inside_zero_rep,
-                    );
+                    pos += self.concat_child_min_size(child);
                 }
             }
             Expr::Repeat { hi, .. } => {
                 let new_inside_zero_rep = inside_zero_rep || *hi == 0;
-                if !info.children.is_empty() {
+                for child in Self::info_children(info) {
                     self.rebuild_subroutine_calls_impl(
-                        &info.children[0],
+                        child,
                         current_group,
                         min_pos_in_group,
                         new_inside_zero_rep,
@@ -535,34 +525,27 @@ impl<'a> Analyzer<'a> {
                         });
                 }
             }
-            Expr::LookAround(_, _) | Expr::AtomicGroup(_) => {
-                if !info.children.is_empty() {
-                    self.rebuild_subroutine_calls_impl(
-                        &info.children[0],
-                        current_group,
-                        min_pos_in_group,
-                        inside_zero_rep,
-                    );
-                }
-            }
             Expr::Conditional { .. } => {
                 // Conditional has 3 children: condition, true_branch, false_branch
-                if info.children.len() >= 3 {
+                let mut children = Self::info_children(info);
+                if let (Some(condition), Some(true_branch), Some(false_branch)) =
+                    (children.next(), children.next(), children.next())
+                {
                     self.rebuild_subroutine_calls_impl(
-                        &info.children[0],
+                        condition,
                         current_group,
                         min_pos_in_group,
                         inside_zero_rep,
                     );
-                    let cond_size = info.children[0].min_size;
+                    let cond_size = condition.min_size;
                     self.rebuild_subroutine_calls_impl(
-                        &info.children[1],
+                        true_branch,
                         current_group,
                         min_pos_in_group + cond_size,
                         inside_zero_rep,
                     );
                     self.rebuild_subroutine_calls_impl(
-                        &info.children[2],
+                        false_branch,
                         current_group,
                         min_pos_in_group,
                         inside_zero_rep,
@@ -571,7 +554,7 @@ impl<'a> Analyzer<'a> {
             }
             _ => {
                 // For other expressions, just recurse into children
-                for child in &info.children {
+                for child in Self::info_children(info) {
                     self.rebuild_subroutine_calls_impl(
                         child,
                         current_group,
@@ -700,7 +683,7 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::analyze;
+    use super::{analyze, Analyzer, BitSet, Map};
     // use super::literal_const_size;
     use crate::{can_compile_as_anchored, CompileError, Error, Expr};
 
@@ -1187,6 +1170,32 @@ mod tests {
         // The call happens before the group is defined, but it's at position 0 of group 0 (implicit)
         // which calls group 1. Group 1 doesn't call anything, so no cycle.
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rebuild_subroutine_calls_updates_concat_positions_for_forward_calls() {
+        let tree = Expr::parse_tree(r"\g<1>\g<2>(a)(b)").unwrap();
+        let start_group = 1;
+        let mut analyzer = Analyzer {
+            backrefs: &tree.backrefs,
+            group_ix: start_group,
+            group_info: Map::new(),
+            subroutine_calls: Map::new(),
+            current_group: 0,
+            inside_zero_rep: false,
+            root_groups: BitSet::new(),
+            contains_forward_referenced_subroutines: false,
+        };
+        let analyzed = analyzer.visit(&tree.expr, 0).unwrap();
+        assert!(analyzer.contains_forward_referenced_subroutines);
+        analyzer.subroutine_calls.clear();
+        analyzer.rebuild_subroutine_calls(&analyzed, 0, false);
+        let calls = analyzer.subroutine_calls.get(&0).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].target_group, 1);
+        assert_eq!(calls[0].min_pos, 0);
+        assert_eq!(calls[1].target_group, 2);
+        assert_eq!(calls[1].min_pos, 1);
     }
 
     #[test]
