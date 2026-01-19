@@ -501,6 +501,16 @@ impl<'a> Analyzer<'a> {
                     pos += self.concat_child_min_size(expr_child, child);
                 }
             }
+            Expr::Alt(_) => {
+                for (_, child) in Self::expr_children(info) {
+                    self.rebuild_subroutine_calls_impl(
+                        child,
+                        current_group,
+                        min_pos_in_group,
+                        inside_zero_rep,
+                    );
+                }
+            }
             Expr::Repeat { hi, .. } => {
                 let new_inside_zero_rep = inside_zero_rep || *hi == 0;
                 if let Some(child) = Self::first_child(info) {
