@@ -456,15 +456,12 @@ impl<'a> Analyzer<'a> {
         self.rebuild_subroutine_calls_impl(info, current_group, 0, inside_zero_rep);
     }
 
-    fn info_children<'b>(info: &'b Info<'a>) -> impl Iterator<Item = &'b Info<'a>> {
-        info.expr
-            .children_iter()
-            .zip(info.children.iter())
-            .map(|(_, child)| child)
+    fn expr_children<'b>(info: &'b Info<'a>) -> impl Iterator<Item = (&'b Expr, &'b Info<'a>)> {
+        info.expr.children_iter().zip(info.children.iter())
     }
 
-    fn concat_child_min_size(&self, child: &Info<'a>) -> usize {
-        if let Expr::SubroutineCall(target_group) = child.expr {
+    fn concat_child_min_size(&self, expr: &Expr, child: &Info<'a>) -> usize {
+        if let Expr::SubroutineCall(target_group) = expr {
             self.group_info
                 .get(target_group)
                 .map(|si| si.min_size)
@@ -489,20 +486,20 @@ impl<'a> Analyzer<'a> {
                     self.root_groups.insert(group);
                 }
                 // Recurse into the group with position reset to 0
-                if let Some(child) = Self::info_children(info).next() {
+                if let Some((_, child)) = Self::expr_children(info).next() {
                     self.rebuild_subroutine_calls_impl(child, group, 0, inside_zero_rep);
                 }
             }
             Expr::Concat(ref _v) => {
                 let mut pos = min_pos_in_group;
-                for child in Self::info_children(info) {
+                for (expr_child, child) in Self::expr_children(info) {
                     self.rebuild_subroutine_calls_impl(child, current_group, pos, inside_zero_rep);
-                    pos += self.concat_child_min_size(child);
+                    pos += self.concat_child_min_size(expr_child, child);
                 }
             }
             Expr::Repeat { hi, .. } => {
                 let new_inside_zero_rep = inside_zero_rep || *hi == 0;
-                for child in Self::info_children(info) {
+                if let Some((_, child)) = Self::expr_children(info).next() {
                     self.rebuild_subroutine_calls_impl(
                         child,
                         current_group,
@@ -527,8 +524,8 @@ impl<'a> Analyzer<'a> {
             }
             Expr::Conditional { .. } => {
                 // Conditional has 3 children: condition, true_branch, false_branch
-                let mut children = Self::info_children(info);
-                if let (Some(condition), Some(true_branch), Some(false_branch)) =
+                let mut children = Self::expr_children(info);
+                if let (Some((_, condition)), Some((_, true_branch)), Some((_, false_branch))) =
                     (children.next(), children.next(), children.next())
                 {
                     self.rebuild_subroutine_calls_impl(
@@ -554,7 +551,7 @@ impl<'a> Analyzer<'a> {
             }
             _ => {
                 // For other expressions, just recurse into children
-                for child in Self::info_children(info) {
+                for (_, child) in Self::expr_children(info) {
                     self.rebuild_subroutine_calls_impl(
                         child,
                         current_group,
