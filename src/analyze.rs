@@ -460,6 +460,10 @@ impl<'a> Analyzer<'a> {
         info.expr.children_iter().zip(info.children.iter())
     }
 
+    fn first_child<'b>(info: &'b Info<'a>) -> Option<&'b Info<'a>> {
+        Self::expr_children(info).next().map(|(_, child)| child)
+    }
+
     fn concat_child_min_size(&self, expr: &Expr, child: &Info<'a>) -> usize {
         if let Expr::SubroutineCall(target_group) = expr {
             self.group_info
@@ -486,7 +490,7 @@ impl<'a> Analyzer<'a> {
                     self.root_groups.insert(group);
                 }
                 // Recurse into the group with position reset to 0
-                if let Some((_, child)) = Self::expr_children(info).next() {
+                if let Some(child) = Self::first_child(info) {
                     self.rebuild_subroutine_calls_impl(child, group, 0, inside_zero_rep);
                 }
             }
@@ -499,7 +503,7 @@ impl<'a> Analyzer<'a> {
             }
             Expr::Repeat { hi, .. } => {
                 let new_inside_zero_rep = inside_zero_rep || *hi == 0;
-                if let Some((_, child)) = Self::expr_children(info).next() {
+                if let Some(child) = Self::first_child(info) {
                     self.rebuild_subroutine_calls_impl(
                         child,
                         current_group,
@@ -524,10 +528,11 @@ impl<'a> Analyzer<'a> {
             }
             Expr::Conditional { .. } => {
                 // Conditional has 3 children: condition, true_branch, false_branch
-                let mut children = Self::expr_children(info);
-                if let (Some((_, condition)), Some((_, true_branch)), Some((_, false_branch))) =
-                    (children.next(), children.next(), children.next())
-                {
+                if info.children.len() >= 3 {
+                    let mut children = Self::expr_children(info);
+                    let (_, condition) = children.next().unwrap();
+                    let (_, true_branch) = children.next().unwrap();
+                    let (_, false_branch) = children.next().unwrap();
                     self.rebuild_subroutine_calls_impl(
                         condition,
                         current_group,
