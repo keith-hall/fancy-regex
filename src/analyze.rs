@@ -540,28 +540,29 @@ impl<'a> Analyzer<'a> {
                 // Conditional has 3 children: condition, true_branch, false_branch
                 if info.children.len() >= 3 {
                     let mut children = Self::expr_children(info);
-                    let (_, condition) = children.next().unwrap();
-                    let (_, true_branch) = children.next().unwrap();
-                    let (_, false_branch) = children.next().unwrap();
-                    self.rebuild_subroutine_calls_impl(
-                        condition,
-                        current_group,
-                        min_pos_in_group,
-                        inside_zero_rep,
-                    );
-                    let cond_size = condition.min_size;
-                    self.rebuild_subroutine_calls_impl(
-                        true_branch,
-                        current_group,
-                        min_pos_in_group + cond_size,
-                        inside_zero_rep,
-                    );
-                    self.rebuild_subroutine_calls_impl(
-                        false_branch,
-                        current_group,
-                        min_pos_in_group,
-                        inside_zero_rep,
-                    );
+                    if let (Some((_, condition)), Some((_, true_branch)), Some((_, false_branch))) =
+                        (children.next(), children.next(), children.next())
+                    {
+                        self.rebuild_subroutine_calls_impl(
+                            condition,
+                            current_group,
+                            min_pos_in_group,
+                            inside_zero_rep,
+                        );
+                        let cond_size = condition.min_size;
+                        self.rebuild_subroutine_calls_impl(
+                            true_branch,
+                            current_group,
+                            min_pos_in_group + cond_size,
+                            inside_zero_rep,
+                        );
+                        self.rebuild_subroutine_calls_impl(
+                            false_branch,
+                            current_group,
+                            min_pos_in_group,
+                            inside_zero_rep,
+                        );
+                    }
                 }
             }
             _ => {
@@ -695,7 +696,8 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{analyze, Analyzer, BitSet, Map};
+    use super::{analyze, Analyzer};
+    use super::{BitSet, Map};
     // use super::literal_const_size;
     use crate::{can_compile_as_anchored, CompileError, Error, Expr};
 
