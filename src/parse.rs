@@ -2718,42 +2718,27 @@ mod tests {
     fn subroutines() {
         assert_eq!(
             p(r"(a)\g1"),
-            Expr::Concat(vec![
-                make_group(make_literal("a")),
-                Expr::SubroutineCall(1)
-            ])
+            Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
         );
 
         assert_eq!(
             p(r"(a)\g<1>"),
-            Expr::Concat(vec![
-                make_group(make_literal("a")),
-                Expr::SubroutineCall(1)
-            ])
+            Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
         );
 
         assert_eq!(
             p(r"(?<group_name>a)\g<group_name>"),
-            Expr::Concat(vec![
-                make_group(make_literal("a")),
-                Expr::SubroutineCall(1)
-            ])
+            Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
         );
 
         assert_eq!(
             p(r"(?<group_name>a)\g'group_name'"),
-            Expr::Concat(vec![
-                make_group(make_literal("a")),
-                Expr::SubroutineCall(1)
-            ])
+            Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
         );
 
         assert_eq!(
             p(r"(?<group_name>a)(?P>group_name)"),
-            Expr::Concat(vec![
-                make_group(make_literal("a")),
-                Expr::SubroutineCall(1)
-            ])
+            Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
         );
     }
 
@@ -2761,10 +2746,7 @@ mod tests {
     fn subroutine_defined_later() {
         assert_eq!(
             p(r"\g<name>(?<name>a)"),
-            Expr::Concat(vec![
-                Expr::SubroutineCall(1),
-                make_group(make_literal("a")),
-            ])
+            Expr::Concat(vec![Expr::SubroutineCall(1), make_group(make_literal("a")),])
         );
 
         assert_eq!(
@@ -2804,10 +2786,7 @@ mod tests {
 
         assert_eq!(
             p(r"\g<1>(a)"),
-            Expr::Concat(vec![
-                Expr::SubroutineCall(1),
-                make_group(make_literal("a")),
-            ])
+            Expr::Concat(vec![Expr::SubroutineCall(1), make_group(make_literal("a")),])
         );
     }
 
