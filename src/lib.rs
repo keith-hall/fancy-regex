@@ -225,6 +225,8 @@ use regex_automata::Input as RaInput;
 
 mod analyze;
 mod compile;
+/// Documentation modules.
+pub mod docs;
 mod error;
 mod expand;
 mod optimize;
@@ -236,6 +238,7 @@ mod vm;
 use crate::analyze::analyze;
 use crate::analyze::can_compile_as_anchored;
 use crate::compile::compile;
+//use crate::docs;
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
