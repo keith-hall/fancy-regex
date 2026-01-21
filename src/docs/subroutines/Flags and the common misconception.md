@@ -14,20 +14,21 @@ Let's look at a concrete example.
 ### The pattern
 
 ```regex
-(?<word>[a-z]+)\s+(?i:\g<word>)
+\A(?<word>[a-z]+)\s+(?i:\g<word>)
 ```
 
 ### The input
 
 ```text
-hello Hello
+hello Mr
 ```
 
 At first glance, this pattern appears to say:
 
-1. Match a word of lowercase letters and capture it as `word`
-2. Match some whitespace
-3. Call the subroutine `word`, but case-insensitively
+1. At the beginning of the input string
+2. Match a word of lowercase letters and capture it as `word`
+3. Match some whitespace
+4. Call the subroutine `word`, but case-insensitively
 
 Many users therefore expect this pattern to match the input above.
 
@@ -45,39 +46,45 @@ Let's walk through the execution step by step.
 
 ### Execution trace
 
-#### Step 1: Enter subroutine definition `word`
+#### Step 1: Assert position at the beginning of the input string
+
+* Pattern: `\A`
+* Active flags: none
+* Input position: 0 (start of `"hello Mr"`)
+
+#### Step 2: Enter subroutine definition `word`
 
 * Pattern: `[a-z]+`
 * Active flags: none
-* Input position: start of `"hello Hello"`
+* Input position: 0 (start of `"hello Mr"`)
 
-The engine matches `[a-z]+` against `"hello"`.
+The engine greedily matches `[a-z]+` against `"hello"`.
+The range 0 - 5 is stored in capture group 1, whose name is `word`.
 
-#### Step 2: Exit subroutine definition `word` and continue matching
+#### Step 3: Exit subroutine definition `word` and continue matching
 
 * Pattern: `\s+`
 * Active flags: none
-* Input position: after `hello`
+* Input position: 5 (at the space after `hello`)
 
 The engine matches `\s+` against `" "`.
 
-#### Step 3: Call subroutine `word`
+#### Step 4: Call subroutine `word`
 
 * Pattern: `\g<word>` -> `(?<word>[a-z]+)`
 * Active flags: none
-* Input position: after `hello`
+* Input position: 6 (after `" "` at the `'M'` of `"Mr"`)
 
 This fails immediately, because:
 
 * The pattern is case-sensitive
-* The first character is `'H'`, not `'h'`
+* The first character is `'M'`, which does not fall in the range a-z.
 
----
-
-#### Step 2: No alternatives available
+#### Step 5: No alternatives available
 
 * There are no alternations inside `word`
 * There are no backtracking points before the failure
+* The anchor prevents us from trying other starting positions in the input string
 
 The match fails.
 
@@ -97,6 +104,7 @@ The subroutine `word` was compiled once, with these properties:
 
 * Pattern: `[a-z]+`
 * Flags: none
+* Capture group number: 1
 
 When the subroutine is called, the engine:
 
@@ -112,9 +120,9 @@ fancy-regex deliberately enforces this rule to guarantee that:
 
 * A subroutine behaves the same everywhere it is used
 * Flags cannot silently change the meaning of a reused pattern
-* There is no “action at a distance” from call sites
+* There is no "action at a distance" from call sites
 
-If call-site flags were allowed to affect subroutines, the same subroutine could behave differently depending on where it was called — making patterns harder to reason about and easier to misuse.
+If call-site flags were allowed to affect subroutines, the same subroutine could behave differently depending on where it was called - making patterns harder to reason about and easier to misuse.
 
 ---
 
@@ -135,12 +143,4 @@ Now the subroutine is compiled with the `i` flag, and every call to it behaves c
 > **Subroutines in fancy-regex are compiled once, with fixed flags.
 > Call sites cannot change their behavior.**
 
-This rule enables safe reuse, predictable execution, and clear reasoning — especially in larger and more complex patterns.
-
----
-
-If you'd like, next I can:
-
-* Draft **Section 4: Design rationale** as a tight, Rust-style justification
-* Extend this example with a **side-by-side “wrong vs right” comparison**
-* Or draft the **interactive-enhanced version** of this exact section for GitHub Pages
+This rule enables safe reuse, predictable execution, and clear reasoning - especially in larger and more complex patterns. It also matches Oniguruma behavior, so if you plan to use fancy-regex as a memory-safe alternative, you can!
