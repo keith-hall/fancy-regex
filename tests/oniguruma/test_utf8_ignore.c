@@ -562,3 +562,13 @@
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Translate(Error { kind: UnicodePropertyNotFound, pattern: "\\p{in_enclosed_cjk_letters_and_months}", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 38, l: 1, c: 39)) }) } }))
   x2("\\p{In_Enclosed_CJK_Letters_and_Months}", "\xe3\x8b\xbf", 0, 3);
+
+
+  // Expected group to exist
+  x3("\g<n>(?<n>.){0}", "X", 0, 1, 1);
+  // Match found at start 0 and end 1 (expected 2 and 3)
+  x3("(z)()()(?<_9>a)\\g<_9>", "zaa", 2, 3, 1);
+  // Expected group to exist
+  x3("\\g<_A>\\g<_A>|\\zEND(.a.)(?<_A>.b.)", "xbxyby", 3, 6, 1);
+  // Compile failed: panic in regex-automata crate
+  x2("\\g<+2>(abc)(ABC){0}", "ABCabc", 0, 6);
