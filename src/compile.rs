@@ -21,6 +21,7 @@
 //! Compilation of regexes to VM.
 
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::string::{String, ToString};
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
@@ -119,6 +120,8 @@ struct Compiler<'a> {
     subroutine_recursion_stack: Vec<usize>,
     /// Root Info node for handling group 0 subroutine calls
     root_info: Option<&'a Info<'a>>,
+    /// Total number of capture groups in the regex (end_group of root)
+    total_groups: usize,
 }
 
 impl<'a> Compiler<'a> {
@@ -130,6 +133,7 @@ impl<'a> Compiler<'a> {
             group_info_map: Map::new(),
             subroutine_recursion_stack: Vec::new(),
             root_info: None,
+            total_groups: max_group,
         }
     }
 
@@ -223,25 +227,29 @@ impl<'a> Compiler<'a> {
             }
             Expr::SubroutineCall(target_group) => {
                 // Check if we're already expanding this specific group (direct/indirect recursion)
-                let recursion_count = self.subroutine_recursion_stack.iter().filter(|&&g| g == target_group).count();
+                let recursion_count = self
+                    .subroutine_recursion_stack
+                    .iter()
+                    .filter(|&&g| g == target_group)
+                    .count();
                 if recursion_count >= MAX_SUBROUTINE_RECURSION_DEPTH {
                     // Hit recursion limit - don't expand further, effectively making this match fail
                     // This matches Oniguruma's behavior of limiting recursion depth
                     self.b.add(Insn::Fail);
                     return Ok(());
                 }
-                
+
                 // Handle group 0 (whole pattern) specially
                 let target_info = if target_group == 0 {
                     self.root_info
                 } else {
                     self.group_info_map.get(&target_group).copied()
                 };
-                
+
                 if let Some(target_info) = target_info {
                     // Track that we're expanding this subroutine
                     self.subroutine_recursion_stack.push(target_group);
-                    
+
                     // For group 0, visit the entire root info
                     // For other groups, visit the child of the Group expression
                     if target_group == 0 {
@@ -251,23 +259,25 @@ impl<'a> Compiler<'a> {
                         // If empty, this is an error in the analysis phase
                         if target_info.children.is_empty() {
                             return Err(Error::CompileError(Box::new(
-                                CompileError::FeatureNotYetSupported(
-                                    format!("Subroutine call to empty group {}", target_group)
-                                ),
+                                CompileError::FeatureNotYetSupported(format!(
+                                    "Subroutine call to empty group {}",
+                                    target_group
+                                )),
                             )));
                         }
                         self.visit(&target_info.children[0], hard)?;
                     }
-                    
+
                     // Pop the recursion stack
                     self.subroutine_recursion_stack.pop();
                 } else {
                     // The target group doesn't exist (invalid group reference)
                     // This should have been caught by analysis, but be defensive
                     return Err(Error::CompileError(Box::new(
-                        CompileError::FeatureNotYetSupported(
-                            format!("Invalid subroutine call to non-existent group {}", target_group)
-                        ),
+                        CompileError::FeatureNotYetSupported(format!(
+                            "Invalid subroutine call to non-existent group {}",
+                            target_group
+                        )),
                     )));
                 }
             }
@@ -552,7 +562,7 @@ impl<'a> Compiler<'a> {
             } else if !inner.hard {
                 #[cfg(feature = "variable-lookbehinds")]
                 {
-                    let mut delegate_builder = DelegateBuilder::new();
+                    let mut delegate_builder = DelegateBuilder::new(self.total_groups);
                     delegate_builder.push(inner);
                     self.compile_variable_lookbehind(delegate_builder)
                 }
@@ -636,7 +646,7 @@ impl<'a> Compiler<'a> {
         if infos.is_empty() {
             Ok(())
         } else {
-            let mut delegate_builder = DelegateBuilder::new();
+            let mut delegate_builder = DelegateBuilder::new(self.total_groups);
             for info in infos.iter().rev() {
                 delegate_builder.push(info);
             }
@@ -707,7 +717,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
 
-        let mut delegate_builder = DelegateBuilder::new();
+        let mut delegate_builder = DelegateBuilder::new(self.total_groups);
         for info in infos {
             delegate_builder.push(info);
         }
@@ -723,7 +733,9 @@ impl<'a> Compiler<'a> {
             info.push_literal(&mut val);
             Insn::Lit(val)
         } else {
-            DelegateBuilder::new().push(info).build(&self.options)?
+            DelegateBuilder::new(self.total_groups)
+                .push(info)
+                .build(&self.options)?
         };
         self.b.add(insn);
         Ok(())
@@ -785,13 +797,13 @@ fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Inf
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group());
-    
+
     // Store root info for group 0 subroutine calls
     c.root_info = Some(info);
-    
+
     // Pre-populate the group_info_map to support forward references
     populate_group_info_map(&mut c.group_info_map, info);
-    
+
     if !anchored {
         // add instructions as if \O*? was used at the start of the expression
         // so that we bump the haystack index by one when failing to match at the current position
@@ -819,15 +831,17 @@ struct DelegateBuilder {
     min_size: usize,
     const_size: bool,
     capture_groups: Option<CaptureGroupRange>,
+    total_groups: usize,
 }
 
 impl DelegateBuilder {
-    fn new() -> Self {
+    fn new(total_groups: usize) -> Self {
         Self {
             re: String::new(),
             min_size: 0,
             const_size: true,
             capture_groups: None,
+            total_groups,
         }
     }
 
@@ -837,14 +851,7 @@ impl DelegateBuilder {
 
         self.min_size += info.min_size;
         self.const_size &= info.const_size;
-        if self.capture_groups.is_none() {
-            self.capture_groups = Some(info.capture_groups);
-        } else {
-            // Update the end_group to the latest
-            self.capture_groups = self
-                .capture_groups
-                .map(|range| CaptureGroupRange(range.start(), info.end_group()));
-        }
+        self.capture_groups = Some(CaptureGroupRange(0, self.total_groups));
 
         // Add expression. The precedence argument has to be 1 here to
         // ensure correct grouping in these cases:

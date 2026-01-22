@@ -689,6 +689,19 @@ fn test_forward_reference_subroutine() {
     let re = Regex::new(r"\g<name>(?<name>a)").unwrap();
     assert!(re.is_match("aa").unwrap());
 }
+
+#[test]
+fn test_forward_reference_subroutine_across_alternation() {
+    use fancy_regex::RegexBuilder;
+
+    let re = RegexBuilder::new(r"(?<n>|\g<m>\g<n>)\z|\zEND (?<m>a|(b)\g<m>)")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
+    let m = re.find("bbbbabba").unwrap().unwrap();
+    assert_eq!(m.start(), 0);
+    assert_eq!(m.end(), 8);
+}
 #[test]
 fn test_subroutine_match_behavior() {
     use fancy_regex::Regex;
@@ -754,5 +767,3 @@ fn test_complex_groups() {
         println!("Group {}: {:?}", i, caps.get(i));
     }
 }
-
-
