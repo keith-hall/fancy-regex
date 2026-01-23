@@ -741,24 +741,7 @@ fn test_forward_ref_zero_rep() {
         }
     }
 }
-#[test]
-fn debug_forward_ref_zero_rep() {
-    use fancy_regex::Regex;
 
-    let re = Regex::new(r"\g<n>(?<n>.){0}").unwrap();
-    let caps = re.captures("X").unwrap().unwrap();
-
-    println!("Overall match: {:?}", caps.get(0));
-    println!("Group 1: {:?}", caps.get(1));
-    println!("Captures len: {}", caps.len());
-
-    // What we expect based on oniguruma test:
-    // - Overall match at 0-1
-    // - Group 1 should exist and match at 0-1
-    assert_eq!(caps.get(0).unwrap().as_str(), "X");
-    // This might fail:
-    assert_eq!(caps.get(1).is_some(), true, "Group 1 should exist");
-}
 #[test]
 fn test_complex_groups() {
     use fancy_regex::Regex;

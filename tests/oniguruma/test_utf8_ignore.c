@@ -2,8 +2,6 @@
 //
 // x2 tests check if a pattern matches against an input at the specified start/end positions.
 // x3 tests have an additional argument which is the group number to check.
-
-
   // Compile failed: ParseError(0, InvalidEscape("\\c"))
   x2("\\ca", "\001", 0, 1);
 
@@ -82,34 +80,11 @@
   // No match found
   x3("((?m:a.c))", "a\nc", 0, 3, 1);
 
-
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
-  x2("(?<=\\g<ab>)|-\\zEND (?<ab>XyZ)", "XyZ", 3, 3);
-
-
-
-
-
-
-
-
   // No match found
   x2("(?:(?<x>)|(?<x>efg))\\k<x>", "", 0, 0);
 
   // No match found
   x2("(?:(?<n1>.)|(?<n1>..)|(?<n1>...)|(?<n1>....)|(?<n1>.....)|(?<n1>......)|(?<n1>.......)|(?<n1>........)|(?<n1>.........)|(?<n1>..........)|(?<n1>...........)|(?<n1>............)|(?<n1>.............)|(?<n1>..............))\\k<n1>$", "a-pyumpyum", 2, 10);
-
-
-
-
-
-
-
-
-
-
-
 
   // No match found
   x2("(?:()|())*\\1\\2", "", 0, 0);
@@ -119,8 +94,6 @@
 
   // No match found
   x2("(?:()|()|()|(x)|()|())*\\2b\\5", "b", 0, 1);
-
-
   // Compile failed: ParseError(0, InvalidEscape("\\o"))
   x2("\\o{101}", "A", 0, 1);
 
@@ -129,9 +102,6 @@
 
   // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
-
-
-
 
   // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
@@ -157,12 +127,8 @@
   // No match found
   x2("(?:()|()|())*\\3\\1", "abc", 0, 0);
 
-
-
   // Match found at start 0 and end 3 (expected 0 and 6)
   x2("(?<x>a)(?<x>b)(\\k<x>)+", "abbaab", 0, 6);
-
-
 
   // Compile failed: ParseError(1, InvalidEscape("\\o"))
   x2("[\\o{101}]", "A", 0, 1);
@@ -331,8 +297,6 @@
 
   // No match found
   x3("((?m:あ.う))", "あ\nう", 0, 7, 1);
-
-
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: ClassRangeInvalid, pattern: "[あ-&&-あ]", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 5)) }) } }))
   x2("[あ-&&-あ]", "-", 0, 1);
@@ -562,8 +526,6 @@
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Translate(Error { kind: UnicodePropertyNotFound, pattern: "\\p{in_enclosed_cjk_letters_and_months}", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 38, l: 1, c: 39)) }) } }))
   x2("\\p{In_Enclosed_CJK_Letters_and_Months}", "\xe3\x8b\xbf", 0, 3);
-
-
   // Expected group to exist
   x3("\\g<n>(?<n>.){0}", "X", 0, 1, 1);
   // Match found at start 0 and end 1 (expected 2 and 3)
