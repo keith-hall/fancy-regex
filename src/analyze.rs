@@ -174,10 +174,8 @@ impl<'a> Analyzer<'a> {
                 }
 
                 // Check if we've already analyzed this group's inner expression (via forward reference)
-                let child_info = if let Some(cached_info) = self.group_info.get(&group).cloned() {
-                    // Reuse the cached analysis - clone it so we can use it
-                    cached_info
-                } else {
+                // If not, analyze it now and store the result
+                if !self.group_info.contains_key(&group) {
                     self.analyzing_groups.insert(group);
 
                     let prev_group = self.current_group;
@@ -186,10 +184,12 @@ impl<'a> Analyzer<'a> {
                     self.current_group = prev_group;
                     self.analyzing_groups.remove(group);
                     
-                    // Store the analysis result for future lookups
-                    self.group_info.insert(group, info.clone());
-                    info
-                };
+                    // Store the analysis result for future lookups (move ownership into map)
+                    self.group_info.insert(group, info);
+                }
+                
+                // Retrieve from cache and clone (single clone whether cached from forward ref or just analyzed)
+                let child_info = self.group_info.get(&group).unwrap().clone();
 
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
