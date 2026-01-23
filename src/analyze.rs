@@ -38,7 +38,7 @@ use alloc::collections::BTreeMap as Map;
 #[cfg(feature = "std")]
 use std::collections::HashMap as Map;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Info<'a> {
     pub(crate) capture_groups: CaptureGroupRange,
     pub(crate) min_size: usize,
@@ -84,11 +84,6 @@ impl<'a> Info<'a> {
     }
 }
 
-struct SizeInfo {
-    min_size: usize,
-    const_size: bool,
-}
-
 /// Represents a subroutine call and its minimum position within a group
 #[derive(Debug, Clone)]
 struct SubroutineCallInfo {
@@ -103,7 +98,7 @@ struct Analyzer<'a> {
     group_ix: usize,
     /// Stores the analysis info for each group by group number
     // NOTE: uses a Map instead of a Vec because sometimes we start from capture group 1, other times 0
-    group_info: Map<usize, SizeInfo>,
+    group_info: Map<usize, Info<'a>>,
     /// Tracks subroutine calls: maps from a group to the subroutines it calls
     subroutine_calls: Map<usize, Vec<SubroutineCallInfo>>,
     /// The current group being analyzed (for tracking which group contains subroutine calls)
@@ -171,28 +166,33 @@ impl<'a> Analyzer<'a> {
             Expr::Group(ref child) => {
                 let group = self.group_ix;
                 self.group_ix += 1;
-                self.analyzing_groups.insert(group);
 
                 // Track if this group is executed from root (not inside {0})
+                // This must be done regardless of whether we use cached analysis
                 if self.current_group == 0 && !self.inside_zero_rep {
                     self.root_groups.insert(group);
                 }
 
-                let prev_group = self.current_group;
-                self.current_group = group;
-                let child_info = self.visit(child, 0)?;
-                self.current_group = prev_group;
-                self.analyzing_groups.remove(group);
+                // Check if we've already analyzed this group's inner expression (via forward reference)
+                let child_info = if let Some(cached_info) = self.group_info.get(&group).cloned() {
+                    // Reuse the cached analysis - clone it so we can use it
+                    cached_info
+                } else {
+                    self.analyzing_groups.insert(group);
+
+                    let prev_group = self.current_group;
+                    self.current_group = group;
+                    let info = self.visit(child, 0)?;
+                    self.current_group = prev_group;
+                    self.analyzing_groups.remove(group);
+                    
+                    // Store the analysis result for future lookups
+                    self.group_info.insert(group, info.clone());
+                    info
+                };
+
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
-                // Store the group info for use by backrefs
-                self.group_info.insert(
-                    group,
-                    SizeInfo {
-                        min_size,
-                        const_size,
-                    },
-                );
                 // If there's a backref to this group, we potentially have to backtrack within the
                 // group. E.g. with `(x|xy)\1` and input `xyxy`, `x` matches but then the backref
                 // doesn't, so we have to backtrack and try `xy`.
@@ -234,13 +234,9 @@ impl<'a> Analyzer<'a> {
                     ))));
                 }
                 // Look up the referenced group's size information
-                if let Some(&SizeInfo {
-                    min_size: group_min_size,
-                    const_size: group_const_size,
-                }) = self.group_info.get(&group)
-                {
-                    min_size = group_min_size;
-                    const_size = group_const_size;
+                if let Some(info) = self.group_info.get(&group) {
+                    min_size = info.min_size;
+                    const_size = info.const_size;
                 }
                 hard = true;
             }
@@ -310,13 +306,9 @@ impl<'a> Analyzer<'a> {
 
                 // Look up the target group's min_size if available (similar to backrefs)
                 // This is important for accurate left recursion detection
-                if let Some(&SizeInfo {
-                    min_size: group_min_size,
-                    const_size: group_const_size,
-                }) = self.group_info.get(&target_group)
-                {
-                    min_size = group_min_size;
-                    const_size = group_const_size;
+                if let Some(info) = self.group_info.get(&target_group) {
+                    min_size = info.min_size;
+                    const_size = info.const_size;
                 } else if self.analyzing_groups.contains(target_group) {
                     // Currently analyzing this group - circular reference
                     // Use conservative defaults to avoid infinite recursion
@@ -340,14 +332,8 @@ impl<'a> Analyzer<'a> {
 
                     min_size = group_info.min_size;
                     const_size = group_info.const_size;
-                    // Store the analysis result for future lookups
-                    self.group_info.insert(
-                        target_group,
-                        SizeInfo {
-                            min_size,
-                            const_size,
-                        },
-                    );
+                    // Store the full analysis result for future lookups
+                    self.group_info.insert(target_group, group_info);
                 } else {
                     // Group doesn't exist - this shouldn't happen as the parser would have caught it
                     min_size = 0;
