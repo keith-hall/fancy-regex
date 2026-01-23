@@ -1199,4 +1199,237 @@ mod tests {
             "Pattern should not be left-recursive because group m has min_size > 0"
         );
     }
+
+    // Tests for forward-referenced subroutine calls
+    // These verify that the analyzer correctly handles subroutine calls to groups
+    // that are defined later in the pattern, and that group indexes are computed correctly.
+
+    #[test]
+    fn forward_subroutine_call_single_group() {
+        // Forward reference: \g<1>(a) - calls group 1 before it's defined
+        // Pattern inspired by Oniguruma tests
+        let tree = Expr::parse_tree(r"\g<1>(.a.)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // The pattern should have 1 capture group
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 2);
+        
+        // Verify the pattern is a Concat with 2 children
+        assert!(matches!(info.expr, Expr::Concat(_)));
+        assert_eq!(info.children.len(), 2);
+        
+        // First child is the SubroutineCall
+        assert!(matches!(info.children[0].expr, Expr::SubroutineCall(1)));
+        // SubroutineCall should have group range 1..1 (no new groups)
+        assert_eq!(info.children[0].start_group(), 1);
+        assert_eq!(info.children[0].end_group(), 1);
+        
+        // Second child is the group
+        assert!(matches!(info.children[1].expr, Expr::Group(_)));
+        assert_eq!(info.children[1].start_group(), 1);
+        assert_eq!(info.children[1].end_group(), 2);
+    }
+
+    #[test]
+    fn forward_subroutine_call_with_multiple_groups() {
+        // Forward reference with multiple groups: \g<2>(a)(b)
+        let tree = Expr::parse_tree(r"\g<2>(a)(b)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // The pattern should have 2 capture groups
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 3);
+        
+        // Verify it's a Concat with 3 children
+        assert!(matches!(info.expr, Expr::Concat(_)));
+        assert_eq!(info.children.len(), 3);
+        
+        // SubroutineCall to group 2
+        assert!(matches!(info.children[0].expr, Expr::SubroutineCall(2)));
+        assert_eq!(info.children[0].start_group(), 1);
+        
+        // First group (capture group 1)
+        assert!(matches!(info.children[1].expr, Expr::Group(_)));
+        assert_eq!(info.children[1].start_group(), 1);
+        assert_eq!(info.children[1].end_group(), 2);
+        
+        // Second group (capture group 2)
+        assert!(matches!(info.children[2].expr, Expr::Group(_)));
+        assert_eq!(info.children[2].start_group(), 2);
+        assert_eq!(info.children[2].end_group(), 3);
+    }
+
+    #[test]
+    fn forward_subroutine_call_in_alternation() {
+        // Forward reference in alternation: \g<bar>|\zEND(?<bar>.*abc$)
+        // Pattern from Oniguruma: x2("\\g<bar>|\\zEND(?<bar>.*abc$)", "abcxxxabc", 0, 9);
+        let tree = Expr::parse_tree(r"\g<bar>|\zEND(?<bar>.*abc$)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // Should have 1 capture group (the named group 'bar')
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 2);
+    }
+
+    #[test]
+    fn forward_subroutine_call_with_quantifier() {
+        // Forward reference: \g<n>(?<n>.){0}
+        // Pattern from Oniguruma: x3("\\g<n>(?<n>.){0}", "X", 0, 1, 1);
+        let tree = Expr::parse_tree(r"\g<n>(?<n>.){0}").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // Should have 1 capture group
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 2);
+        
+        // Verify it's a Concat
+        assert!(matches!(info.expr, Expr::Concat(_)));
+        assert_eq!(info.children.len(), 2);
+        
+        // SubroutineCall should be the first child
+        assert!(matches!(info.children[0].expr, Expr::SubroutineCall(1)));
+        
+        // The group with {0} quantifier should be second
+        assert!(matches!(info.children[1].expr, Expr::Repeat { .. }));
+    }
+
+    #[test]
+    fn forward_subroutine_call_nested_groups() {
+        // Forward reference with nested groups
+        // Simplified from Oniguruma pattern to focus on group numbering
+        let tree = Expr::parse_tree(r"\g<2>(a(?<foo>b))").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // Pattern has 2 groups: outer group and named group 'foo'
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 3);
+        
+        // Verify it's a Concat
+        assert!(matches!(info.expr, Expr::Concat(_)));
+        
+        // First child is the subroutine call to group 2 (the named group)
+        assert!(matches!(info.children[0].expr, Expr::SubroutineCall(2)));
+    }
+
+    #[test]
+    fn forward_subroutine_call_group_sizes() {
+        // Test that forward-referenced groups have correct size information
+        // Pattern: \g<1>(abc)
+        let tree = Expr::parse_tree(r"\g<1>(abc)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // SubroutineCall should get the min_size from the group (3)
+        assert_eq!(info.children[0].min_size, 3);
+        assert!(info.children[0].const_size);
+        
+        // The group itself should also have min_size 3
+        assert_eq!(info.children[1].min_size, 3);
+        assert!(info.children[1].const_size);
+        
+        // Overall pattern should have min_size 6 (subroutine call + group)
+        assert_eq!(info.min_size, 6);
+    }
+
+    #[test]
+    fn forward_subroutine_call_multiple_calls() {
+        // Multiple forward references: \g<_A>\g<_A>|\zEND(.a.)(?<_A>.b.)
+        // Pattern from Oniguruma: x3("\\g<_A>\\g<_A>|\\zEND(.a.)(?<_A>.b.)", "xbxyby", 3, 6, 1);
+        let tree = Expr::parse_tree(r"\g<_A>\g<_A>|\zEND(.a.)(?<_A>.b.)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // Should have 2 capture groups (one unnamed, one named _A)
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 3);
+    }
+
+    #[test]
+    fn forward_subroutine_call_complex_mutual_recursion() {
+        // Complex pattern with mutual recursion and forward references
+        // Pattern from Oniguruma (simplified): \A(?:\g<pon>|\g<pan>)
+        let tree = Expr::parse_tree(r"\A(?:\g<pon>|\g<pan>|\zEND(?<pan>a)(?<pon>b))$").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // Should have 2 capture groups (pan and pon)
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 3);
+    }
+
+    #[test]
+    fn forward_subroutine_call_with_backref() {
+        // Pattern with subroutine call after groups with backrefs
+        // Similar to Oniguruma: (z)()()(?<_9>a)\g<_9>
+        let tree = Expr::parse_tree(r"(z)()()(?<_9>a)\g<_9>").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // Should have 4 capture groups
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 5);
+        
+        // Verify it's a Concat with 5 children
+        assert!(matches!(info.expr, Expr::Concat(_)));
+        assert_eq!(info.children.len(), 5);
+        
+        // Verify last child is the subroutine call to group 4
+        assert!(matches!(info.children[4].expr, Expr::SubroutineCall(4)));
+        assert_eq!(info.children[4].start_group(), 5);
+    }
+
+    #[test]
+    fn forward_subroutine_call_in_lookahead() {
+        // Forward reference in lookahead: (?<=\g<ab>)|-\zEND (?<ab>XyZ)
+        // Pattern from Oniguruma: x2("(?<=\\g<ab>)|-\\zEND (?<ab>XyZ)", "XyZ", 3, 3);
+        let tree = Expr::parse_tree(r"(?<=\g<ab>)|-\zEND(?<ab>XyZ)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // Should have 1 capture group (ab)
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 2);
+    }
+
+    #[test]
+    fn forward_subroutine_call_group_index_ordering() {
+        // Verify that group indexes are assigned correctly even with forward references
+        // Pattern: a\g<2>b(c)(d)
+        let tree = Expr::parse_tree(r"a\g<2>b(c)(d)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // Should have 2 capture groups
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 3);
+        
+        // Verify it's a Concat
+        assert!(matches!(info.expr, Expr::Concat(_)));
+        
+        // Find and verify the groups
+        let mut group_1_found = false;
+        let mut group_2_found = false;
+        
+        for child in &info.children {
+            if let Expr::Group(_) = child.expr {
+                if child.start_group() == 1 {
+                    group_1_found = true;
+                    assert_eq!(child.end_group(), 2);
+                } else if child.start_group() == 2 {
+                    group_2_found = true;
+                    assert_eq!(child.end_group(), 3);
+                }
+            }
+        }
+        
+        assert!(group_1_found, "Group 1 should exist");
+        assert!(group_2_found, "Group 2 should exist");
+    }
+
+    #[test]
+    fn forward_subroutine_call_recursive_pattern() {
+        // Recursive pattern: \A(?<n>(a\g<n>)|)\z
+        // Pattern from Oniguruma: x2("\\A(?<n>(a\\g<n>)|)\\z", "aaaa", 0, 4);
+        let tree = Expr::parse_tree(r"\A(?<n>(a\g<n>)|)\z").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        
+        // Should have 2 groups: the named group 'n' (group 1) and the inner group (group 2)
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 3);
+    }
 }
