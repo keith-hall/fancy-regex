@@ -342,6 +342,12 @@ impl Compiler {
         hard: bool,
     ) -> Result<()> {
         let child = &info.children[0];
+        if lo == 0 && hi == 0 {
+            // e{0} - zero repetition, matches empty string without executing child
+            // This can happen with patterns like (abc){0}, which should match but never
+            // execute the child expression or its capture groups
+            return Ok(());
+        }
         if lo == 0 && hi == 1 {
             // e?
             let pc = self.b.pc();
