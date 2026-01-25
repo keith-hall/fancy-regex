@@ -220,6 +220,12 @@ impl<'a> Analyzer<'a> {
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
                 hard = child_info.hard;
+                // If this is a {0} repetition with capture groups, mark it as hard
+                // to prevent delegation issues where regex-automata would have different
+                // expectations about group population
+                if lo == 0 && hi == 0 && child_info.start_group() < child_info.end_group() {
+                    hard = true;
+                }
                 children.push(child_info);
             }
             Expr::Delegate { size, .. } => {

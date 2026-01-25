@@ -2101,7 +2101,13 @@ impl Expr {
                 if precedence > 2 {
                     buf.push_str("(?:");
                 }
-                child.to_str(buf, 3);
+                if lo == 0 && hi == 0 {
+                    // For {0} repetitions, convert capture groups to non-capturing to avoid
+                    // mismatches with regex-automata expectations
+                    child.to_str_no_capture(buf, 3);
+                } else {
+                    child.to_str(buf, 3);
+                }
                 match (lo, hi) {
                     (0, 1) => buf.push('?'),
                     (0, usize::MAX) => buf.push('*'),
@@ -2138,6 +2144,81 @@ impl Expr {
                 }
             }
             _ => panic!("attempting to format hard expr {:?}", self),
+        }
+    }
+
+    /// Convert expression to string, converting all capture groups to non-capturing groups.
+    /// This is used for {0} repetitions where capture groups won't be populated anyway.
+    fn to_str_no_capture(&self, buf: &mut String, precedence: u8) {
+        match *self {
+            Expr::Group(ref child) => {
+                // Convert capture group to non-capturing group
+                buf.push_str("(?:");
+                child.to_str_no_capture(buf, 0);
+                buf.push(')');
+            }
+            Expr::Concat(ref children) => {
+                if precedence > 1 {
+                    buf.push_str("(?:");
+                }
+                for child in children {
+                    child.to_str_no_capture(buf, 2);
+                }
+                if precedence > 1 {
+                    buf.push(')')
+                }
+            }
+            Expr::Alt(_) => {
+                if precedence > 0 {
+                    buf.push_str("(?:");
+                }
+                let mut children = self.children_iter();
+                if let Some(first) = children.next() {
+                    first.to_str_no_capture(buf, 1);
+                    for child in children {
+                        buf.push('|');
+                        child.to_str_no_capture(buf, 1);
+                    }
+                }
+                if precedence > 0 {
+                    buf.push(')');
+                }
+            }
+            Expr::Repeat {
+                ref child,
+                lo,
+                hi,
+                greedy,
+            } => {
+                if precedence > 2 {
+                    buf.push_str("(?:");
+                }
+                child.to_str_no_capture(buf, 3);
+                match (lo, hi) {
+                    (0, 1) => buf.push('?'),
+                    (0, usize::MAX) => buf.push('*'),
+                    (1, usize::MAX) => buf.push('+'),
+                    (lo, hi) => {
+                        buf.push('{');
+                        push_usize(buf, lo);
+                        if lo != hi {
+                            buf.push(',');
+                            if hi != usize::MAX {
+                                push_usize(buf, hi);
+                            }
+                        }
+                        buf.push('}');
+                    }
+                }
+                if !greedy {
+                    buf.push('?');
+                }
+                if precedence > 2 {
+                    buf.push(')');
+                }
+            }
+            // For all other cases, just use the regular to_str
+            _ => self.to_str(buf, precedence),
         }
     }
 }
