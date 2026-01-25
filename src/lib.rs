@@ -2149,6 +2149,12 @@ impl Expr {
 
     /// Convert expression to string, converting all capture groups to non-capturing groups.
     /// This is used for {0} repetitions where capture groups won't be populated anyway.
+    /// 
+    /// Only certain expression types are handled explicitly:
+    /// - `Group`: Converted to non-capturing group `(?:...)`
+    /// - `Concat`, `Alt`, `Repeat`: Recursively process children
+    /// - All others: Use regular `to_str` (safe because they don't contain Group nodes,
+    ///   or if they do, they're in hard expressions that won't use this method)
     fn to_str_no_capture(&self, buf: &mut String, precedence: u8) {
         match *self {
             Expr::Group(ref child) => {
@@ -2217,7 +2223,13 @@ impl Expr {
                     buf.push(')');
                 }
             }
-            // For all other cases, just use the regular to_str
+            // For all other expression types (Literal, Any, Assertion, Delegate, etc.),
+            // just use the regular to_str since they don't contain Group nodes.
+            // Note: This is safe and won't cause infinite recursion because:
+            // - to_str never calls to_str_no_capture
+            // - This method is only called from Repeat when lo==0 && hi==0
+            // - Hard expressions (LookAround, Backref, etc.) will panic in to_str,
+            //   but those would be marked as hard and not delegated anyway
             _ => self.to_str(buf, precedence),
         }
     }
