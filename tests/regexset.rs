@@ -321,3 +321,86 @@ fn test_overlapping_patterns_at_same_position() {
     assert_eq!(matches[1].as_str(), "world");
     assert_eq!(matches[1].start(), 6);
 }
+
+#[test]
+#[cfg(feature = "std")]
+fn test_thread_limiting() {
+    // Test that max_concurrent_threads limits the number of threads spawned
+    // We can't directly observe the thread count, but we can verify that the
+    // results are correct regardless of the thread limit
+    for max_threads in [1, 2, 4, 8] {
+        let set = RegexSetBuilder::new(&[
+            r"(?=a)a", r"(?=b)b", r"(?=c)c", r"(?=d)d", r"(?=e)e", r"(?=f)f",
+        ])
+        .max_concurrent_threads(Some(max_threads))
+        .build()
+        .unwrap();
+
+        let haystack = "abcdef";
+        let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+
+        // Should find one match for each character regardless of thread limit
+        assert_eq!(matches.len(), 6, "Failed with max_threads={}", max_threads);
+    }
+}
+
+#[test]
+#[cfg(feature = "std")]
+fn test_parallel_hard_patterns() {
+    // Test multiple hard patterns to verify parallel execution works
+    let set = RegexSet::new(&[
+        r"(\w+)\s+\1",      // Pattern 0: repeated word (backref)
+        r"(?=\d{3})\d+",    // Pattern 1: lookahead
+        r"(?<=\$)\d+\.\d+", // Pattern 2: lookbehind
+        r"\d+",             // Pattern 3: simple (easy pattern)
+    ])
+    .unwrap();
+
+    let haystack = "foo foo 123 $45.67";
+    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+
+    // Should find matches from all patterns
+    assert!(matches.len() >= 3);
+
+    // Verify specific matches
+    let patterns: Vec<usize> = matches.iter().map(|m| m.pattern()).collect();
+    assert!(patterns.contains(&0)); // repeated word
+    assert!(patterns.contains(&1) || patterns.contains(&3)); // numbers (either lookahead or easy)
+    assert!(patterns.contains(&2)); // price with lookbehind
+}
+
+#[test]
+#[cfg(feature = "std")]
+fn test_parallel_with_builder() {
+    // Test using builder with max_concurrent_threads
+    let set = RegexSetBuilder::new(&[
+        r"(\w+)\s+\1", // Pattern 0: repeated word
+        r"(?=\w+)\w+", // Pattern 1: lookahead
+        r"\d+",        // Pattern 2: easy pattern
+    ])
+    .max_concurrent_threads(Some(2))
+    .build()
+    .unwrap();
+
+    let haystack = "foo foo bar 123";
+    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+
+    // Should find matches from all patterns
+    assert!(matches.len() >= 3);
+}
+
+#[test]
+#[cfg(feature = "std")]
+fn test_many_hard_patterns() {
+    // Test with many hard patterns to ensure threading works with multiple patterns
+    let set = RegexSet::new(&[
+        r"(?=a)a", r"(?=b)b", r"(?=c)c", r"(?=d)d", r"(?=e)e", r"(?=f)f", r"(?=g)g", r"(?=h)h",
+    ])
+    .unwrap();
+
+    let haystack = "abcdefgh";
+    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+
+    // Should find one match for each character
+    assert_eq!(matches.len(), 8);
+}
