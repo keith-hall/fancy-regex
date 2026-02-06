@@ -239,7 +239,9 @@ fn numeric_backref_with_named_groups_error() {
         result
     );
 
-    // Test case 4: Alternation in group with numeric backref outside
+    // Test case 4: Numbered group containing named group, with numeric backref
+    // This should fail because the pattern has both a named group and a numeric backref,
+    // even though the backref refers to the numbered group, not the named one
     let result = Regex::new(r"(a|(?<name>b))\1");
     assert!(
         matches!(
