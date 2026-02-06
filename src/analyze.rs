@@ -597,6 +597,13 @@ fn collect_groups<'a>(
 
 /// Analyze the parsed expression to determine whether it requires fancy features.
 pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result<Info<'a>> {
+    // Check that numeric backrefs and named groups are not mixed
+    if tree.numeric_backrefs && !tree.named_groups.is_empty() {
+        return Err(Error::CompileError(Box::new(
+            CompileError::NamedBackrefOnly,
+        )));
+    }
+
     let start_group = if explicit_capture_group_0 { 0 } else { 1 };
 
     // pre-populate groups if subroutines are present to handle forward references

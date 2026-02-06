@@ -31,7 +31,7 @@ use bit_set::BitSet;
 use regex_syntax::escape_into;
 
 use crate::parse_flags::*;
-use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
+use crate::{codepoint_len, Error, Expr, ParseError, Result, MAX_RECURSION};
 use crate::{Absent, Assertion, BacktrackingControlVerb, LookAround::*};
 
 #[cfg(not(feature = "std"))]
@@ -44,6 +44,7 @@ pub struct ExprTree {
     pub expr: Expr,
     pub backrefs: BitSet,
     pub named_groups: NamedGroups,
+    pub(crate) numeric_backrefs: bool,
     pub(crate) contains_subroutines: bool,
     pub(crate) self_recursive: bool,
 }
@@ -88,6 +89,7 @@ impl<'a> Parser<'a> {
             expr,
             backrefs: p.backrefs,
             named_groups: p.named_groups,
+            numeric_backrefs: p.numeric_backrefs,
             contains_subroutines: p.contains_subroutines,
             self_recursive: p.self_recursive,
         })
@@ -125,12 +127,6 @@ impl<'a> Parser<'a> {
                 ix = self.optional_whitespace(next)?;
             }
             return Ok((ix, Expr::Alt(children)));
-        }
-        // can't have numeric backrefs and named backrefs
-        if self.numeric_backrefs && !self.named_groups.is_empty() {
-            return Err(Error::CompileError(Box::new(
-                CompileError::NamedBackrefOnly,
-            )));
         }
         Ok((ix, child))
     }
