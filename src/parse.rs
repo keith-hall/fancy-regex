@@ -2384,8 +2384,10 @@ mod tests {
 
     #[test]
     fn named_backref_only() {
-        assert_error("(?<id>.)\\1", "Error compiling regex: Numbered backref/call not allowed because named group was used, use a named backref instead");
-        assert_error("(a)\\1(?<name>b)", "Error compiling regex: Numbered backref/call not allowed because named group was used, use a named backref instead");
+        use crate::Regex;
+        // These should now fail during analysis, not parsing
+        assert!(Regex::new("(?<id>.)\\1").is_err());
+        assert!(Regex::new("(a)\\1(?<name>b)").is_err());
     }
 
     #[test]

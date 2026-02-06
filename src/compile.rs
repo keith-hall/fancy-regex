@@ -866,6 +866,7 @@ mod tests {
             ]),
             backrefs: BitSet::new(),
             named_groups: Default::default(),
+            numeric_backrefs: false,
             contains_subroutines: false,
             self_recursive: false,
         };
