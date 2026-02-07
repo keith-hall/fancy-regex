@@ -55,3 +55,18 @@ In summary, the system efficiently combines backtracking and automaton-based mat
 2. Maintain existing code structure and organization
 3. Write unit tests for new functionality
 5. Document public APIs and complex logic. Suggest changes to the Markdown documents when appropriate
+
+## Tests
+
+`matching.rs` caters for whether a pattern matches a haystack.
+`finding.rs` caters for the position at which a pattern matches a haystack.
+`captures.rs` caters for the positions at which capture groups match.
+
+The others are probably self explanatory.
+It's also in scope to test that a RuntimeError occurred during matching.
+
+Otherwise for tests that need to check compilation errors, unit tests in analyze.rs or compile.rs (depending which file emits the error) should suffice.
+
+Tests are considered to be unit tests if they are inside `mod test` of a Rust source code file which is in the `src` folder and not in the `tests` folder. One exception could be `lib.rs` because it ties everything together, so here could be integration or unit tests. Prefer writing unit tests where possible, unless it makes sense to have an integration test.
+
+When adding unit tests, try to follow the conventions used in the file, like calling private methods from the `mod test` section instead of more integration style testing building new Regex instances.
