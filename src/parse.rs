@@ -406,7 +406,7 @@ impl<'a> Parser<'a> {
         {
             // Check if this is a numeric reference first
             let is_numeric = id.parse::<usize>().is_ok();
-            
+
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
             } else if let Ok(group) = id.parse::<usize>() {

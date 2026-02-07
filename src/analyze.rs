@@ -862,7 +862,7 @@ mod tests {
     #[test]
     fn named_backref_only() {
         // Test that numeric backrefs cannot be used with named groups
-        
+
         // Test case 1: Named group followed by numeric backref (no alternation)
         let tree = Expr::parse_tree(r"(?<name>a)\1").unwrap();
         let result = analyze(&tree, false);
@@ -928,7 +928,7 @@ mod tests {
         ));
 
         // Positive cases - these should work
-        
+
         // Only numeric backrefs, no named groups
         let tree = Expr::parse_tree(r"(a)\1").unwrap();
         assert!(analyze(&tree, false).is_ok());
