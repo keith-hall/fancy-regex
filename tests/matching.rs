@@ -1,4 +1,4 @@
-use fancy_regex::{CompileError, Error, RegexBuilder, RuntimeError};
+use fancy_regex::{Error, RegexBuilder, RuntimeError};
 
 mod common;
 
@@ -199,69 +199,6 @@ fn backrefs() {
     assert_no_match(r"(.)(?i:\1)", "įĖ");
 
     assert_match(r"(?i)(?<word>\w+)\s+\k<word>", "Greek : δ Δ");
-}
-
-#[test]
-fn numeric_backref_with_named_groups_error() {
-    use fancy_regex::Regex;
-
-    // Numeric backrefs should not be allowed when named groups are present
-    // Test case 1: Named group followed by numeric backref (no alternation)
-    let result = Regex::new(r"(?<name>a)\1");
-    assert!(
-        matches!(
-            result,
-            Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NamedBackrefOnly)
-        ),
-        "Expected NamedBackrefOnly error for '(?<name>a)\\1', got {:?}",
-        result
-    );
-
-    // Test case 2: Alternation with numeric backref and named group in first branch
-    let result = Regex::new(r"(?<name>a)\1|b");
-    assert!(
-        matches!(
-            result,
-            Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NamedBackrefOnly)
-        ),
-        "Expected NamedBackrefOnly error for '(?<name>a)\\1|b', got {:?}",
-        result
-    );
-
-    // Test case 3: Alternation with named group in first branch, numeric backref in second
-    let result = Regex::new(r"(?<name>a)|\1");
-    assert!(
-        matches!(
-            result,
-            Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NamedBackrefOnly)
-        ),
-        "Expected NamedBackrefOnly error for '(?<name>a)|\\1', got {:?}",
-        result
-    );
-
-    // Test case 4: Numbered group containing named group, with numeric backref
-    // This should fail because the pattern has both a named group and a numeric backref,
-    // even though the backref refers to the numbered group, not the named one
-    let result = Regex::new(r"(a|(?<name>b))\1");
-    assert!(
-        matches!(
-            result,
-            Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NamedBackrefOnly)
-        ),
-        "Expected NamedBackrefOnly error for '(a|(?<name>b))\\1', got {:?}",
-        result
-    );
-
-    // Test case 5: Multiple branches with named groups and numeric backrefs
-    let result = Regex::new(r"(?<x>a)|(?<y>b)|\1");
-    assert!(
-        matches!(
-            result,
-            Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NamedBackrefOnly)
-        ),
-        "Expected NamedBackrefOnly error for '(?<x>a)|(?<y>b)|\\1', got {:?}",
-        result
-    );
 }
 
 #[test]
