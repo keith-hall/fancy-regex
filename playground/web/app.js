@@ -286,8 +286,22 @@ class FancyRegexPlayground {
         treeContainer.className = 'analysis-tree';
         this.elements.analysisDisplay.appendChild(treeContainer);
         
+        // Initialize all nodes as expanded
+        this.expandedNodes = new Set();
+        this.collectAllPaths(tree, '0', this.expandedNodes);
+        
         // Render the tree
         this.renderTreeNode(tree, treeContainer, 0, '0');
+    }
+
+    collectAllPaths(node, path, pathSet) {
+        if (node.children && node.children.length > 0) {
+            pathSet.add(path);
+            node.children.forEach((child, index) => {
+                const childPath = `${path}-${index}`;
+                this.collectAllPaths(child, childPath, pathSet);
+            });
+        }
     }
 
     renderTreeNode(node, container, depth, path) {
