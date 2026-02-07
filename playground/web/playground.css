@@ -314,6 +314,18 @@ footer a {
     justify-content: center;
 }
 
+.const-size-tick {
+    color: #27ae60;
+    font-size: 1.1rem;
+    font-weight: bold;
+}
+
+.const-size-cross {
+    color: #e74c3c;
+    font-size: 1.1rem;
+    font-weight: bold;
+}
+
 .analysis-node__indent {
     display: flex;
     align-items: center;

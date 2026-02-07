@@ -356,7 +356,13 @@ class FancyRegexPlayground {
         // Add const_size cell
         const constSizeCell = document.createElement('div');
         constSizeCell.className = 'analysis-row__const-size';
-        constSizeCell.textContent = node.const_size ? '✓' : '✗';
+        if (node.const_size) {
+            constSizeCell.className += ' const-size-tick';
+            constSizeCell.textContent = '✓';
+        } else {
+            constSizeCell.className += ' const-size-cross';
+            constSizeCell.textContent = '✗';
+        }
         row.appendChild(constSizeCell);
         
         container.appendChild(row);
