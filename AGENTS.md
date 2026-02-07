@@ -67,6 +67,6 @@ It's also in scope to test that a RuntimeError occurred during matching.
 
 Otherwise for tests that need to check compilation errors, unit tests in analyze.rs or compile.rs (depending which file emits the error) should suffice.
 
-Tests are considered to be unit tests if they are inside `mod test` of a Rust source code file which is in the `src` folder and not in the `tests` folder. One exception could be `lib.rs` because it ties everything together, so here could be integration or unit tests. Prefer writing unit tests where possible, unless it makes sense to have an integration test.
+Tests are considered to be unit tests if they are inside `mod test` of a Rust source code file which is in the `src` folder and not in the `tests` folder. One exception could be `lib.rs` because it ties everything together, so here could be integration or unit tests. Prefer writing unit tests where possible, unless it makes sense to have an integration test. Documentation tests can be written for integration testing, the bonus being that it also improves documentation at the same time. But this should only be done when it will really bring benefit. There is no need to have many similar but mainly duplicate doc/integration tests, which just check that a different error is raised etc.
 
 When adding unit tests, try to follow the conventions used in the file, like calling private methods from the `mod test` section instead of more integration style testing building new Regex instances.
