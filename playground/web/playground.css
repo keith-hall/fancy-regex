@@ -373,8 +373,3 @@ footer a {
     background: rgba(230, 126, 34, 0.1);
 }
 
-/* Collapsed state indicator */
-.analysis-node--collapsed .analysis-node__toggle::before {
-    content: '';
-}
-

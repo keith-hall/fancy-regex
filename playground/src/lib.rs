@@ -1,8 +1,7 @@
 use fancy_regex::internal::{FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE};
-use fancy_regex::{Regex, RegexBuilder};
+use fancy_regex::{Regex, RegexBuilder, Expr, LookAround};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
-use fancy_regex::{Expr, LookAround};
 
 // Expose console.log for debugging
 #[wasm_bindgen]
@@ -252,7 +251,7 @@ fn info_to_tree_node<'a>(
     named_groups: &std::collections::HashMap<String, usize>,
 ) -> AnalysisTreeNode {
     // Create reverse lookup map from group index to name
-    let mut group_names: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+    let mut group_names = std::collections::HashMap::new();
     for (name, &index) in named_groups {
         group_names.insert(index, name.clone());
     }
