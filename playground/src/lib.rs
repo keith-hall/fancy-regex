@@ -1,5 +1,7 @@
-use fancy_regex::internal::{FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE};
-use fancy_regex::{Regex, RegexBuilder, Expr, LookAround};
+use fancy_regex::internal::{
+    FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
+};
+use fancy_regex::{Expr, LookAround, Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -271,12 +273,8 @@ fn info_to_tree_node<'a>(
             let escaped = escape_literal(&val);
             ("Literal".to_string(), format!("\"{}\"", escaped), None)
         }
-        Expr::Concat(v) => {
-            ("Concat".to_string(), format!("({})", v.len()), None)
-        }
-        Expr::Alt(v) => {
-            ("Alt".to_string(), format!("({})", v.len()), None)
-        }
+        Expr::Concat(v) => ("Concat".to_string(), format!("({})", v.len()), None),
+        Expr::Alt(v) => ("Alt".to_string(), format!("({})", v.len()), None),
         Expr::Group(_) => {
             let group_index = info.start_group();
             let group_name = group_names.get(&group_index).cloned();
@@ -285,10 +283,14 @@ fn info_to_tree_node<'a>(
             } else {
                 format!("{}", group_index)
             };
-            ("Group".to_string(), summary, Some(GroupInfo {
-                index: group_index,
-                name: group_name,
-            }))
+            (
+                "Group".to_string(),
+                summary,
+                Some(GroupInfo {
+                    index: group_index,
+                    name: group_name,
+                }),
+            )
         }
         Expr::LookAround(_, la) => {
             let (kind_str, polarity) = match la {
@@ -305,7 +307,11 @@ fn info_to_tree_node<'a>(
             } else {
                 hi.to_string()
             };
-            ("Repeat".to_string(), format!("{{{}..{}}}", lo, hi_str), None)
+            (
+                "Repeat".to_string(),
+                format!("{{{}..{}}}", lo, hi_str),
+                None,
+            )
         }
         Expr::Delegate { inner, .. } => {
             let escaped = escape_literal(inner);
@@ -319,7 +325,11 @@ fn info_to_tree_node<'a>(
             };
             ("Backref".to_string(), summary, None)
         }
-        Expr::BackrefWithRelativeRecursionLevel { group, relative_level, .. } => {
+        Expr::BackrefWithRelativeRecursionLevel {
+            group,
+            relative_level,
+            ..
+        } => {
             let summary = if let Some(name) = group_names.get(&group) {
                 format!("({}) level={}", name, relative_level)
             } else {
@@ -329,19 +339,23 @@ fn info_to_tree_node<'a>(
         }
         Expr::AtomicGroup(_) => ("AtomicGroup".to_string(), "".to_string(), None),
         Expr::KeepOut => ("KeepOut".to_string(), "".to_string(), None),
-        Expr::ContinueFromPreviousMatchEnd => {
-            ("ContinueFromPreviousMatchEnd".to_string(), "".to_string(), None)
-        }
-        Expr::BackrefExistsCondition(group) => {
-            ("BackrefExistsCondition".to_string(), format!("{}", group), None)
-        }
+        Expr::ContinueFromPreviousMatchEnd => (
+            "ContinueFromPreviousMatchEnd".to_string(),
+            "".to_string(),
+            None,
+        ),
+        Expr::BackrefExistsCondition(group) => (
+            "BackrefExistsCondition".to_string(),
+            format!("{}", group),
+            None,
+        ),
         Expr::Conditional { .. } => ("Conditional".to_string(), "".to_string(), None),
-        Expr::SubroutineCall(group) => {
-            ("SubroutineCall".to_string(), format!("{}", group), None)
-        }
-        Expr::UnresolvedNamedSubroutineCall { name, .. } => {
-            ("UnresolvedNamedSubroutineCall".to_string(), format!("({})", name), None)
-        }
+        Expr::SubroutineCall(group) => ("SubroutineCall".to_string(), format!("{}", group), None),
+        Expr::UnresolvedNamedSubroutineCall { name, .. } => (
+            "UnresolvedNamedSubroutineCall".to_string(),
+            format!("({})", name),
+            None,
+        ),
         Expr::BacktrackingControlVerb(_) => {
             ("BacktrackingControlVerb".to_string(), "".to_string(), None)
         }
@@ -430,15 +444,15 @@ mod tests {
             val: "test\n".to_string(),
             casei: false,
         };
-        
+
         // Create mock Info - we need to manually construct this
         // For this test, we'll use analyze to get real Info
         let tree = fancy_regex::Expr::parse_tree("test\\n").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let named_groups = std::collections::HashMap::new();
-        
+
         let node = info_to_tree_node(&info, &named_groups);
-        
+
         assert_eq!(node.kind, "Concat");
         assert_eq!(node.children.len(), 5); // "test\n" as separate literals
         assert_eq!(node.children[0].kind, "Literal");
@@ -451,12 +465,15 @@ mod tests {
         let tree = fancy_regex::Expr::parse_tree(r"\w").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let named_groups = std::collections::HashMap::new();
-        
+
         let node = info_to_tree_node(&info, &named_groups);
-        
+
         // The root should be a Delegate node
         assert_eq!(node.kind, "Delegate");
-        assert!(node.summary.contains("\\w"), "Delegate summary should contain the pattern");
+        assert!(
+            node.summary.contains("\\w"),
+            "Delegate summary should contain the pattern"
+        );
     }
 
     #[test]
@@ -465,12 +482,15 @@ mod tests {
         let tree = fancy_regex::Expr::parse_tree(r"(?<word>\w+)").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let named_groups = tree.named_groups.clone();
-        
+
         let node = info_to_tree_node(&info, &named_groups);
-        
+
         // Find the Group node (should be a child of root)
         assert_eq!(node.kind, "Group");
-        assert!(node.summary.contains("word"), "Group summary should contain the name");
+        assert!(
+            node.summary.contains("word"),
+            "Group summary should contain the name"
+        );
         assert_eq!(node.group.as_ref().unwrap().name, Some("word".to_string()));
     }
 
@@ -480,9 +500,9 @@ mod tests {
         let tree = fancy_regex::Expr::parse_tree(r"(\w+)").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let named_groups = tree.named_groups.clone();
-        
+
         let node = info_to_tree_node(&info, &named_groups);
-        
+
         assert_eq!(node.kind, "Group");
         assert_eq!(node.group.as_ref().unwrap().index, 1);
         assert_eq!(node.group.as_ref().unwrap().name, None);
@@ -494,16 +514,21 @@ mod tests {
         let tree = fancy_regex::Expr::parse_tree(r"(?<word>\w+)\s+\k<word>").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let named_groups = tree.named_groups.clone();
-        
+
         let node = info_to_tree_node(&info, &named_groups);
-        
+
         // Navigate to find Backref node (it's in Concat children)
         assert_eq!(node.kind, "Concat");
-        let backref_node = node.children.iter()
+        let backref_node = node
+            .children
+            .iter()
             .find(|n| n.kind == "Backref")
             .expect("Should find Backref node");
-        
-        assert!(backref_node.summary.contains("word"), "Backref summary should contain the name");
+
+        assert!(
+            backref_node.summary.contains("word"),
+            "Backref summary should contain the name"
+        );
     }
 
     #[test]
@@ -512,14 +537,16 @@ mod tests {
         let tree = fancy_regex::Expr::parse_tree(r"(\w+)\s+\1").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let named_groups = tree.named_groups.clone();
-        
+
         let node = info_to_tree_node(&info, &named_groups);
-        
+
         // Navigate to find Backref node
-        let backref_node = node.children.iter()
+        let backref_node = node
+            .children
+            .iter()
             .find(|n| n.kind == "Backref")
             .expect("Should find Backref node");
-        
+
         assert_eq!(backref_node.summary, "1");
     }
 
@@ -533,14 +560,14 @@ mod tests {
             (r"a{2,5}", "{2..5}"),
             (r"a{3}", "{3..3}"),
         ];
-        
+
         for (pattern, expected_summary) in test_cases {
             let tree = fancy_regex::Expr::parse_tree(pattern).unwrap();
             let info = fancy_regex::internal::analyze(&tree, false).unwrap();
             let named_groups = tree.named_groups.clone();
-            
+
             let node = info_to_tree_node(&info, &named_groups);
-            
+
             assert_eq!(node.kind, "Repeat", "Pattern: {}", pattern);
             assert_eq!(node.summary, expected_summary, "Pattern: {}", pattern);
         }
@@ -552,19 +579,19 @@ mod tests {
         let tree = fancy_regex::Expr::parse_tree(r"abc").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let named_groups = tree.named_groups.clone();
-        
+
         let node = info_to_tree_node(&info, &named_groups);
-        
+
         assert_eq!(node.kind, "Concat");
         assert_eq!(node.summary, "(3)");
-        
+
         // Test Alt
         let tree = fancy_regex::Expr::parse_tree(r"a|b|c").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let named_groups = tree.named_groups.clone();
-        
+
         let node = info_to_tree_node(&info, &named_groups);
-        
+
         assert_eq!(node.kind, "Alt");
         assert_eq!(node.summary, "(3)");
     }
@@ -577,14 +604,14 @@ mod tests {
             (r"(?<=a)", "LookBehind", "(positive)"),
             (r"(?<!a)", "LookBehind", "(negative)"),
         ];
-        
+
         for (pattern, expected_kind, expected_summary) in test_cases {
             let tree = fancy_regex::Expr::parse_tree(pattern).unwrap();
             let info = fancy_regex::internal::analyze(&tree, false).unwrap();
             let named_groups = tree.named_groups.clone();
-            
+
             let node = info_to_tree_node(&info, &named_groups);
-            
+
             assert_eq!(node.kind, expected_kind, "Pattern: {}", pattern);
             assert_eq!(node.summary, expected_summary, "Pattern: {}", pattern);
         }
@@ -597,18 +624,18 @@ mod tests {
         let tree = fancy_regex::Expr::parse_tree(r"(\w+)\1").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let named_groups = tree.named_groups.clone();
-        
+
         let node = info_to_tree_node(&info, &named_groups);
-        
+
         assert!(node.hard, "Pattern with backref should be hard");
-        
+
         // Simple literal should be easy
         let tree = fancy_regex::Expr::parse_tree(r"abc").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let named_groups = tree.named_groups.clone();
-        
+
         let node = info_to_tree_node(&info, &named_groups);
-        
+
         assert!(!node.hard, "Simple literal pattern should be easy");
     }
 }
