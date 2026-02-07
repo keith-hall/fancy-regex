@@ -79,6 +79,14 @@ jobs:
       - run: cargo run --example toy trace '\d*' '1122 33'
       - run: cargo test --examples
 
+  playground-tests:
+    name: playground-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cd playground && cargo test
+
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
