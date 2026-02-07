@@ -236,7 +236,6 @@ fn escape_literal(s: &str) -> String {
             '\n' => result.push_str("\\n"),
             '\r' => result.push_str("\\r"),
             '\t' => result.push_str("\\t"),
-            '\\' => result.push_str("\\\\"),
             '"' => result.push_str("\\\""),
             c if c.is_control() => {
                 result.push_str(&format!("\\u{{{:x}}}", c as u32));
@@ -426,7 +425,7 @@ mod tests {
         assert_eq!(escape_literal("a\nb"), "a\\nb");
         assert_eq!(escape_literal("a\rb"), "a\\rb");
         assert_eq!(escape_literal("a\tb"), "a\\tb");
-        assert_eq!(escape_literal("a\\b"), "a\\\\b");
+        assert_eq!(escape_literal("a\\b"), "a\\b");
         assert_eq!(escape_literal("a\"b"), "a\\\"b");
     }
 
