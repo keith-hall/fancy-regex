@@ -44,7 +44,7 @@ pub struct ExprTree {
     pub expr: Expr,
     pub backrefs: BitSet,
     pub named_groups: NamedGroups,
-    pub(crate) contains_subroutines: bool,
+    pub contains_subroutines: bool,
     pub(crate) self_recursive: bool,
 }
 
