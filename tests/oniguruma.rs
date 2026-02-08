@@ -130,8 +130,9 @@ fn unescape(escaped: &str) -> String {
                         s.push(num);
                     }
                     // Regex escapes that should be kept as-is
-                    'g' | 'k' | 'z' | 'A' | 'Z' | 'G' | 'K' | 'd' | 'D' | 'w' | 'W' | 's' | 'S' | 
-                    'h' | 'H' | 'p' | 'P' | 'b' | 'B' | 'c' | 'C' | 'e' | 'O' | 'N' | 'a' | 't' => {
+                    'g' | 'k' | 'z' | 'A' | 'Z' | 'G' | 'K' | 'd' | 'D' | 'w' | 'W' | 's' | 'S'
+                    | 'h' | 'H' | 'p' | 'P' | 'b' | 'B' | 'c' | 'C' | 'e' | 'O' | 'N' | 'a'
+                    | 't' => {
                         s.push(b'\\');
                         s.append(&mut next.to_string().into_bytes());
                     }

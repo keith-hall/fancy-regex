@@ -754,5 +754,3 @@ fn test_complex_groups() {
         println!("Group {}: {:?}", i, caps.get(i));
     }
 }
-
-

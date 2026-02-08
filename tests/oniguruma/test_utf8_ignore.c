@@ -532,7 +532,5 @@
   x3("(z)()()(?<_9>a)\\g<_9>", "zaa", 2, 3, 1);
   // Expected group to exist
   x3("\\g<_A>\\g<_A>|\\zEND(.a.)(?<_A>.b.)", "xbxyby", 3, 6, 1);
-  // Compile failed: panic in regex-automata crate
-  x2("\\g<+2>(abc)(ABC){0}", "ABCabc", 0, 6);
   // Match found at start 3 and end 5 (expected 0 and 5)
   x3("(A\\g'0')|B", "AAAAB", 0, 5, 1);
