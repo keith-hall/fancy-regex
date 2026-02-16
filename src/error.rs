@@ -83,6 +83,10 @@ pub enum CompileError {
     /// Subroutine call to non-existent group
     SubroutineCallTargetNotFound(String, usize),
     /// Left-recursive subroutine call detected
+    ///
+    /// **Deprecated**: This error variant is deprecated in favor of [`NeverEndingRecursion`](CompileError::NeverEndingRecursion),
+    /// which covers all forms of unbounded recursion, not just left-recursion.
+    #[deprecated(since = "0.17.0", note = "use NeverEndingRecursion instead")]
     LeftRecursiveSubroutineCall(String),
     /// Never-ending recursion detected (unbounded recursion)
     NeverEndingRecursion(String),
@@ -133,6 +137,7 @@ impl fmt::Display for ParseError {
 }
 
 impl fmt::Display for CompileError {
+    #[allow(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             CompileError::InnerError(e) => write!(f, "Regex error: {}", e),
