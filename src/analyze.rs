@@ -454,10 +454,10 @@ impl<'a> Analyzer<'a> {
         })
     }
 
-    /// Check for left-recursive subroutine calls using depth-first search
-    fn check_left_recursion(&self, named_groups: &Map<String, usize>) -> Result<()> {
+    /// Check for unbounded (never-ending) recursion in subroutine calls using depth-first search
+    fn check_recursion(&self, named_groups: &Map<String, usize>) -> Result<()> {
         // Build reverse mapping from group number to group name (if any)
-        // so we can give friendly error messages when left recursion is detected
+        // so we can give friendly error messages when recursion is detected
         let mut group_names: Map<usize, String> = Map::new();
         for (name, &group_num) in named_groups.iter() {
             group_names.insert(group_num, name.clone());
@@ -466,8 +466,12 @@ impl<'a> Analyzer<'a> {
         // Compute which groups are reachable from the root (group 0)
         let reachable_groups = self.compute_reachable_groups();
 
-        // Check each reachable group for left recursion
-        for &start_group in self.subroutine_calls.keys() {
+        // Check each reachable group for unbounded recursion
+        // Iterate in sorted order for deterministic error messages
+        let mut groups_to_check: Vec<usize> = self.subroutine_calls.keys().copied().collect();
+        groups_to_check.sort();
+
+        for &start_group in &groups_to_check {
             if !reachable_groups.contains(start_group) {
                 // Skip unreachable groups
                 continue;
@@ -475,15 +479,15 @@ impl<'a> Analyzer<'a> {
 
             let mut visited = BitSet::new();
             let mut recursion_stack = BitSet::new();
-            if self.dfs_check_left_recursion(start_group, &mut visited, &mut recursion_stack)? {
-                // Found left recursion
+            if self.dfs_check_recursion(start_group, &mut visited, &mut recursion_stack)? {
+                // Found unbounded recursion
                 let group_desc = if let Some(name) = group_names.get(&start_group) {
                     format!("group '{}' ({})", name, start_group)
                 } else {
                     format!("group {}", start_group)
                 };
                 return Err(Error::CompileError(Box::new(
-                    CompileError::LeftRecursiveSubroutineCall(group_desc),
+                    CompileError::NeverEndingRecursion(group_desc),
                 )));
             }
         }
@@ -523,17 +527,16 @@ impl<'a> Analyzer<'a> {
         reachable
     }
 
-    /// Depth-first search to detect left recursion
-    /// Returns true if left recursion is detected
-    fn dfs_check_left_recursion(
+    /// Depth-first search to detect unbounded recursion (cycles in the call graph)
+    /// Returns true if a cycle is detected
+    fn dfs_check_recursion(
         &self,
         group: usize,
         visited: &mut BitSet,
         recursion_stack: &mut BitSet,
     ) -> Result<bool> {
         if recursion_stack.contains(group) {
-            // We found a cycle. Since we only follow calls at position 0 (see below),
-            // reaching a group already in the recursion stack means we have a left-recursive cycle.
+            // We found a cycle, which represents unbounded recursion
             return Ok(true);
         }
 
@@ -547,14 +550,9 @@ impl<'a> Analyzer<'a> {
         // Check all subroutine calls from this group
         if let Some(calls) = self.subroutine_calls.get(&group) {
             for call_info in calls {
-                // Only consider calls at position 0 (potential left recursion)
-                if call_info.min_pos == 0
-                    && self.dfs_check_left_recursion(
-                        call_info.target_group,
-                        visited,
-                        recursion_stack,
-                    )?
-                {
+                // Check all calls, not just those at position 0
+                // Any cycle in the call graph represents unbounded recursion
+                if self.dfs_check_recursion(call_info.target_group, visited, recursion_stack)? {
                     return Ok(true);
                 }
             }
@@ -646,9 +644,9 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         }
     }
 
-    // Check for left-recursive subroutine calls (only if subroutines are present)
+    // Check for unbounded recursion in subroutine calls (only if subroutines are present)
     if tree.contains_subroutines {
-        analyzer.check_left_recursion(&tree.named_groups)?;
+        analyzer.check_recursion(&tree.named_groups)?;
     }
 
     Ok(analyzed)
@@ -1120,7 +1118,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
         ));
 
         let tree = Expr::parse_tree(r"abc(\g<1>a)").unwrap();
@@ -1128,7 +1126,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
         ));
     }
 
@@ -1151,7 +1149,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
         ));
 
         let tree = Expr::parse_tree(r"(?<test>\g<test>a)").unwrap();
@@ -1159,7 +1157,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
         ));
     }
 
@@ -1171,7 +1169,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
         ));
 
         let tree = Expr::parse_tree(r"(\g<2>)(\g<1>a)").unwrap();
@@ -1179,7 +1177,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
         ));
     }
 
@@ -1191,16 +1189,20 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
         ));
     }
 
     #[test]
-    fn not_left_recursive_after_char() {
-        // Not left recursive because subroutine call is after a character was consumed
+    fn unbounded_recursion_after_char() {
+        // Unbounded recursion: (a\g<1>) creates a cycle where group 1 calls itself
         let tree = Expr::parse_tree(r"(a\g<1>)").unwrap();
         let result = analyze(&tree, false);
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
+        ));
     }
 
     #[test]
@@ -1212,35 +1214,38 @@ mod tests {
     }
 
     #[test]
-    fn left_recursive_with_both_positions() {
-        // Left recursive because \g<1> appears at position 0 in the group even though also at end at position 1
+    fn unbounded_recursion_with_both_positions() {
+        // Unbounded recursion: \g<1> appears in the group creating a cycle
         let tree = Expr::parse_tree(r"(\g<1>a\g<1>)").unwrap();
         let result = analyze(&tree, false);
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
         ));
     }
 
     #[test]
-    fn left_recursive_with_lookahead() {
+    fn unbounded_recursion_with_lookahead() {
         let tree = Expr::parse_tree(r"((?=a)\g<1>)").unwrap();
         let result = analyze(&tree, false);
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
         ));
     }
 
     #[test]
-    fn self_recursive_group_zero() {
-        // Self-recursive on group 0 after a character
+    fn unbounded_recursion_group_zero() {
+        // Unbounded recursion: group 0 calls itself creating a cycle
         let tree = Expr::parse_tree(r"a\g<0>").unwrap();
         let result = analyze(&tree, false);
-        // Group 0 calls itself at position 1 (after 'a'), so this is NOT left recursive
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
+        ));
     }
 
     #[test]
@@ -1254,11 +1259,15 @@ mod tests {
     }
 
     #[test]
-    fn not_left_recursive_group_zero_explicit() {
-        // Self-recursive on explicit group 0: (a\g<0>)
+    fn unbounded_recursion_group_zero_explicit() {
+        // Unbounded recursion on explicit group 0: (a\g<0>)
         let tree = Expr::parse_tree(r"(a\g<0>)").unwrap();
         let result = analyze(&tree, true);
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
+        ));
     }
 
     #[test]
@@ -1278,16 +1287,19 @@ mod tests {
     }
 
     #[test]
-    fn three_way_indirect_recursion() {
-        // Three-way indirect recursion
+    fn unbounded_recursion_three_way_indirect() {
+        // Three-way indirect recursion with cycle
         let tree = Expr::parse_tree(r"(\g<2>)(\g<3>)(a\g<1>)").unwrap();
         let result = analyze(&tree, false);
         // Group 1 -> Group 2 (at pos 0)
         // Group 2 -> Group 3 (at pos 0)
         // Group 3 -> Group 1 (at pos 1, after 'a')
-        // This forms a cycle, but the call from group 3 to group 1 is at position 1
-        // So it's not left-recursive
-        assert!(result.is_ok());
+        // This forms a cycle, which is unbounded recursion
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
+        ));
     }
 
     #[test]
@@ -1315,24 +1327,28 @@ mod tests {
         // This creates a cycle: Group 2 -> Group 1 (at pos 0) -> Group 2 (at pos 0)
         let tree = Expr::parse_tree(r"(a?\g<2>){0}(\g<1>)").unwrap();
         let result = analyze(&tree, false);
-        assert!(result.is_err(), "Should be left-recursive");
+        assert!(result.is_err(), "Should be never-ending recursion");
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
         ));
     }
 
     #[test]
-    fn no_left_recursion_complex_pattern() {
-        // Group n (1): |\g<m>\g<n> - calls m then itself, but m has min_size > 0
-        // Group m (2): a(b)\g<m> - calls itself after 'ab'
+    fn unbounded_recursion_complex_pattern() {
+        // Group n (1): |\g<m>\g<n> - calls m then itself (creates a cycle)
+        // Group m (2): a(b)\g<m> - calls itself (creates a cycle)
         let tree = Expr::parse_tree(r"(?<n>|\g<m>\g<n>)\z|\zEND (?<m>a(b)\g<m>)").unwrap();
         let result = analyze(&tree, false);
 
         assert!(
-            result.is_ok(),
-            "Pattern should not be left-recursive because group m has min_size > 0"
+            result.is_err(),
+            "Pattern should be detected as never-ending recursion because both groups have cycles"
         );
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NeverEndingRecursion(_))
+        ));
     }
 
     // Tests for forward-referenced subroutine calls

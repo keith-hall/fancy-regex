@@ -91,10 +91,10 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<=\\g<ab>)|-\\zEND (?<ab>XyZ)", "XyZ", 3, 3);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 'n' (1)"))
   x2("(?<n>|a\\g<n>)+", "", 0, 0);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 'n' (1)"))
   x2("(?<n>|\\(\\g<n>\\))+$", "()(())", 0, 6);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
@@ -106,7 +106,7 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\A(?<n>(a\\g<n>)|)\\z", "aaaa", 0, 4);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
+  // Compile failed: CompileError(NeverEndingRecursion("group 'n' (1)"))
   x2("(?<n>|\\g<m>\\g<n>)\\z|\\zEND (?<m>a|(b)\\g<m>)", "bbbbabba", 0, 8);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
@@ -118,13 +118,13 @@
   // No match found
   x2("(?:(?<n1>.)|(?<n1>..)|(?<n1>...)|(?<n1>....)|(?<n1>.....)|(?<n1>......)|(?<n1>.......)|(?<n1>........)|(?<n1>.........)|(?<n1>..........)|(?<n1>...........)|(?<n1>............)|(?<n1>.............)|(?<n1>..............))\\k<n1>$", "a-pyumpyum", 2, 10);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 'foo' (1)"))
   x2("(?<foo>a|\\(\\g<foo>\\))", "a", 0, 1);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 'foo' (1)"))
   x2("(?<foo>a|\\(\\g<foo>\\))", "((((((a))))))", 0, 13);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 'foo' (1)"))
   x3("(?<foo>a|\\(\\g<foo>\\))", "((((((((a))))))))", 0, 17, 1);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
@@ -136,10 +136,10 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x3("\\g<_A>\\g<_A>|\\zEND(.a.)(?<_A>.b.)", "xbxyby", 3, 6, 1);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
+  // Compile failed: CompileError(NeverEndingRecursion("group 0"))
   x2("\\A(?:\\g<pon>|\\g<pan>|\\zEND  (?<pan>a|c\\g<pon>c)(?<pon>b|d\\g<pan>d))$", "cdcbcdc", 0, 7);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
+  // Compile failed: CompileError(NeverEndingRecursion("group 'n' (1)"))
   x2("\\A(?<n>|a\\g<m>)\\z|\\zEND (?<m>\\g<n>)", "aaaa", 0, 4);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
@@ -175,7 +175,7 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\g<+2>(abc)(ABC){0}", "ABCabc", 0, 6);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 0"))
   x2("A\\g'0'|B()", "AAAAB", 0, 5);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
@@ -190,7 +190,7 @@
   // No match found
   x2("(?:()|()|())*\\3\\1", "abc", 0, 0);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 1"))
   x2("(|(?:a(?:\\g'1')*))b|", "abc", 0, 2);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
@@ -199,10 +199,10 @@
   // Match found at start 0 and end 3 (expected 0 and 6)
   x2("(?<x>a)(?<x>b)(\\k<x>)+", "abbaab", 0, 6);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 'x' (1)"))
   x2("(?<x>$|b\\g<x>)", "bbb", 0, 3);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 'x' (1)"))
   x2("(?<x>(?(a)a|b)|c\\g<x>)", "cccb", 0, 4);
 
   // Compile failed: ParseError(1, InvalidEscape("\\o"))
@@ -373,10 +373,10 @@
   // No match found
   x3("((?m:あ.う))", "あ\nう", 0, 7, 1);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(NeverEndingRecursion("group '愚か' (1)"))
   x2("(?<愚か>変|\\(\\g<愚か>\\))", "((((((変))))))", 0, 15);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
+  // Compile failed: CompileError(NeverEndingRecursion("group 0"))
   x2("\\A(?:\\g<阿_1>|\\g<云_2>|\\z終了  (?<阿_1>観|自\\g<云_2>自)(?<云_2>在|菩薩\\g<阿_1>菩薩))$", "菩薩自菩薩自在自菩薩自菩薩", 0, 39);
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: ClassRangeInvalid, pattern: "[あ-&&-あ]", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 5)) }) } }))
@@ -578,16 +578,16 @@
   // Compile failed: ParseError(3, TargetNotRepeatable)
   x2("(?(?{....})123|456)", "123", 0, 3);
 
-  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 0"))
   x2("\\g'0'++{,0}",   "abcdefgh", 0, 0);
 
-  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 0"))
   x2("\\g'0'++{,0}?",  "abcdefgh", 0, 0);
 
-  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 0"))
   x2("\\g'0'++{,0}b",  "abcdefgh", 1, 2);
 
-  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
+  // Compile failed: CompileError(NeverEndingRecursion("group 0"))
   x2("\\g'0'++{,0}?def", "abcdefgh", 3, 6);
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: RepetitionCountInvalid, pattern: "a{3,2}b", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 7)) }) } }))
