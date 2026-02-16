@@ -596,7 +596,11 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Expr::UnresolvedNamedSubroutineCall { .. }
-            | Expr::BackrefWithRelativeRecursionLevel { .. } => false,
+            | Expr::BackrefWithRelativeRecursionLevel { .. } => {
+                // These variants already produce compile errors during normal analysis, so
+                // treat them as non-terminating if encountered here.
+                false
+            }
             _ => true,
         }
     }
