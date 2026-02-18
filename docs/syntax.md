@@ -46,6 +46,11 @@ Named capture groups:
 `(?P<name>exp)`
 : same as `(?<name>exp)` for compatibility with Python, etc.
 
+**Note**: Multiple capture groups can have the same name. However, using backreferences (e.g., `\k<name>`) 
+or subroutine calls (e.g., `\g<name>`) with a name that refers to multiple groups will result in a compile error. 
+This limitation may be relaxed in the future to match Oniguruma's behavior, where the last matching group with 
+that name is checked first, then previous groups with the same name, until a match is found.
+
 Look-around assertions for matching without changing the current position:
 
 `(?=exp)`

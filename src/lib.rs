@@ -1330,8 +1330,11 @@ impl<'t> Captures<'t> {
         }
     }
 
-    /// Returns the match for a named capture group.  Returns `None` the capture
+    /// Returns the match for a named capture group. Returns `None` if the capture
     /// group did not match or if there is no group with the given name.
+    ///
+    /// If multiple capture groups have the same name, this returns the match for
+    /// the last group with that name.
     pub fn name(&self, name: &str) -> Option<Match<'t>> {
         self.named_groups
             .get(name)
