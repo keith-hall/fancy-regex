@@ -86,6 +86,8 @@ pub enum CompileError {
     LeftRecursiveSubroutineCall(String),
     /// Unbounded recursive subroutine call detected
     NeverEndingRecursion,
+    /// Backref or subroutine call to a named group with multiple definitions
+    DuplicateNamedGroup(String),
 }
 
 /// An error as the result of executing a regex.
@@ -158,6 +160,9 @@ impl fmt::Display for CompileError {
             }
             CompileError::NeverEndingRecursion => {
                 write!(f, "Never-ending recursive subroutine call detected")
+            }
+            CompileError::DuplicateNamedGroup(name) => {
+                write!(f, "Backref or subroutine call to named group '{}' with multiple definitions is not supported", name)
             }
         }
     }

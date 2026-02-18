@@ -35,9 +35,9 @@ use crate::{codepoint_len, Error, Expr, ParseError, Result, MAX_RECURSION};
 use crate::{Absent, Assertion, BacktrackingControlVerb, LookAround::*};
 
 #[cfg(not(feature = "std"))]
-pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
+pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, Vec<usize>>;
 #[cfg(feature = "std")]
-pub(crate) type NamedGroups = std::collections::HashMap<String, usize>;
+pub(crate) type NamedGroups = std::collections::HashMap<String, Vec<usize>>;
 
 #[derive(Debug, Clone)]
 pub struct ExprTree {
@@ -402,8 +402,9 @@ impl<'a> Parser<'a> {
 
             let group = if let Ok(group) = group_number {
                 Some(group)
-            } else if let Some(group) = self.named_groups.get(id) {
-                Some(*group)
+            } else if let Some(groups) = self.named_groups.get(id) {
+                // Get the last group with this name (matches Oniguruma behavior for parsing)
+                groups.last().copied()
             } else if let Some(relative_group) = relative {
                 if id.is_empty() {
                     relative = None;
@@ -915,7 +916,10 @@ impl<'a> Parser<'a> {
                 skip,
             }) = parse_id(&self.re[ix + 1..], open, close, false)
             {
-                self.named_groups.insert(id.to_string(), self.curr_group);
+                self.named_groups
+                    .entry(id.to_string())
+                    .or_insert_with(Vec::new)
+                    .push(self.curr_group);
                 (None, skip + 1)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -929,7 +933,10 @@ impl<'a> Parser<'a> {
                 skip,
             }) = parse_id(&self.re[ix + 2..], "<", ">", false)
             {
-                self.named_groups.insert(id.to_string(), self.curr_group);
+                self.named_groups
+                    .entry(id.to_string())
+                    .or_insert_with(Vec::new)
+                    .push(self.curr_group);
                 (None, skip + 2)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -1255,8 +1262,13 @@ impl<'a> Parser<'a> {
     fn resolve_named_subroutine_calls(&mut self, expr: &mut Expr) {
         match expr {
             Expr::UnresolvedNamedSubroutineCall { name, .. } => {
-                if let Some(group) = self.named_groups.get(name) {
-                    *expr = Expr::SubroutineCall(*group);
+                if let Some(groups) = self.named_groups.get(name) {
+                    // Get the last group with this name
+                    if let Some(&group) = groups.last() {
+                        *expr = Expr::SubroutineCall(group);
+                    } else {
+                        self.has_unresolved_subroutines = true;
+                    }
                 } else {
                     self.has_unresolved_subroutines = true;
                 }

@@ -85,11 +85,23 @@
   // Match found at start 0 and end 1 (expected 2 and 3)
   x3("(z)()()(?<_9>a)\\g<_9>", "zaa", 2, 3, 1);
 
-  // No match found
+  // Compile failed: CompileError(DuplicateNamedGroup("x"))
   x2("(?:(?<x>)|(?<x>efg))\\k<x>", "", 0, 0);
 
-  // No match found
+  // Compile failed: CompileError(DuplicateNamedGroup("x"))
+  x2("(?:(?<x>abc)|(?<x>efg))\\k<x>", "abcefgefg", 3, 9);
+
+  // Compile failed: CompileError(DuplicateNamedGroup("x"))
+  n("(?:(?<x>abc)|(?<x>efg))\\k<x>", "abcefg");
+
+  // Compile failed: CompileError(DuplicateNamedGroup("n1"))
   x2("(?:(?<n1>.)|(?<n1>..)|(?<n1>...)|(?<n1>....)|(?<n1>.....)|(?<n1>......)|(?<n1>.......)|(?<n1>........)|(?<n1>.........)|(?<n1>..........)|(?<n1>...........)|(?<n1>............)|(?<n1>.............)|(?<n1>..............))\\k<n1>$", "a-pyumpyum", 2, 10);
+
+  // Compile failed: CompileError(DuplicateNamedGroup("n1"))
+  x3("(?:(?<n1>.)|(?<n1>..)|(?<n1>...)|(?<n1>....)|(?<n1>.....)|(?<n1>......)|(?<n1>.......)|(?<n1>........)|(?<n1>.........)|(?<n1>..........)|(?<n1>...........)|(?<n1>............)|(?<n1>.............)|(?<n1>..............))\\k<n1>$", "xxxxabcdefghijklmnabcdefghijklmn", 4, 18, 14);
+
+  // Compile failed: CompileError(DuplicateNamedGroup("X"))
+  x2("(?i)(?<X>aa)|(?<X>bb)\\k<X>", "BBbb", 0, 4);
 
   // Expected group to exist
   x3("\\g<_A>\\g<_A>|\\zEND(.a.)(?<_A>.b.)", "xbxyby", 3, 6, 1);
@@ -114,13 +126,16 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
 
-  // No match found
+  // Compile failed: CompileError(DuplicateNamedGroup("name"))
   x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "ace", 0, 3);
+
+  // Compile failed: CompileError(DuplicateNamedGroup("name"))
+  x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "bce", 0, 3);
 
   // No match found
   x2("(?:()|()|())*\\3\\1", "abc", 0, 0);
 
-  // Match found at start 0 and end 3 (expected 0 and 6)
+  // Compile failed: CompileError(DuplicateNamedGroup("x"))
   x2("(?<x>a)(?<x>b)(\\k<x>)+", "abbaab", 0, 6);
 
   // Compile failed: ParseError(1, InvalidEscape("\\o"))

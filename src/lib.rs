@@ -962,8 +962,11 @@ impl Regex {
     pub fn capture_names(&self) -> CaptureNames<'_> {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
-        for (name, &i) in self.named_groups.iter() {
-            names[i] = Some(name.as_str());
+        for (name, groups) in self.named_groups.iter() {
+            // For groups with duplicate names, each group gets the same name
+            for &i in groups {
+                names[i] = Some(name.as_str());
+            }
         }
         CaptureNames(names.into_iter())
     }
@@ -1330,7 +1333,10 @@ impl<'t> Captures<'t> {
     /// Returns the match for a named capture group.  Returns `None` the capture
     /// group did not match or if there is no group with the given name.
     pub fn name(&self, name: &str) -> Option<Match<'t>> {
-        self.named_groups.get(name).and_then(|i| self.get(*i))
+        self.named_groups
+            .get(name)
+            .and_then(|groups| groups.last())
+            .and_then(|&i| self.get(i))
     }
 
     /// Expands all instances of `$group` in `replacement` to the corresponding
