@@ -417,9 +417,10 @@ impl<'a> Analyzer<'a> {
                 }
                 hard = true;
             }
-            Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
+            Expr::AstNode { .. } => {
+                // TODO: depending on which AstNode it is, give an appropriate error
                 return Err(Error::CompileError(Box::new(
-                    CompileError::SubroutineCallTargetNotFound(name.to_string(), ix),
+                    CompileError::SubroutineCallTargetNotFound("TODO".to_string(), 0),
                 )));
             }
             Expr::BackrefWithRelativeRecursionLevel { .. } => {
@@ -609,8 +610,7 @@ impl<'a> Analyzer<'a> {
                     Clear => true,
                 }
             }
-            Expr::UnresolvedNamedSubroutineCall { .. }
-            | Expr::BackrefWithRelativeRecursionLevel { .. } => true,
+            Expr::BackrefWithRelativeRecursionLevel { .. } => true,
             _ => true,
         }
     }

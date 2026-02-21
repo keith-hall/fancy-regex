@@ -286,7 +286,6 @@ impl<'a> Compiler<'a> {
                     )));
                 }
             }
-            Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
             Expr::Absent(ref absent) => {
                 use crate::Absent::*;
@@ -300,6 +299,7 @@ impl<'a> Compiler<'a> {
                     CompileError::FeatureNotYetSupported(error_msg.to_string()),
                 )));
             }
+            Expr::AstNode { .. } => unreachable!(),
         }
         Ok(())
     }

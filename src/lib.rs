@@ -1535,17 +1535,44 @@ pub enum Expr {
     },
     /// Subroutine call to the specified group number
     SubroutineCall(usize),
-    /// Unresolved subroutine call to the specified group name
-    UnresolvedNamedSubroutineCall {
-        /// The capture group name
-        name: String,
-        /// The position in the original regex pattern where the subroutine call is made
-        ix: usize,
-    },
     /// Backtracking control verb
     BacktrackingControlVerb(BacktrackingControlVerb),
     /// Match while the given expression is absent from the haystack
     Absent(Absent),
+    /// Abstract Syntax Tree node - will be resolved into an Expr before analysis.
+    /// Contains the position in the pattern where the node was parsed from
+    AstNode(AstNode, usize),
+}
+
+/// Target of a backreference or subroutine call
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum CaptureGroupTarget {
+    /// Direct numbered reference
+    ByNumber(usize),
+
+    /// Named reference
+    ByName(String),
+
+    /// Relative reference (e.g., -1, -2, etc.)
+    Relative(isize),
+}
+
+/// Abstract Syntax Tree node - will be resolved into an Expr before analysis
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum AstNode {
+    /// Group with optional name - name is only present if explicitly specified in pattern
+    AstGroup {
+        name: Option<String>,
+        inner: Box<Expr>,
+    },
+    /// Backreference
+    Backref {
+        target: CaptureGroupTarget,
+        casei: bool, // TODO: move out of Backref and prefer a Flags AstNode
+        relative_recursion_level: Option<isize>,
+    },
+    /// Subroutine Call
+    SubroutineCall(CaptureGroupTarget),
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -1857,7 +1884,6 @@ impl Expr {
                 | Expr::BackrefExistsCondition(_)
                 | Expr::BacktrackingControlVerb(_)
                 | Expr::SubroutineCall(_)
-                | Expr::UnresolvedNamedSubroutineCall { .. }
                 | Expr::Absent(Absent::Clear),
         )
     }
@@ -2254,11 +2280,6 @@ mod tests {
         assert!(Expr::BackrefExistsCondition(1).is_leaf_node());
         assert!(Expr::BacktrackingControlVerb(crate::BacktrackingControlVerb::Fail).is_leaf_node());
         assert!(Expr::SubroutineCall(1).is_leaf_node());
-        assert!(Expr::UnresolvedNamedSubroutineCall {
-            name: "test".to_string(),
-            ix: 0
-        }
-        .is_leaf_node());
 
         assert!(Expr::Absent(Absent::Clear).is_leaf_node());
     }
