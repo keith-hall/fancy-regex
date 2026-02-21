@@ -31,7 +31,7 @@ use bit_set::BitSet;
 use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
 use crate::vm::CaptureGroupRange;
-use crate::{CompileError, Error, Expr, Result};
+use crate::{AstNode, CaptureGroupTarget, CompileError, Error, Expr, Result};
 
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as Map;
@@ -312,7 +312,7 @@ impl<'a> Analyzer<'a> {
                 hard = true;
                 const_size = true;
             }
-            Expr::BackrefExistsCondition(_) => {
+            Expr::BackrefExistsCondition { .. } => {
                 hard = true;
                 const_size = true;
             }
@@ -417,9 +417,15 @@ impl<'a> Analyzer<'a> {
                 }
                 hard = true;
             }
-            Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
+            Expr::AstNode(ref astnode, ix) => {
+                // An unresolved AstNode means the resolver couldn't find the target (e.g. a
+                // subroutine call to an unknown name). Extract the name for the error message.
+                let (name, pos) = match astnode {
+                    AstNode::SubroutineCall(CaptureGroupTarget::ByName(name)) => (name.clone(), ix),
+                    _ => ("unknown".to_string(), ix),
+                };
                 return Err(Error::CompileError(Box::new(
-                    CompileError::SubroutineCallTargetNotFound(name.to_string(), ix),
+                    CompileError::SubroutineCallTargetNotFound(name, pos),
                 )));
             }
             Expr::BackrefWithRelativeRecursionLevel { .. } => {
@@ -609,8 +615,7 @@ impl<'a> Analyzer<'a> {
                     Clear => true,
                 }
             }
-            Expr::UnresolvedNamedSubroutineCall { .. }
-            | Expr::BackrefWithRelativeRecursionLevel { .. } => true,
+            Expr::BackrefWithRelativeRecursionLevel { .. } => true,
             _ => true,
         }
     }
@@ -752,21 +757,25 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
     };
 
     let analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
-    if analyzer.backrefs.contains(0) {
+    // With start_group == 1 (no explicit group 0) the valid backref range is 1..=total_groups.
+    // With start_group == 0 (explicit group 0) group 0 is the whole match and inner groups are
+    // numbered 1..=total_groups-1, so the valid range is 0..=total_groups-1.
+    let max_valid_group = if explicit_capture_group_0 {
+        tree.total_groups.saturating_sub(1)
+    } else {
+        tree.total_groups
+    };
+    // Out-of-range group numbers are not in the BitSet (to avoid huge allocations), so check the
+    // dedicated field first.
+    if let Some(group) = tree.out_of_range_backref {
         return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
-            0,
+            group,
         ))));
     }
-    if let Some(highest_backref) = analyzer.backrefs.into_iter().last() {
-        if highest_backref > analyzer.next_group_number - start_group
-            // if we have an explicit capture group 0, and the highest backref is the number of capture groups
-            // then that backref refers to an invalid group
-            // i.e. `(a\1)b`   has no capture group 1
-            //      `(a(b))\2` has no capture group 2
-            || highest_backref == analyzer.next_group_number && start_group == 0
-        {
+    for group in tree.backrefs.iter() {
+        if group < start_group || group > max_valid_group {
             return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
-                highest_backref,
+                group,
             ))));
         }
     }
@@ -801,6 +810,20 @@ mod tests {
     use super::analyze;
     // use super::literal_const_size;
     use crate::{can_compile_as_anchored, CompileError, Error, Expr};
+    use matches::assert_matches;
+
+    #[cfg_attr(feature = "track_caller", track_caller)]
+    fn assert_invalid_backref(
+        pattern: &str,
+        explicit_capture_group_0: bool,
+        expected_group: usize,
+    ) {
+        let tree = Expr::parse_tree(pattern).unwrap();
+        assert_matches!(
+            analyze(&tree, explicit_capture_group_0).unwrap_err(),
+            Error::CompileError(ref e) if matches!(**e, CompileError::InvalidBackref(g) if g == expected_group)
+        );
+    }
 
     // #[test]
     // fn case_folding_safe() {
@@ -817,104 +840,40 @@ mod tests {
     // }
 
     #[test]
-    fn invalid_backref_zero() {
-        let tree = Expr::parse_tree(r".\0").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
-        ));
-
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
-        ));
-
-        let tree = Expr::parse_tree(r"(.)\0").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
-        ));
-
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
-        ));
-
-        let tree = Expr::parse_tree(r"(.)\0\1").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
-        ));
+    fn invalid_backref_no_captures() {
+        assert_invalid_backref(r"aa\1", false, 1);
+        assert_invalid_backref(r"aaaa\2", false, 2);
     }
 
     #[test]
-    fn invalid_backref_no_captures() {
-        let tree = Expr::parse_tree(r"aa\1").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(1))
-        ));
-
-        let tree = Expr::parse_tree(r"aaaa\2").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
+    fn invalid_backref_unreasonably_large_number() {
+        // A group number that is a valid usize but far exceeds the number of groups in the
+        // pattern. The resolver inserts it into the BitSet as-is; the analyzer catches it via
+        // the total_groups bound check.
+        assert_invalid_backref(r".\1999999999", false, 1999999999);
     }
 
     #[test]
     fn invalid_backref_with_captures() {
-        let tree = Expr::parse_tree(r"a(a)\2").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
+        assert_invalid_backref(r"a(a)\2", false, 2);
+        assert_invalid_backref(r"a(a)\2\1", false, 2);
+    }
 
-        let tree = Expr::parse_tree(r"a(a)\2\1").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
+    #[test]
+    fn invalid_backref_zero() {
+        assert_invalid_backref(r".\0", false, 0);
+        assert_invalid_backref(r".\0", true, 0);
+        assert_invalid_backref(r"(.)\0", false, 0);
+        assert_invalid_backref(r"(.)\0", true, 0);
+        assert_invalid_backref(r"(.)\0\1", false, 0);
     }
 
     #[test]
     fn invalid_backref_with_captures_explict_capture_group_zero() {
-        let tree = Expr::parse_tree(r"(a(b)\2)c").unwrap();
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
-
-        let tree = Expr::parse_tree(r"(a(b)\1\2)c").unwrap();
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
-
-        let tree = Expr::parse_tree(r"(a\1)b").unwrap();
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(1))
-        ));
-
-        let tree = Expr::parse_tree(r"(a(b))\2").unwrap();
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
+        assert_invalid_backref(r"(a(b)\2)c", true, 2);
+        assert_invalid_backref(r"(a(b)\1\2)c", true, 2);
+        assert_invalid_backref(r"(a\1)b", true, 1);
+        assert_invalid_backref(r"(a(b))\2", true, 2);
     }
 
     #[test]
