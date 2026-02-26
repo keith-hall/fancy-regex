@@ -216,16 +216,10 @@ fn test_single_pattern_equivalence_with_find_iter() {
     let text = "11 22 33";
 
     let regex = Regex::new(pattern).unwrap();
-    let standalone: Vec<_> = regex
-        .find_iter(text)
-        .map(|m| m.unwrap().range())
-        .collect();
+    let standalone: Vec<_> = regex.find_iter(text).map(|m| m.unwrap().range()).collect();
 
     let set = RegexSet::new(&[pattern]).unwrap();
-    let set_matches: Vec<_> = set
-        .matches(text)
-        .map(|m| m.unwrap().range())
-        .collect();
+    let set_matches: Vec<_> = set.matches(text).map(|m| m.unwrap().range()).collect();
 
     assert_eq!(standalone, set_matches);
 }
@@ -238,16 +232,10 @@ fn test_single_pattern_equivalence_zero_width() {
     let text = "ab1c2";
 
     let regex = Regex::new(pattern).unwrap();
-    let standalone: Vec<_> = regex
-        .find_iter(text)
-        .map(|m| m.unwrap().range())
-        .collect();
+    let standalone: Vec<_> = regex.find_iter(text).map(|m| m.unwrap().range()).collect();
 
     let set = RegexSet::new(&[pattern]).unwrap();
-    let set_matches: Vec<_> = set
-        .matches(text)
-        .map(|m| m.unwrap().range())
-        .collect();
+    let set_matches: Vec<_> = set.matches(text).map(|m| m.unwrap().range()).collect();
 
     assert_eq!(standalone, set_matches);
 }
@@ -261,16 +249,10 @@ fn test_single_hard_pattern_g_anchor_non_empty() {
     let text = "1122 33";
 
     let regex = Regex::new(pattern).unwrap();
-    let standalone: Vec<_> = regex
-        .find_iter(text)
-        .map(|m| m.unwrap().range())
-        .collect();
+    let standalone: Vec<_> = regex.find_iter(text).map(|m| m.unwrap().range()).collect();
 
     let set = RegexSet::new(&[pattern]).unwrap();
-    let set_matches: Vec<_> = set
-        .matches(text)
-        .map(|m| m.unwrap().range())
-        .collect();
+    let set_matches: Vec<_> = set.matches(text).map(|m| m.unwrap().range()).collect();
 
     // Standalone produces two consecutive matches at 0..2 and 2..4 then stops.
     assert_eq!(standalone, vec![0..2, 2..4]);
@@ -286,16 +268,10 @@ fn test_single_hard_pattern_g_anchor_allows_empty() {
     let text = "1122 33";
 
     let regex = Regex::new(pattern).unwrap();
-    let standalone: Vec<_> = regex
-        .find_iter(text)
-        .map(|m| m.unwrap().range())
-        .collect();
+    let standalone: Vec<_> = regex.find_iter(text).map(|m| m.unwrap().range()).collect();
 
     let set = RegexSet::new(&[pattern]).unwrap();
-    let set_matches: Vec<_> = set
-        .matches(text)
-        .map(|m| m.unwrap().range())
-        .collect();
+    let set_matches: Vec<_> = set.matches(text).map(|m| m.unwrap().range()).collect();
 
     // Both should give exactly one match: "1122" at 0..4.
     assert_eq!(standalone, vec![0..4]);
@@ -316,10 +292,7 @@ fn test_g_anchor_in_regexset_differs_from_standalone() {
     let text = "123abc456";
 
     let set = RegexSet::new(&[r"\G\d+", r"[a-z]+"]).unwrap();
-    let set_matches: Vec<_> = set
-        .matches(text)
-        .map(|m| m.unwrap())
-        .collect();
+    let set_matches: Vec<_> = set.matches(text).map(|m| m.unwrap()).collect();
 
     assert_eq!(set_matches.len(), 3);
     assert_eq!(set_matches[0].as_str(), "123");
@@ -337,4 +310,3 @@ fn test_g_anchor_in_regexset_differs_from_standalone() {
         .collect();
     assert_eq!(standalone, vec!["123"]);
 }
-
