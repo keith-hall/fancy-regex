@@ -1025,6 +1025,38 @@ impl Regex {
         }
     }
 
+    /// Like [`captures_from_pos`](Self::captures_from_pos) but passes `option_flags` to the VM.
+    /// Only meaningful for hard (fancy) patterns; easy (delegated) patterns ignore the flags.
+    pub(crate) fn captures_from_pos_with_option_flags<'t>(
+        &self,
+        text: &'t str,
+        pos: usize,
+        option_flags: u32,
+    ) -> Result<Option<Captures<'t>>> {
+        match &self.inner {
+            RegexImpl::Wrap { .. } => {
+                // Easy patterns don't use \G; option_flags is irrelevant for them.
+                self.captures_from_pos(text, pos)
+            }
+            RegexImpl::Fancy {
+                prog,
+                n_groups,
+                options,
+                ..
+            } => {
+                let named_groups = self.named_groups.clone();
+                let result = vm::run(prog, text, pos, option_flags, options)?;
+                Ok(result.map(|mut saves| {
+                    saves.truncate(n_groups * 2);
+                    Captures {
+                        inner: CapturesImpl::Fancy { text, saves },
+                        named_groups,
+                    }
+                }))
+            }
+        }
+    }
+
     /// Returns the number of captures, including the implicit capture of the entire expression.
     pub fn captures_len(&self) -> usize {
         match &self.inner {
