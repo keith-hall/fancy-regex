@@ -76,6 +76,24 @@
 //! lowest index (specified first in the constructor) wins. After yielding a match
 //! at position `pos` with length `len`, the next match starts searching from
 //! `pos + max(1, len)`, which prevents infinite loops on zero-width matches.
+//!
+//! # `\G` (Continue-From-Previous-Match-End) in a `RegexSet`
+//!
+//! The `\G` anchor matches only at the position where the search started (i.e.
+//! the "continuation point" of the current iteration). Inside a `RegexSet` the
+//! continuation point is the *global* iterator position—shared by every pattern
+//! in the set—not the last position matched by that individual pattern.
+//!
+//! This means the behaviour of a `\G` pattern inside a `RegexSet` differs from
+//! running the same pattern standalone:
+//!
+//! * **Standalone**: `\G` always anchors to the end of the *previous match of
+//!   that same pattern*. If no previous match exists, it anchors to position 0.
+//! * **Inside a `RegexSet`**: `\G` anchors to the end of whichever match was
+//!   most recently returned by the iterator, regardless of which pattern
+//!   produced it. In particular, if another (non-`\G`) pattern advances the
+//!   global position, a `\G` pattern will be tried from that new position and
+//!   can therefore match where it would not match standalone.
 
 use alloc::boxed::Box;
 use alloc::string::ToString;
@@ -91,6 +109,7 @@ use regex_automata::Input as RaInput;
 use regex_automata::PatternSet;
 
 use crate::compile::options_to_rabuilder;
+use crate::vm::OPTION_SKIPPED_EMPTY_MATCH;
 use crate::CompileError;
 use crate::Error;
 use crate::{Captures, Regex, RegexOptions, Result};
