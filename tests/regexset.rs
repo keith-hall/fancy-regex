@@ -209,12 +209,132 @@ fn test_into_captures() {
 }
 
 #[test]
-fn test_match_range() {
-    let set = RegexSet::new(&[r"\d+"]).unwrap();
+fn test_single_pattern_equivalence_with_find_iter() {
+    // A single-pattern RegexSet must produce the same matches as Regex::find_iter.
+    use fancy_regex::Regex;
+    let pattern = r"(\d)\d";
+    let text = "11 22 33";
 
-    let haystack = "abc 123 xyz";
-    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
+    let regex = Regex::new(pattern).unwrap();
+    let standalone: Vec<_> = regex
+        .find_iter(text)
+        .map(|m| m.unwrap().range())
+        .collect();
 
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].range(), 4..7);
+    let set = RegexSet::new(&[pattern]).unwrap();
+    let set_matches: Vec<_> = set
+        .matches(text)
+        .map(|m| m.unwrap().range())
+        .collect();
+
+    assert_eq!(standalone, set_matches);
 }
+
+#[test]
+fn test_single_pattern_equivalence_zero_width() {
+    // An easy single-pattern RegexSet must match find_iter even for zero-width matches.
+    use fancy_regex::Regex;
+    let pattern = r"\d*(?=[a-z])";
+    let text = "ab1c2";
+
+    let regex = Regex::new(pattern).unwrap();
+    let standalone: Vec<_> = regex
+        .find_iter(text)
+        .map(|m| m.unwrap().range())
+        .collect();
+
+    let set = RegexSet::new(&[pattern]).unwrap();
+    let set_matches: Vec<_> = set
+        .matches(text)
+        .map(|m| m.unwrap().range())
+        .collect();
+
+    assert_eq!(standalone, set_matches);
+}
+
+#[test]
+fn test_single_hard_pattern_g_anchor_non_empty() {
+    // \G with a non-empty match: RegexSet must behave like find_iter for a hard pattern
+    // that only matches at the continuation point.
+    use fancy_regex::Regex;
+    let pattern = r"\G(\d)\d";
+    let text = "1122 33";
+
+    let regex = Regex::new(pattern).unwrap();
+    let standalone: Vec<_> = regex
+        .find_iter(text)
+        .map(|m| m.unwrap().range())
+        .collect();
+
+    let set = RegexSet::new(&[pattern]).unwrap();
+    let set_matches: Vec<_> = set
+        .matches(text)
+        .map(|m| m.unwrap().range())
+        .collect();
+
+    // Standalone produces two consecutive matches at 0..2 and 2..4 then stops.
+    assert_eq!(standalone, vec![0..2, 2..4]);
+    assert_eq!(standalone, set_matches);
+}
+
+#[test]
+fn test_single_hard_pattern_g_anchor_allows_empty() {
+    // \G\d* can produce an empty match immediately after a non-empty one.
+    // The per-pattern skip (mirroring standalone) must suppress that empty match.
+    use fancy_regex::Regex;
+    let pattern = r"\G\d*";
+    let text = "1122 33";
+
+    let regex = Regex::new(pattern).unwrap();
+    let standalone: Vec<_> = regex
+        .find_iter(text)
+        .map(|m| m.unwrap().range())
+        .collect();
+
+    let set = RegexSet::new(&[pattern]).unwrap();
+    let set_matches: Vec<_> = set
+        .matches(text)
+        .map(|m| m.unwrap().range())
+        .collect();
+
+    // Both should give exactly one match: "1122" at 0..4.
+    assert_eq!(standalone, vec![0..4]);
+    assert_eq!(standalone, set_matches);
+}
+
+#[test]
+fn test_g_anchor_in_regexset_differs_from_standalone() {
+    // Document the known difference: inside a RegexSet the \G continuation
+    // point is the *global* iterator position (end of whatever matched last),
+    // not the end of the last match of that specific pattern.
+    //
+    // Pattern 0 (\G\d+) and Pattern 1 (\w+) together: Pattern 0 matches "123"
+    // at position 0, then Pattern 1 matches "abc" at 3, advancing the iterator
+    // to position 6.  \G then successfully matches "456" at position 6 even
+    // though standalone \G\d+ would have stopped after "123".
+    use fancy_regex::Regex;
+    let text = "123abc456";
+
+    let set = RegexSet::new(&[r"\G\d+", r"[a-z]+"]).unwrap();
+    let set_matches: Vec<_> = set
+        .matches(text)
+        .map(|m| m.unwrap())
+        .collect();
+
+    assert_eq!(set_matches.len(), 3);
+    assert_eq!(set_matches[0].as_str(), "123");
+    assert_eq!(set_matches[0].pattern(), 0);
+    assert_eq!(set_matches[1].as_str(), "abc");
+    assert_eq!(set_matches[1].pattern(), 1);
+    assert_eq!(set_matches[2].as_str(), "456");
+    assert_eq!(set_matches[2].pattern(), 0);
+
+    // In contrast, standalone \G\d+ only produces "123".
+    let standalone: Vec<_> = Regex::new(r"\G\d+")
+        .unwrap()
+        .find_iter(text)
+        .map(|m| m.unwrap().as_str().to_string())
+        .collect();
+    assert_eq!(standalone, vec!["123"]);
+}
+
