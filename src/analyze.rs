@@ -483,7 +483,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// Check for left-recursive subroutine calls using depth-first search
-    fn check_left_recursion(&self, named_groups: &Map<String, usize>) -> Result<()> {
+    fn check_left_recursion(&self, named_groups: &Map<String, Vec<usize>>) -> Result<()> {
         // Compute which groups are reachable from the root (group 0)
         let reachable_groups = self.compute_reachable_groups();
 
@@ -501,8 +501,10 @@ impl<'a> Analyzer<'a> {
                 // Build reverse mapping from group number to group name (if any)
                 // so we can give friendly error messages
                 let mut group_names: Map<usize, String> = Map::new();
-                for (name, &group_num) in named_groups.iter() {
-                    group_names.insert(group_num, name.clone());
+                for (name, groups) in named_groups.iter() {
+                    for &group_num in groups {
+                        group_names.insert(group_num, name.clone());
+                    }
                 }
 
                 let group_desc = if let Some(name) = group_names.get(&start_group) {
@@ -720,6 +722,47 @@ fn collect_groups<'a>(
     }
 }
 
+/// Check if expression contains backrefs or subroutine calls to groups with duplicate names
+fn check_duplicate_named_group_refs(
+    expr: &Expr,
+    duplicate_groups: &BitSet,
+    named_groups: &crate::parse::NamedGroups,
+) -> Result<()> {
+    match expr {
+        Expr::Backref { group, .. } | Expr::BackrefExistsCondition(group) => {
+            if duplicate_groups.contains(*group) {
+                // Find the name of this group
+                for (name, groups) in named_groups {
+                    if groups.contains(group) {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::DuplicateNamedGroup(name.clone()),
+                        )));
+                    }
+                }
+            }
+        }
+        Expr::SubroutineCall(group) => {
+            if duplicate_groups.contains(*group) {
+                // Find the name of this group
+                for (name, groups) in named_groups {
+                    if groups.contains(group) {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::DuplicateNamedGroup(name.clone()),
+                        )));
+                    }
+                }
+            }
+        }
+        _ => {
+            // Recursively check all children
+            for child in expr.children_iter() {
+                check_duplicate_named_group_refs(child, duplicate_groups, named_groups)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Analyze the parsed expression to determine whether it requires fancy features.
 pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result<Info<'a>> {
     // Check that numeric capture group references (backrefs and subroutine calls) and named groups are not mixed
@@ -727,6 +770,20 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         return Err(Error::CompileError(Box::new(
             CompileError::NamedBackrefOnly,
         )));
+    }
+
+    // Check for backrefs/subroutine calls to named groups with multiple definitions
+    let mut duplicate_groups = BitSet::new();
+    for groups in tree.named_groups.values() {
+        if groups.len() > 1 {
+            // Mark all groups with this name as duplicates
+            for &group in groups {
+                duplicate_groups.insert(group);
+            }
+        }
+    }
+    if !duplicate_groups.is_empty() {
+        check_duplicate_named_group_refs(&tree.expr, &duplicate_groups, &tree.named_groups)?;
     }
 
     let start_group = if explicit_capture_group_0 { 0 } else { 1 };
@@ -1665,5 +1722,70 @@ mod tests {
         assert!(matches!(info.children[4].expr, Expr::LookAround(_, _)));
         assert_eq!(info.children[4].start_group(), 6);
         assert_eq!(info.children[4].end_group(), 6);
+    }
+
+    #[test]
+    fn duplicate_named_group_backref_error() {
+        // Test that backreferences to duplicate named groups raise an error
+        let tree = Expr::parse_tree(r"(?<foo>a)(?<foo>b)\k<foo>").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::DuplicateNamedGroup(ref s) if s == "foo")
+        ));
+    }
+
+    #[test]
+    fn duplicate_named_group_subroutine_error() {
+        // Test that subroutine calls to duplicate named groups raise an error
+        let tree = Expr::parse_tree(r"(?<bar>x)(?<bar>y)\g<bar>").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::DuplicateNamedGroup(ref s) if s == "bar")
+        ));
+    }
+
+    #[test]
+    fn duplicate_named_group_no_ref_ok() {
+        // Test that duplicate named groups without backreferences are ok (for now)
+        let tree = Expr::parse_tree(r"(?<baz>c)(?<baz>d)").unwrap();
+        let result = analyze(&tree, false);
+        // Should succeed - no backreferences or subroutine calls
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn duplicate_named_group_backref_exists_condition_error() {
+        // Test that conditional backreferences to duplicate named groups raise an error
+        // Using the correct syntax (?(<name>) for named backref conditions
+        let tree = Expr::parse_tree(r"(?<test>e)(?<test>f)(?(<test>)g|h)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::DuplicateNamedGroup(ref s) if s == "test")
+        ));
+    }
+
+    #[test]
+    fn single_named_group_backref_ok() {
+        // Test that backreferences to single named groups still work
+        let tree = Expr::parse_tree(r"(?<single>i)\k<single>").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn single_named_group_subroutine_ok() {
+        // Test that subroutine calls to single named groups still work
+        let tree = Expr::parse_tree(r"(?<single>j)\g<single>").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_ok());
     }
 }

@@ -15,6 +15,10 @@ Think of a subroutine as:
 
 >> Calling a subroutine does not recompile it in the caller's context.
 
+**Note**: If multiple capture groups have the same name, calling a subroutine with that name 
+will result in a compile error. This limitation ensures predictable behavior and may be 
+relaxed in the future.
+
 ## Side effects
 
 A subroutine call has one side-effect - it updates the capture group position, which affects backref matching etc.
