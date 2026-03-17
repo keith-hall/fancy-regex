@@ -1050,6 +1050,20 @@ impl<'a> Parser<'a> {
         let bytes = self.re.as_bytes();
         // get the character after the open paren
         let b = bytes[ix];
+
+        // Check for DEFINE condition first - (?(DEFINE)...)
+        if self.re[ix..].starts_with("DEFINE)") {
+            let end = ix + "DEFINE)".len();
+            let (end, definitions) = self.parse_re(end, depth)?;
+            let after = self.check_for_close_paren(end)?;
+            return Ok((
+                after,
+                Expr::DefineGroup {
+                    definitions: Box::new(definitions),
+                },
+            ));
+        }
+
         let (next, condition) = if b == b'\'' {
             self.parse_named_backref(ix, "'", "')", true)?
         } else if b == b'<' {

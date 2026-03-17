@@ -319,6 +319,13 @@ impl<'a> Compiler<'a> {
                     CompileError::FeatureNotYetSupported(error_msg.to_string()),
                 )));
             }
+            Expr::DefineGroup { .. } => {
+                // DEFINE groups don't generate any VM instructions themselves.
+                // The groups defined inside are available for subroutine calls,
+                // but the DEFINE block itself doesn't match anything.
+                // Group numbers were already assigned during analysis, and the
+                // subroutine calls will inline the appropriate code when invoked.
+            }
         }
         Ok(())
     }

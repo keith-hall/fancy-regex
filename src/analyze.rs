@@ -469,6 +469,17 @@ impl<'a> Analyzer<'a> {
                     }
                 }
             }
+            Expr::DefineGroup { ref definitions } => {
+                // DEFINE groups don't match anything themselves, but we still need to
+                // visit the definitions to assign group numbers and analyze any nested content.
+                // DEFINE always requires "hard" mode because it defines capture groups for
+                // subroutine calls, which is a fancy feature.
+                let def_info = self.visit(definitions, 0, inside_zero_rep, enclosing_group)?;
+                min_size = 0;
+                const_size = true;
+                hard = true;
+                children.push(def_info);
+            }
         };
 
         Ok(Info {
@@ -611,6 +622,9 @@ impl<'a> Analyzer<'a> {
             }
             Expr::UnresolvedNamedSubroutineCall { .. }
             | Expr::BackrefWithRelativeRecursionLevel { .. } => true,
+            Expr::DefineGroup { definitions } => {
+                self.expr_can_terminate(definitions, root_expr, recursion_stack, memo)
+            }
             _ => true,
         }
     }
