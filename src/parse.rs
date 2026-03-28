@@ -1092,6 +1092,44 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse the target of a backref-exists condition — e.g. `1`, `name`, `+1`, `-1` — from
+    /// the delimited form used in `(?(...)...)`.  Returns an `AstNode::BackrefExistsCondition`
+    /// expression on success.
+    ///
+    /// Unlike `parse_delimited_backref`, this rejects a non-empty id combined with a `+`/`-`
+    /// suffix (e.g. `1+0` or `name+2`) because that Oniguruma recursion-level syntax has no
+    /// meaning in a conditional context.
+    fn parse_condition_target(
+        &mut self,
+        ix: usize,
+        open: &str,
+        close: &str,
+        allow_relative: bool,
+    ) -> Result<(usize, Expr)> {
+        if let Some(ParsedId { id, relative, skip }) =
+            parse_id(&self.re[ix..], open, close, allow_relative)
+        {
+            let target = if id.is_empty() && relative.is_some() {
+                // purely relative condition: `(?(-1)...)` or `(?(+2)...)`
+                CaptureGroupTarget::Relative(relative.unwrap())
+            } else if relative.is_some() {
+                // TODO: question this... including in the doc comment above the method
+                // non-empty id with a +/- suffix is not valid in a conditional
+                return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
+            } else if let Ok(num) = id.parse::<usize>() {
+                CaptureGroupTarget::ByNumber(num)
+            } else {
+                CaptureGroupTarget::ByName(id.to_string())
+            };
+            Ok((
+                ix + skip,
+                Expr::AstNode(AstNode::BackrefExistsCondition(target), ix),
+            ))
+        } else {
+            Err(Error::ParseError(ix, ParseError::InvalidGroupName))
+        }
+    }
+
     // ix points to after the last ( in (?(
     fn parse_conditional(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
         if ix >= self.re.len() {
@@ -1101,11 +1139,11 @@ impl<'a> Parser<'a> {
         // get the character after the open paren
         let b = bytes[ix];
         let (next, condition) = if b == b'\'' {
-            self.parse_delimited_backref(ix, "'", "')", true)?
+            self.parse_condition_target(ix, "'", "')", true)?
         } else if b == b'<' {
-            self.parse_delimited_backref(ix, "<", ">)", true)?
+            self.parse_condition_target(ix, "<", ">)", true)?
         } else if b == b'+' || b == b'-' || b.is_ascii_digit() {
-            self.parse_delimited_backref(ix, "", ")", true)?
+            self.parse_condition_target(ix, "", ")", true)?
         } else if b == b'*' {
             self.parse_backtracking_control_verb(ix)?
         } else {
@@ -1115,15 +1153,14 @@ impl<'a> Parser<'a> {
         let (end, child) = self.parse_re(next, depth)?;
         if end == next {
             // The condition had no branches, so it is a backref-exists-only condition
-            // (e.g. `(?(1))`). Convert it to an unresolved AstNode so the resolver can
-            // handle relative and named targets uniformly.
-            let target = backref_exists_condition_target(&condition);
-            if let Some(target) = target {
+            // (e.g. `(?(1))`). The delimited paths already produce AstNode::BackrefExistsCondition
+            // directly; for the general parse_re path we require an expression.
+            if matches!(
+                condition,
+                Expr::AstNode(AstNode::BackrefExistsCondition(_), _)
+            ) {
                 let after = self.check_for_close_paren(end)?;
-                return Ok((
-                    after,
-                    Expr::AstNode(AstNode::BackrefExistsCondition(target), ix),
-                ));
+                return Ok((after, condition));
             } else {
                 return Err(Error::ParseError(
                     end,
@@ -1149,11 +1186,7 @@ impl<'a> Parser<'a> {
             // there is only one branch - the truth branch. i.e. "if" without "else"
             if_true = child;
         }
-        let inner_condition = if let Some(target) = backref_exists_condition_target(&condition) {
-            Expr::AstNode(AstNode::BackrefExistsCondition(target), ix)
-        } else {
-            condition
-        };
+        let inner_condition = condition;
 
         let after = self.check_for_close_paren(end)?;
         Ok((
@@ -1604,15 +1637,6 @@ pub(crate) fn make_ast_group(inner: Expr, name: Option<String>, ix: usize) -> Ex
 
 pub(crate) fn make_group(inner: Expr) -> Expr {
     Expr::Group(Arc::new(inner))
-}
-
-/// If `expr` is a (potentially unresolved) backreference that can serve as a backref-exists
-/// condition, returns its `CaptureGroupTarget`; otherwise returns `None`.
-fn backref_exists_condition_target(expr: &Expr) -> Option<CaptureGroupTarget> {
-    match expr {
-        Expr::AstNode(AstNode::Backref { target, .. }, _) => Some(target.clone()),
-        _ => None,
-    }
 }
 
 fn remap_unicode_property_if_necessary(
@@ -2814,6 +2838,21 @@ mod tests {
                 },
                 Expr::BackrefExistsCondition(1)
             ])
+        );
+    }
+
+    #[test]
+    fn backref_exists_condition_with_recursion_level_suffix_rejected() {
+        // `(?(1+0)...)` looks like a conditional but `1+0` is a numeric id with a
+        // recursion-level suffix — that Oniguruma `\k<N+level>` syntax has no meaning
+        // in a conditional context and must be rejected.
+        assert_error(
+            r"(a)(?(1+0)b|c)d",
+            "Parsing error at position 6: Could not parse group name",
+        );
+        assert_error(
+            r"(?<n>a)(?(n+0)b|c)d",
+            "Parsing error at position 10: Could not parse group name",
         );
     }
 
