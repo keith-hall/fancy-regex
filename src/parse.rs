@@ -84,10 +84,12 @@ impl<'a> Parser<'a> {
             has_unnamed_groups: false,
             ignore_numbered_groups_if_named_groups_exist: false,
             next_group_index: 1,
+            curr_group: 0,
             backrefs: Default::default(),
         };
         resolver.resolve_groups(&mut expr);
         resolver.next_group_index = 1;
+        resolver.curr_group = 0;
         resolver.resolve_capture_group_targets(&mut expr)?;
         //}
 
@@ -1303,6 +1305,12 @@ pub struct Resolver {
     has_unnamed_groups: bool,
     ignore_numbered_groups_if_named_groups_exist: bool,
     next_group_index: usize,
+    /// The number of the most recently opened capture group, mirroring the old single-pass
+    /// parser's `curr_group` counter. It is updated each time a `Group` node is entered
+    /// during `resolve_capture_group_targets`, and never decremented, so that a relative
+    /// backref at any position sees the same value the old parser would have had at that
+    /// point in its left-to-right scan.
+    curr_group: usize,
 }
 
 impl Resolver {
@@ -1359,18 +1367,13 @@ impl Resolver {
     /// Resolve a `CaptureGroupTarget` to a concrete group index using the groups seen so far.
     ///
     /// Returns `None` for a by-name target whose name hasn't been registered yet, or for a
-    /// by-number / relative target that underflows to zero (i.e. the relative offset points
-    /// before the start of the pattern).
+    /// relative target that underflows to zero (i.e. the offset points before group 1).
     fn resolve_target(&self, target: &CaptureGroupTarget) -> Option<usize> {
         match target {
             CaptureGroupTarget::ByNumber(group_index) => Some(*group_index),
             CaptureGroupTarget::Relative(relative_group) => {
                 let relative_group = *relative_group;
-                // `next_group_index` is the index that will be assigned to the *next* group
-                // encountered, so the most recently opened group is `next_group_index - 1`,
-                // which corresponds to `curr_group` in the old single-pass parser.
-                let curr_group = self.next_group_index - 1;
-                curr_group.checked_add_signed(if relative_group < 0 {
+                self.curr_group.checked_add_signed(if relative_group < 0 {
                     relative_group + 1
                 } else {
                     relative_group
@@ -1425,6 +1428,7 @@ impl Resolver {
         } else {
             if let Expr::Group(_) = expr {
                 self.next_group_index += 1;
+                self.curr_group = self.next_group_index - 1;
             }
             if !expr.is_leaf_node() {
                 // recursively resolve in inner expressions
