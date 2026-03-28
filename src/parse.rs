@@ -1356,6 +1356,30 @@ impl Resolver {
         }
     }
 
+    /// Resolve a `CaptureGroupTarget` to a concrete group index using the groups seen so far.
+    ///
+    /// Returns `None` for a by-name target whose name hasn't been registered yet, or for a
+    /// by-number / relative target that underflows to zero (i.e. the relative offset points
+    /// before the start of the pattern).
+    fn resolve_target(&self, target: &CaptureGroupTarget) -> Option<usize> {
+        match target {
+            CaptureGroupTarget::ByNumber(group_index) => Some(*group_index),
+            CaptureGroupTarget::Relative(relative_group) => {
+                let relative_group = *relative_group;
+                // `next_group_index` is the index that will be assigned to the *next* group
+                // encountered, so the most recently opened group is `next_group_index - 1`,
+                // which corresponds to `curr_group` in the old single-pass parser.
+                let curr_group = self.next_group_index - 1;
+                curr_group.checked_add_signed(if relative_group < 0 {
+                    relative_group + 1
+                } else {
+                    relative_group
+                })
+            }
+            CaptureGroupTarget::ByName(name) => self.named_groups.get(name.as_str()).copied(),
+        }
+    }
+
     fn resolve_capture_group_targets(&mut self, expr: &mut Expr) -> Result<()> {
         if let Expr::AstNode(astnode, ix) = expr {
             match astnode {
@@ -1365,31 +1389,8 @@ impl Resolver {
                     casei,
                     relative_recursion_level,
                 } => {
-                    let resolved_group = match target {
-                        CaptureGroupTarget::ByNumber(group_index) => Some(*group_index),
-                        CaptureGroupTarget::Relative(relative_group) => {
-                            let relative_group = *relative_group;
-                            // `next_group_index` is the index that will be assigned to the *next*
-                            // group encountered, so the most recently encountered group is
-                            // `next_group_index - 1`, which corresponds to `curr_group` in the
-                            // old single-pass parser. Apply the same relative formula as before.
-                            let curr_group = self.next_group_index - 1;
-                            curr_group.checked_add_signed(if relative_group < 0 {
-                                relative_group + 1
-                            } else {
-                                relative_group
-                            })
-                        }
-                        CaptureGroupTarget::ByName(name) => {
-                            // TODO: if multiple groups with the same name, return an Alt with all the backrefs
-                            if let Some(&group) = self.named_groups.get(name.as_str()) {
-                                Some(group)
-                            } else {
-                                None
-                            }
-                        }
-                    };
-                    if let Some(resolved_group) = resolved_group {
+                    // TODO: if multiple groups with the same name, return an Alt with all the backrefs
+                    if let Some(resolved_group) = self.resolve_target(target) {
                         *expr = if let Some(relative_recursion_level) = *relative_recursion_level {
                             Expr::BackrefWithRelativeRecursionLevel {
                                 group: resolved_group,
@@ -1407,56 +1408,14 @@ impl Resolver {
                     }
                 }
                 AstNode::SubroutineCall(target) => {
-                    let resolved_group = match target {
-                        CaptureGroupTarget::ByNumber(group_index) => Some(*group_index),
-                        CaptureGroupTarget::Relative(relative_group) => {
-                            let relative_group = *relative_group;
-                            // Same reasoning as for Backref::Relative above.
-                            let curr_group = self.next_group_index - 1;
-                            curr_group.checked_add_signed(if relative_group < 0 {
-                                relative_group + 1
-                            } else {
-                                relative_group
-                            })
-                        }
-                        CaptureGroupTarget::ByName(name) => {
-                            // TODO: if multiple groups with this name, don't resolve
-                            // and instead just leave it as an AstNode for the analyzer to complain about
-                            if let Some(&group) = self.named_groups.get(name.as_str()) {
-                                Some(group)
-                            } else {
-                                None
-                            }
-                        }
-                    };
-                    if let Some(resolved_group) = resolved_group {
+                    // TODO: if multiple groups with this name, don't resolve
+                    // and instead just leave it as an AstNode for the analyzer to complain about
+                    if let Some(resolved_group) = self.resolve_target(target) {
                         *expr = Expr::SubroutineCall(resolved_group);
-                        //} else {
-                        //    return Err(Error::ParseError(*ix, ParseError::InvalidBackref));
                     }
                 }
                 AstNode::BackrefExistsCondition(target) => {
-                    let resolved_group = match target {
-                        CaptureGroupTarget::ByNumber(group_index) => Some(*group_index),
-                        CaptureGroupTarget::Relative(relative_group) => {
-                            let relative_group = *relative_group;
-                            // Same reasoning as for Backref::Relative above.
-                            let curr_group = self.next_group_index - 1;
-                            curr_group.checked_add_signed(if relative_group < 0 {
-                                relative_group + 1
-                            } else {
-                                relative_group
-                            })
-                        }
-                        CaptureGroupTarget::ByName(name) => {
-                            if let Some(&group) = self.named_groups.get(name.as_str()) {
-                                Some(group)
-                            } else {
-                                None
-                            }
-                        }
-                    };
-                    if let Some(resolved_group) = resolved_group {
+                    if let Some(resolved_group) = self.resolve_target(target) {
                         *expr = Expr::BackrefExistsCondition(resolved_group);
                     } else {
                         return Err(Error::ParseError(*ix, ParseError::InvalidBackref));
