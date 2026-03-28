@@ -1364,12 +1364,16 @@ impl Resolver {
                         CaptureGroupTarget::ByNumber(group_index) => Some(*group_index),
                         CaptureGroupTarget::Relative(relative_group) => {
                             let relative_group = *relative_group;
-                            self.next_group_index
-                                .checked_add_signed(if relative_group < 0 {
-                                    relative_group + 1
-                                } else {
-                                    relative_group
-                                })
+                            // `next_group_index` is the index that will be assigned to the *next*
+                            // group encountered, so the most recently encountered group is
+                            // `next_group_index - 1`, which corresponds to `curr_group` in the
+                            // old single-pass parser. Apply the same relative formula as before.
+                            let curr_group = self.next_group_index - 1;
+                            curr_group.checked_add_signed(if relative_group < 0 {
+                                relative_group + 1
+                            } else {
+                                relative_group
+                            })
                         }
                         CaptureGroupTarget::ByName(name) => {
                             // TODO: if multiple groups with the same name, return an Alt with all the backrefs
@@ -1402,12 +1406,13 @@ impl Resolver {
                         CaptureGroupTarget::ByNumber(group_index) => Some(*group_index),
                         CaptureGroupTarget::Relative(relative_group) => {
                             let relative_group = *relative_group;
-                            self.next_group_index
-                                .checked_add_signed(if relative_group < 0 {
-                                    relative_group + 1
-                                } else {
-                                    relative_group
-                                })
+                            // Same reasoning as for Backref::Relative above.
+                            let curr_group = self.next_group_index - 1;
+                            curr_group.checked_add_signed(if relative_group < 0 {
+                                relative_group + 1
+                            } else {
+                                relative_group
+                            })
                         }
                         CaptureGroupTarget::ByName(name) => {
                             // TODO: if multiple groups with this name, don't resolve
@@ -1421,8 +1426,8 @@ impl Resolver {
                     };
                     if let Some(resolved_group) = resolved_group {
                         *expr = Expr::SubroutineCall(resolved_group);
-                    //} else {
-                    //    return Err(Error::ParseError(*ix, ParseError::InvalidBackref));
+                        //} else {
+                        //    return Err(Error::ParseError(*ix, ParseError::InvalidBackref));
                     }
                 }
             }
@@ -1535,7 +1540,13 @@ pub(crate) fn make_literal_case_insensitive(s: &str, case_insensitive: bool) -> 
 }
 
 pub(crate) fn make_ast_group(inner: Expr, name: Option<String>, ix: usize) -> Expr {
-    Expr::AstNode(AstNode::AstGroup { name, inner: Box::new(inner) }, ix)
+    Expr::AstNode(
+        AstNode::AstGroup {
+            name,
+            inner: Box::new(inner),
+        },
+        ix,
+    )
 }
 
 pub(crate) fn make_group(inner: Expr) -> Expr {
