@@ -1885,8 +1885,12 @@ impl Expr {
                 | Expr::ContinueFromPreviousMatchEnd
                 | Expr::BackrefExistsCondition(_)
                 | Expr::BacktrackingControlVerb(_)
-                | Expr::SubroutineCall(_)
-                | Expr::Absent(Absent::Clear),
+                |             Expr::SubroutineCall(_)
+                | Expr::Absent(Absent::Clear)
+                // An unresolved AstNode has no separate child Expr to iterate; the resolver
+                // should have replaced it before analysis, so treat it as a leaf so that
+                // collection/iteration doesn't panic, and let the analyzer emit the error.
+                | Expr::AstNode(..),
         )
     }
 

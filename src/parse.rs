@@ -366,11 +366,16 @@ impl<'a> Parser<'a> {
                 CaptureGroupTarget::Relative(relative.unwrap())
             } else {
                 if let Ok(num) = id.parse::<usize>() {
+                    if num == 0 {
+                        self.self_recursive = true;
+                    }
                     CaptureGroupTarget::ByNumber(num)
                 } else {
                     CaptureGroupTarget::ByName(id.to_string())
                 }
             };
+
+            self.contains_subroutines = true;
 
             Ok((
                 ix + skip,
