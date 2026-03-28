@@ -354,15 +354,15 @@ fn info_to_tree_node<'a>(
         ),
         Expr::Conditional { .. } => ("Conditional".to_string(), "".to_string(), None),
         Expr::SubroutineCall(group) => ("SubroutineCall".to_string(), format!("{}", group), None),
-        Expr::UnresolvedNamedSubroutineCall { name, .. } => (
-            "UnresolvedNamedSubroutineCall".to_string(),
-            format!("({})", name),
-            None,
-        ),
         Expr::BacktrackingControlVerb(_) => {
             ("BacktrackingControlVerb".to_string(), "".to_string(), None)
         }
         Expr::Absent(_) => ("Absent".to_string(), "".to_string(), None),
+        Expr::AstNode { .. } => (
+            "AstNode".to_string(),
+            format!("({})", "TODO"),
+            None,
+        ),
     };
 
     let children = info
