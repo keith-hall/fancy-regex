@@ -365,6 +365,11 @@ impl<'a> Parser<'a> {
             let target = if id.is_empty() && relative.is_some() {
                 // subroutine call with nothing before the + or -, so it is purely a relative group subroutine call
                 CaptureGroupTarget::Relative(relative.unwrap())
+            } else if relative.is_some() {
+                // a non-empty id combined with a +/- suffix (e.g. `\g<1-0>` or `\g<name+1>`)
+                // is not valid for subroutine calls (unlike backrefs where it denotes a
+                // recursion level qualifier)
+                return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
             } else {
                 if let Ok(num) = id.parse::<usize>() {
                     self.numeric_capture_group_references = true;

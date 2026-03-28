@@ -31,7 +31,7 @@ use bit_set::BitSet;
 use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
 use crate::vm::CaptureGroupRange;
-use crate::{CompileError, Error, Expr, Result};
+use crate::{AstNode, CaptureGroupTarget, CompileError, Error, Expr, Result};
 
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as Map;
@@ -417,10 +417,15 @@ impl<'a> Analyzer<'a> {
                 }
                 hard = true;
             }
-            Expr::AstNode { .. } => {
-                // TODO: depending on which AstNode it is, give an appropriate error
+            Expr::AstNode(ref astnode, ix) => {
+                // An unresolved AstNode means the resolver couldn't find the target (e.g. a
+                // subroutine call to an unknown name). Extract the name for the error message.
+                let (name, pos) = match astnode {
+                    AstNode::SubroutineCall(CaptureGroupTarget::ByName(name)) => (name.clone(), ix),
+                    _ => ("unknown".to_string(), ix),
+                };
                 return Err(Error::CompileError(Box::new(
-                    CompileError::SubroutineCallTargetNotFound("TODO".to_string(), 0),
+                    CompileError::SubroutineCallTargetNotFound(name, pos),
                 )));
             }
             Expr::BackrefWithRelativeRecursionLevel { .. } => {
