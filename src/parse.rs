@@ -486,7 +486,6 @@ impl<'a> Parser<'a> {
     fn parse_numbered_backref(&mut self, ix: usize) -> Result<(usize, Expr)> {
         let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
         self.numeric_capture_group_references = true;
-        //self.backrefs.insert(group);
         Ok((
             end,
             Expr::Backref {
@@ -1429,6 +1428,7 @@ impl Resolver {
                 } => {
                     // TODO: if multiple groups with the same name, return an Alt with all the backrefs
                     if let Some(resolved_group) = self.resolve_target(target, Some(*ix)) {
+                        self.backrefs.insert(resolved_group);
                         *expr = if let Some(relative_recursion_level) = *relative_recursion_level {
                             Expr::BackrefWithRelativeRecursionLevel {
                                 group: resolved_group,
@@ -1472,9 +1472,16 @@ impl Resolver {
                 }
             }
         } else {
-            if let Expr::Group(_) = expr {
-                self.next_group_index += 1;
-                self.curr_group = self.next_group_index - 1;
+            match expr {
+                Expr::Group(_) => {
+                    self.next_group_index += 1;
+                    self.curr_group = self.next_group_index - 1;
+                }
+                Expr::Backref { group, .. }
+                | Expr::BackrefWithRelativeRecursionLevel { group, .. } => {
+                    self.backrefs.insert(*group);
+                }
+                _ => {}
             }
             if !expr.is_leaf_node() {
                 // recursively resolve in inner expressions
