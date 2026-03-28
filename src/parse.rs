@@ -79,7 +79,8 @@ impl<'a> Parser<'a> {
 
         //if p.resolve_required {
         let mut resolver = Resolver {
-            named_groups: NamedGroups::default(), //p.named_groups,
+            named_groups: NamedGroups::default(),
+            named_group_positions: NamedGroups::default(),
             has_named_groups: false,
             has_unnamed_groups: false,
             ignore_numbered_groups_if_named_groups_exist: false,
@@ -931,6 +932,7 @@ impl<'a> Parser<'a> {
         if depth >= MAX_RECURSION {
             return Err(Error::ParseError(ix, ParseError::RecursionExceeded));
         }
+        let open_paren_ix = ix; // position of the opening `(`
         let ix = self.optional_whitespace(ix + 1)?;
         let mut group_name = None;
         let (la, skip) = if self.re[ix..].starts_with("?=") {
@@ -1002,7 +1004,7 @@ impl<'a> Parser<'a> {
         let result = match (la, skip) {
             (Some(la), _) => Expr::LookAround(Box::new(child), la),
             (None, 2) => Expr::AtomicGroup(Box::new(child)),
-            _ => make_ast_group(child, group_name, ix),
+            _ => make_ast_group(child, group_name, open_paren_ix),
         };
         Ok((ix, result))
     }
@@ -1305,7 +1307,11 @@ impl<'a> Parser<'a> {
 pub struct Resolver {
     named_groups: NamedGroups,
     backrefs: BitSet,
-    //group_positions: Vec<usize>,
+    /// Maps each named group's name to the byte offset of its opening `(` in the pattern.
+    /// Used to enforce that named backrefs (`\k<name>`) cannot refer to groups that appear
+    /// later in the pattern (forward references by name are not supported for backrefs,
+    /// only for subroutine calls).
+    named_group_positions: NamedGroups,
     has_named_groups: bool,
     has_unnamed_groups: bool,
     ignore_numbered_groups_if_named_groups_exist: bool,
@@ -1327,7 +1333,7 @@ impl Resolver {
     // It is okay if a backref or subroutine call is to a capture group index which doesn't exist
     // - the analyzer will detect it
     fn resolve_groups(&mut self, expr: &mut Expr) {
-        if let Expr::AstNode(astnode, _) = expr {
+        if let Expr::AstNode(astnode, ix) = expr {
             match astnode {
                 AstNode::AstGroup { name, ref inner } => {
                     let mut inner = inner.clone(); //*inner;
@@ -1335,6 +1341,7 @@ impl Resolver {
                         self.has_named_groups = true;
                         self.named_groups
                             .insert(name.to_string(), self.next_group_index);
+                        self.named_group_positions.insert(name.to_string(), *ix);
                         Some(self.next_group_index)
                     } else if !self.ignore_numbered_groups_if_named_groups_exist {
                         Some(self.next_group_index)
@@ -1371,9 +1378,18 @@ impl Resolver {
 
     /// Resolve a `CaptureGroupTarget` to a concrete group index using the groups seen so far.
     ///
-    /// Returns `None` for a by-name target whose name hasn't been registered yet, or for a
-    /// relative target that underflows to zero (i.e. the offset points before group 1).
-    fn resolve_target(&self, target: &CaptureGroupTarget) -> Option<usize> {
+    /// `backref_ix` should be `Some(ix)` for backreferences, which enforces that a by-name
+    /// target must have been defined *before* the backref's position in the pattern (forward
+    /// named backrefs are not permitted). Pass `None` for subroutine calls and backref-exists
+    /// conditions, which do support forward references by name.
+    ///
+    /// Returns `None` if the target cannot be resolved (unknown name, forward named backref,
+    /// or a relative offset that underflows before group 1).
+    fn resolve_target(
+        &self,
+        target: &CaptureGroupTarget,
+        backref_ix: Option<usize>,
+    ) -> Option<usize> {
         match target {
             CaptureGroupTarget::ByNumber(group_index) => Some(*group_index),
             CaptureGroupTarget::Relative(relative_group) => {
@@ -1384,7 +1400,20 @@ impl Resolver {
                     relative_group
                 })
             }
-            CaptureGroupTarget::ByName(name) => self.named_groups.get(name.as_str()).copied(),
+            CaptureGroupTarget::ByName(name) => {
+                let group = self.named_groups.get(name.as_str()).copied();
+                // For backrefs, reject forward references: the group's opening `(` must appear
+                // before the backref in the pattern.
+                if let (Some(backref_ix), Some(group_ix)) = (
+                    backref_ix,
+                    self.named_group_positions.get(name.as_str()).copied(),
+                ) {
+                    if group_ix >= backref_ix {
+                        return None;
+                    }
+                }
+                group
+            }
         }
     }
 
@@ -1398,7 +1427,7 @@ impl Resolver {
                     relative_recursion_level,
                 } => {
                     // TODO: if multiple groups with the same name, return an Alt with all the backrefs
-                    if let Some(resolved_group) = self.resolve_target(target) {
+                    if let Some(resolved_group) = self.resolve_target(target, Some(*ix)) {
                         *expr = if let Some(relative_recursion_level) = *relative_recursion_level {
                             Expr::BackrefWithRelativeRecursionLevel {
                                 group: resolved_group,
@@ -1412,18 +1441,29 @@ impl Resolver {
                             }
                         };
                     } else {
-                        return Err(Error::ParseError(*ix, ParseError::InvalidBackref));
+                        // Distinguish: a name that exists but is forward → InvalidGroupNameBackref;
+                        // anything else (unknown name, bad relative offset) → InvalidBackref.
+                        let err = if let CaptureGroupTarget::ByName(name) = target {
+                            if self.named_groups.contains_key(name.as_str()) {
+                                ParseError::InvalidGroupNameBackref(name.clone())
+                            } else {
+                                ParseError::InvalidBackref
+                            }
+                        } else {
+                            ParseError::InvalidBackref
+                        };
+                        return Err(Error::ParseError(*ix, err));
                     }
                 }
                 AstNode::SubroutineCall(target) => {
                     // TODO: if multiple groups with this name, don't resolve
                     // and instead just leave it as an AstNode for the analyzer to complain about
-                    if let Some(resolved_group) = self.resolve_target(target) {
+                    if let Some(resolved_group) = self.resolve_target(target, None) {
                         *expr = Expr::SubroutineCall(resolved_group);
                     }
                 }
                 AstNode::BackrefExistsCondition(target) => {
-                    if let Some(resolved_group) = self.resolve_target(target) {
+                    if let Some(resolved_group) = self.resolve_target(target, None) {
                         *expr = Expr::BackrefExistsCondition(resolved_group);
                     } else {
                         return Err(Error::ParseError(*ix, ParseError::InvalidBackref));
