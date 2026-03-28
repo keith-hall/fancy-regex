@@ -1573,6 +1573,8 @@ enum AstNode {
     },
     /// Subroutine Call
     SubroutineCall(CaptureGroupTarget),
+    /// Backreference exists condition `(?(name)...)` or `(?(1)...)` - unresolved target
+    BackrefExistsCondition(CaptureGroupTarget),
 }
 
 /// Type of look-around assertion as used for a look-around expression.

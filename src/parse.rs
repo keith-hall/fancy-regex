@@ -1100,11 +1100,16 @@ impl<'a> Parser<'a> {
         };
         let (end, child) = self.parse_re(next, depth)?;
         if end == next {
-            // Backreference validity checker
-            // TODO: check for AstNode instead? or do it in resolve step...
-            if let Expr::Backref { group, .. } = condition {
+            // The condition had no branches, so it is a backref-exists-only condition
+            // (e.g. `(?(1))`). Convert it to an unresolved AstNode so the resolver can
+            // handle relative and named targets uniformly.
+            let target = backref_exists_condition_target(&condition);
+            if let Some(target) = target {
                 let after = self.check_for_close_paren(end)?;
-                return Ok((after, Expr::BackrefExistsCondition(group)));
+                return Ok((
+                    after,
+                    Expr::AstNode(AstNode::BackrefExistsCondition(target), ix),
+                ));
             } else {
                 return Err(Error::ParseError(
                     end,
@@ -1130,8 +1135,8 @@ impl<'a> Parser<'a> {
             // there is only one branch - the truth branch. i.e. "if" without "else"
             if_true = child;
         }
-        let inner_condition = if let Expr::Backref { group, .. } = condition {
-            Expr::BackrefExistsCondition(group)
+        let inner_condition = if let Some(target) = backref_exists_condition_target(&condition) {
+            Expr::AstNode(AstNode::BackrefExistsCondition(target), ix)
         } else {
             condition
         };
@@ -1430,6 +1435,33 @@ impl Resolver {
                         //    return Err(Error::ParseError(*ix, ParseError::InvalidBackref));
                     }
                 }
+                AstNode::BackrefExistsCondition(target) => {
+                    let resolved_group = match target {
+                        CaptureGroupTarget::ByNumber(group_index) => Some(*group_index),
+                        CaptureGroupTarget::Relative(relative_group) => {
+                            let relative_group = *relative_group;
+                            // Same reasoning as for Backref::Relative above.
+                            let curr_group = self.next_group_index - 1;
+                            curr_group.checked_add_signed(if relative_group < 0 {
+                                relative_group + 1
+                            } else {
+                                relative_group
+                            })
+                        }
+                        CaptureGroupTarget::ByName(name) => {
+                            if let Some(&group) = self.named_groups.get(name.as_str()) {
+                                Some(group)
+                            } else {
+                                None
+                            }
+                        }
+                    };
+                    if let Some(resolved_group) = resolved_group {
+                        *expr = Expr::BackrefExistsCondition(resolved_group);
+                    } else {
+                        return Err(Error::ParseError(*ix, ParseError::InvalidBackref));
+                    }
+                }
             }
         } else {
             if let Expr::Group(_) = expr {
@@ -1551,6 +1583,15 @@ pub(crate) fn make_ast_group(inner: Expr, name: Option<String>, ix: usize) -> Ex
 
 pub(crate) fn make_group(inner: Expr) -> Expr {
     Expr::Group(Arc::new(inner))
+}
+
+/// If `expr` is a (potentially unresolved) backreference that can serve as a backref-exists
+/// condition, returns its `CaptureGroupTarget`; otherwise returns `None`.
+fn backref_exists_condition_target(expr: &Expr) -> Option<CaptureGroupTarget> {
+    match expr {
+        Expr::AstNode(AstNode::Backref { target, .. }, _) => Some(target.clone()),
+        _ => None,
+    }
 }
 
 fn remap_unicode_property_if_necessary(
