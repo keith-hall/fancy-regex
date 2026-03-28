@@ -367,6 +367,7 @@ impl<'a> Parser<'a> {
                 CaptureGroupTarget::Relative(relative.unwrap())
             } else {
                 if let Ok(num) = id.parse::<usize>() {
+                    self.numeric_capture_group_references = true;
                     if num == 0 {
                         self.self_recursive = true;
                     }
