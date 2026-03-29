@@ -1522,8 +1522,15 @@ pub enum Expr {
     KeepOut,
     /// Anchor to match at the position where the previous match ended
     ContinueFromPreviousMatchEnd,
-    /// Conditional expression based on whether the numbered capture group matched or not
-    BackrefExistsCondition(usize),
+    /// Conditional expression based on whether the numbered capture group matched or not.
+    /// The optional `relative_recursion_level` qualifies which recursion level's capture is
+    /// tested (Oniguruma `(?(name+N)...)` syntax).
+    BackrefExistsCondition {
+        /// The resolved capture group number
+        group: usize,
+        /// Optional relative recursion level (e.g. `+0`, `-1`)
+        relative_recursion_level: Option<isize>,
+    },
     /// If/Then/Else Condition. If there is no Then/Else, these will just be empty expressions.
     Conditional {
         /// The conditional expression to evaluate
@@ -1573,8 +1580,13 @@ enum AstNode {
     },
     /// Subroutine Call
     SubroutineCall(CaptureGroupTarget),
-    /// Backreference exists condition `(?(name)...)` or `(?(1)...)` - unresolved target
-    BackrefExistsCondition(CaptureGroupTarget),
+    /// Backreference exists condition `(?(name)...)` or `(?(1)...)` - unresolved target.
+    /// The optional `relative_recursion_level` corresponds to the Oniguruma `+N`/`-N` suffix
+    /// (e.g. `(?(name+0)...)`) which qualifies which recursion level's capture is tested.
+    BackrefExistsCondition {
+        target: CaptureGroupTarget,
+        relative_recursion_level: Option<isize>,
+    },
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -1883,7 +1895,7 @@ impl Expr {
                 | Expr::BackrefWithRelativeRecursionLevel { .. }
                 | Expr::KeepOut
                 | Expr::ContinueFromPreviousMatchEnd
-                | Expr::BackrefExistsCondition(_)
+                | Expr::BackrefExistsCondition { .. }
                 | Expr::BacktrackingControlVerb(_)
                 |             Expr::SubroutineCall(_)
                 | Expr::Absent(Absent::Clear)
@@ -2283,7 +2295,11 @@ mod tests {
         .is_leaf_node());
         assert!(Expr::KeepOut.is_leaf_node());
         assert!(Expr::ContinueFromPreviousMatchEnd.is_leaf_node());
-        assert!(Expr::BackrefExistsCondition(1).is_leaf_node());
+        assert!(Expr::BackrefExistsCondition {
+            group: 1,
+            relative_recursion_level: None
+        }
+        .is_leaf_node());
         assert!(Expr::BacktrackingControlVerb(crate::BacktrackingControlVerb::Fail).is_leaf_node());
         assert!(Expr::SubroutineCall(1).is_leaf_node());
 
@@ -2309,7 +2325,10 @@ mod tests {
         .is_leaf_node());
         assert!(!Expr::AtomicGroup(Box::new(make_literal("a"))).is_leaf_node());
         assert!(!Expr::Conditional {
-            condition: Box::new(Expr::BackrefExistsCondition(1)),
+            condition: Box::new(Expr::BackrefExistsCondition {
+                group: 1,
+                relative_recursion_level: None
+            }),
             true_branch: Box::new(make_literal("a")),
             false_branch: Box::new(Expr::Empty)
         }
@@ -2376,7 +2395,10 @@ mod tests {
     fn test_children_iter_triple() {
         // Conditional should return three children
         let expr = Expr::Conditional {
-            condition: Box::new(Expr::BackrefExistsCondition(1)),
+            condition: Box::new(Expr::BackrefExistsCondition {
+                group: 1,
+                relative_recursion_level: None,
+            }),
             true_branch: Box::new(make_literal("a")),
             false_branch: Box::new(make_literal("b")),
         };

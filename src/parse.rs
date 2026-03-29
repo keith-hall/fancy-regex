@@ -210,7 +210,7 @@ impl<'a> Parser<'a> {
             Expr::Assertion(_) => !self.flag(FLAG_ONIGURUMA_MODE),
             Expr::KeepOut => false,
             Expr::ContinueFromPreviousMatchEnd => false,
-            Expr::BackrefExistsCondition(_) => false,
+            Expr::BackrefExistsCondition { .. } => false,
             Expr::BacktrackingControlVerb(_) => false,
             _ => true,
         }
@@ -391,10 +391,14 @@ impl<'a> Parser<'a> {
         self.numeric_capture_group_references = true;
         Ok((
             end,
-            Expr::Backref {
-                group,
-                casei: self.flag(FLAG_CASEI),
-            },
+            Expr::AstNode(
+                AstNode::Backref {
+                    target: CaptureGroupTarget::ByNumber(group),
+                    casei: self.flag(FLAG_CASEI),
+                    relative_recursion_level: None,
+                },
+                ix,
+            ),
         ))
     }
 
@@ -987,10 +991,6 @@ impl<'a> Parser<'a> {
     /// Parse the target of a backref-exists condition — e.g. `1`, `name`, `+1`, `-1` — from
     /// the delimited form used in `(?(...)...)`.  Returns an `AstNode::BackrefExistsCondition`
     /// expression on success.
-    ///
-    /// Unlike `parse_delimited_backref`, this rejects a non-empty id combined with a `+`/`-`
-    /// suffix (e.g. `1+0` or `name+2`) because that Oniguruma recursion-level syntax has no
-    /// meaning in a conditional context.
     fn parse_condition_target(
         &mut self,
         ix: usize,
@@ -1001,21 +1001,23 @@ impl<'a> Parser<'a> {
         if let Some(ParsedId { id, relative, skip }) =
             parse_id(&self.re[ix..], open, close, allow_relative)
         {
-            let target = if id.is_empty() && relative.is_some() {
-                // purely relative condition: `(?(-1)...)` or `(?(+2)...)`
-                CaptureGroupTarget::Relative(relative.unwrap())
-            } else if relative.is_some() {
-                // TODO: question this... including in the doc comment above the method
-                // non-empty id with a +/- suffix is not valid in a conditional
-                return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
+            let (target, relative_recursion_level) = if id.is_empty() && relative.is_some() {
+                // purely relative group reference: `(?(-1)...)` or `(?(+2)...)`
+                (CaptureGroupTarget::Relative(relative.unwrap()), None)
             } else if let Ok(num) = id.parse::<usize>() {
-                CaptureGroupTarget::ByNumber(num)
+                (CaptureGroupTarget::ByNumber(num), relative)
             } else {
-                CaptureGroupTarget::ByName(id.to_string())
+                (CaptureGroupTarget::ByName(id.to_string()), relative)
             };
             Ok((
                 ix + skip,
-                Expr::AstNode(AstNode::BackrefExistsCondition(target), ix),
+                Expr::AstNode(
+                    AstNode::BackrefExistsCondition {
+                        target,
+                        relative_recursion_level,
+                    },
+                    ix,
+                ),
             ))
         } else {
             Err(Error::ParseError(ix, ParseError::InvalidGroupName))
@@ -1049,7 +1051,7 @@ impl<'a> Parser<'a> {
             // directly; for the general parse_re path we require an expression.
             if matches!(
                 condition,
-                Expr::AstNode(AstNode::BackrefExistsCondition(_), _)
+                Expr::AstNode(AstNode::BackrefExistsCondition { .. }, _)
             ) {
                 let after = self.check_for_close_paren(end)?;
                 return Ok((after, condition));
@@ -1360,7 +1362,13 @@ impl Resolver {
                 } => {
                     // TODO: if multiple groups with the same name, return an Alt with all the backrefs
                     if let Some(resolved_group) = self.resolve_target(target, Some(*ix)) {
-                        self.backrefs.insert(resolved_group);
+                        // Protect the BitSet against unreasonably large group numbers: if the
+                        // number exceeds the total group count it is already invalid, so cap it
+                        // to total_groups + 1 as a sentinel. The analyzer will detect it as an
+                        // out-of-range backref without allocating memory proportional to the raw
+                        // value.
+                        self.backrefs
+                            .insert(resolved_group.min(self.total_groups + 1));
                         *expr = if let Some(relative_recursion_level) = *relative_recursion_level {
                             Expr::BackrefWithRelativeRecursionLevel {
                                 group: resolved_group,
@@ -1395,9 +1403,15 @@ impl Resolver {
                         *expr = Expr::SubroutineCall(resolved_group);
                     }
                 }
-                AstNode::BackrefExistsCondition(target) => {
+                AstNode::BackrefExistsCondition {
+                    target,
+                    relative_recursion_level,
+                } => {
                     if let Some(resolved_group) = self.resolve_target(target, None) {
-                        *expr = Expr::BackrefExistsCondition(resolved_group);
+                        *expr = Expr::BackrefExistsCondition {
+                            group: resolved_group,
+                            relative_recursion_level: *relative_recursion_level,
+                        };
                     } else {
                         return Err(Error::ParseError(*ix, ParseError::InvalidBackref));
                     }
@@ -1411,10 +1425,7 @@ impl Resolver {
                 }
                 Expr::Backref { group, .. }
                 | Expr::BackrefWithRelativeRecursionLevel { group, .. } => {
-                    // Protect BitSet against unreasonably large group numbers: cap to
-                    // total_groups + 1 so the analyzer can still report an out-of-range error
-                    // without allocating memory proportional to the (potentially huge) raw number.
-                    self.backrefs.insert((*group).min(self.total_groups + 1));
+                    self.backrefs.insert(*group);
                 }
                 _ => {}
             }
@@ -2714,7 +2725,10 @@ mod tests {
                     hi: 1,
                     greedy: true
                 },
-                Expr::BackrefExistsCondition(1)
+                Expr::BackrefExistsCondition {
+                    group: 1,
+                    relative_recursion_level: None
+                }
             ])
         );
         assert_eq!(
@@ -2726,24 +2740,41 @@ mod tests {
                     hi: 1,
                     greedy: true
                 },
-                Expr::BackrefExistsCondition(1)
+                Expr::BackrefExistsCondition {
+                    group: 1,
+                    relative_recursion_level: None
+                }
             ])
         );
     }
 
     #[test]
-    fn backref_exists_condition_with_recursion_level_suffix_rejected() {
-        // `(?(1+0)...)` looks like a conditional but `1+0` is a numeric id with a
-        // recursion-level suffix — that Oniguruma `\k<N+level>` syntax has no meaning
-        // in a conditional context and must be rejected.
-        assert_error(
+    fn backref_exists_condition_with_recursion_level_suffix() {
+        // `(?(1+0)b|c)` is a conditional that tests whether group 1 matched at relative
+        // recursion level 0.  The parser accepts it; compile rejects it as not yet supported.
+        // Named forms require delimiters: `(?(<n+0>)...)` or `(?('n+0')...)`.
+        for pattern in &[
             r"(a)(?(1+0)b|c)d",
-            "Parsing error at position 6: Could not parse group name",
-        );
-        assert_error(
-            r"(?<n>a)(?(n+0)b|c)d",
-            "Parsing error at position 10: Could not parse group name",
-        );
+            r"(?<n>a)(?(<n+0>)b|c)d",
+            r"(?<n>a)(?('n+0')b|c)d",
+        ] {
+            assert_eq!(
+                p(pattern),
+                Expr::Concat(vec![
+                    make_group(make_literal("a")),
+                    Expr::Conditional {
+                        condition: Box::new(Expr::BackrefExistsCondition {
+                            group: 1,
+                            relative_recursion_level: Some(0),
+                        }),
+                        true_branch: Box::new(make_literal("b")),
+                        false_branch: Box::new(make_literal("c")),
+                    },
+                    make_literal("d"),
+                ]),
+                "pattern: {pattern:?}",
+            );
+        }
     }
 
     #[test]
@@ -2837,7 +2868,10 @@ mod tests {
                     greedy: true
                 },
                 Expr::Conditional {
-                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    condition: Box::new(Expr::BackrefExistsCondition {
+                        group: 1,
+                        relative_recursion_level: None
+                    }),
                     true_branch: Box::new(make_literal("i")),
                     false_branch: Box::new(make_literal("x")),
                 },
@@ -2854,7 +2888,10 @@ mod tests {
                     greedy: true
                 },
                 Expr::Conditional {
-                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    condition: Box::new(Expr::BackrefExistsCondition {
+                        group: 1,
+                        relative_recursion_level: None
+                    }),
                     true_branch: Box::new(make_literal("i")),
                     false_branch: Box::new(Expr::Empty),
                 },
@@ -2871,7 +2908,10 @@ mod tests {
                     greedy: true
                 },
                 Expr::Conditional {
-                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    condition: Box::new(Expr::BackrefExistsCondition {
+                        group: 1,
+                        relative_recursion_level: None
+                    }),
                     true_branch: Box::new(Expr::Concat(
                         vec![make_literal("i"), make_literal("i"),]
                     )),
@@ -2893,7 +2933,10 @@ mod tests {
                     greedy: true
                 },
                 Expr::Conditional {
-                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    condition: Box::new(Expr::BackrefExistsCondition {
+                        group: 1,
+                        relative_recursion_level: None
+                    }),
                     true_branch: Box::new(Expr::Concat(
                         vec![make_literal("i"), make_literal("i"),]
                     )),
@@ -3043,7 +3086,10 @@ mod tests {
                 },
                 Expr::SubroutineCall(2),
                 Expr::Conditional {
-                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    condition: Box::new(Expr::BackrefExistsCondition {
+                        group: 1,
+                        relative_recursion_level: None
+                    }),
                     true_branch: Box::new(make_group(make_literal("b"))),
                     false_branch: Box::new(make_literal("c")),
                 }

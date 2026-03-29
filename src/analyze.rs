@@ -312,7 +312,7 @@ impl<'a> Analyzer<'a> {
                 hard = true;
                 const_size = true;
             }
-            Expr::BackrefExistsCondition(_) => {
+            Expr::BackrefExistsCondition { .. } => {
                 hard = true;
                 const_size = true;
             }
@@ -863,14 +863,14 @@ mod tests {
         let result = analyze(&tree, false);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(1))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(_))
         ));
 
         let tree = Expr::parse_tree(r"aaaa\2").unwrap();
         let result = analyze(&tree, false);
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(_))
         ));
     }
 
