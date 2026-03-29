@@ -864,8 +864,23 @@ fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Inf
     }
 }
 
+/// Options controlling how an analyzed expression is compiled into a VM program.
+#[derive(Debug)]
+pub struct CompileOptions {
+    /// Whether to emit the implicit `\O*?` prefix that advances past non-matching positions.
+    /// Pass `false` when the expression is already known to be anchored at the start.
+    pub anchored: bool,
+    /// Whether the expression contains subroutine calls, which require pre-populating the
+    /// group-info map to support forward references.
+    pub contains_subroutines: bool,
+}
+
 /// Compile the analyzed expressions into a program.
-pub fn compile(info: &Info<'_>, anchored: bool, contains_subroutines: bool) -> Result<Prog> {
+pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
+    let CompileOptions {
+        anchored,
+        contains_subroutines,
+    } = options;
     let mut c = Compiler::new(info.end_group());
 
     if contains_subroutines {
@@ -1118,7 +1133,13 @@ mod tests {
     fn other_backtracking_control_verbs_error() {
         let tree = Expr::parse_tree(r"(*ACCEPT)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1127,7 +1148,13 @@ mod tests {
 
         let tree = Expr::parse_tree(r"(*COMMIT)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1136,7 +1163,13 @@ mod tests {
 
         let tree = Expr::parse_tree(r"(*SKIP)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1145,7 +1178,13 @@ mod tests {
 
         let tree = Expr::parse_tree(r"(*PRUNE)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1162,7 +1201,13 @@ mod tests {
         ] {
             let tree = Expr::parse_tree(pattern).unwrap();
             let info = analyze(&tree, false).unwrap();
-            let result = compile(&info, false, tree.contains_subroutines);
+            let result = compile(
+                &info,
+                CompileOptions {
+                    anchored: false,
+                    contains_subroutines: tree.contains_subroutines,
+                },
+            );
             assert!(
                 result.is_err(),
                 "Expected compile error for {:?}, but got: {:?}",
@@ -1183,7 +1228,13 @@ mod tests {
         // Without the feature flag, variable-length lookbehinds should error
         let tree = Expr::parse_tree(r"(?<=ab+)x").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1192,7 +1243,13 @@ mod tests {
 
         let tree = Expr::parse_tree(r"(?<=\bab+)x").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1287,7 +1344,13 @@ mod tests {
         // the backref to a capture group inside the variable lookbehind makes the capture group hard
         let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
         let info = analyze(&tree, false).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1300,7 +1363,13 @@ mod tests {
         // Test that absent repeater returns feature not supported
         let tree = Expr::parse_tree(r"(?~abc)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1310,7 +1379,13 @@ mod tests {
         // Test that absent expression returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1320,7 +1395,13 @@ mod tests {
         // Test that absent stopper returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1330,7 +1411,13 @@ mod tests {
         // Test that range clear returns feature not supported
         let tree = Expr::parse_tree(r"(?~|)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true, tree.contains_subroutines);
+        let result = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        );
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1400,7 +1487,14 @@ mod tests {
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
         let info = analyze(&tree, true).unwrap();
-        let prog = compile(&info, true, tree.contains_subroutines).unwrap();
+        let prog = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+            },
+        )
+        .unwrap();
         prog.body
     }
 
