@@ -54,11 +54,8 @@ pub struct ExprTree {
 #[derive(Debug)]
 pub(crate) struct Parser<'a> {
     re: &'a str, // source
-    //backrefs: BitSet,
     flags: u32,
-    //named_groups: NamedGroups,
     numeric_capture_group_references: bool,
-    //resolve_required: bool,
     contains_subroutines: bool,
     self_recursive: bool,
 }
@@ -77,7 +74,6 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        //if p.resolve_required {
         let mut resolver = Resolver {
             named_groups: NamedGroups::default(),
             named_group_positions: NamedGroups::default(),
@@ -92,7 +88,6 @@ impl<'a> Parser<'a> {
         resolver.next_group_index = 1;
         resolver.curr_group = 0;
         resolver.resolve_capture_group_targets(&mut expr)?;
-        //}
 
         Ok(ExprTree {
             expr,
@@ -113,13 +108,9 @@ impl<'a> Parser<'a> {
 
         Parser {
             re,
-            //backrefs: Default::default(),
-            //named_groups: Default::default(),
             numeric_capture_group_references: false,
             flags,
-            //curr_group: 0,
             contains_subroutines: false,
-            //resolve_required: false,
             self_recursive: false,
         }
     }
@@ -392,101 +383,6 @@ impl<'a> Parser<'a> {
             Err(Error::ParseError(ix, ParseError::InvalidGroupName))
         }
     }
-
-    /*fn parse_named_subroutine_call(
-        &mut self,
-        ix: usize,
-        open: &str,
-        close: &str,
-        allow_relative: bool,
-    ) -> Result<(usize, Expr)> {
-        let NamedBackrefOrSubroutine {
-            ix: end,
-            group_ix,
-            group_name,
-            recursion_level,
-            was_numeric,
-        } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
-        if recursion_level.is_some() {
-            return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
-        }
-        if let Some(group) = group_ix {
-            self.numeric_capture_group_references |= was_numeric;
-            self.contains_subroutines = true;
-            if group == 0 {
-                self.self_recursive = true;
-            }
-            return Ok((end, Expr::SubroutineCall(group)));
-        }
-        if let Some(group_name) = group_name {
-            // here the name was parsed but doesn't match a capture group we have already parsed
-            let expr = Expr::UnresolvedNamedSubroutineCall {
-                name: group_name.to_string(),
-                ix,
-            };
-            self.has_unresolved_subroutines = true;
-            self.contains_subroutines = true;
-            return Ok((end, expr));
-        }
-        unreachable!()
-    }*/
-
-    /*fn parse_named_backref_or_subroutine(
-        &self,
-        ix: usize,
-        open: &str,
-        close: &str,
-        allow_relative: bool,
-    ) -> Result<NamedBackrefOrSubroutine<'_>> {
-        if let Some(ParsedId {
-            id,
-            mut relative,
-            skip,
-        }) = parse_id(&self.re[ix..], open, close, allow_relative)
-        {
-            let group_number = id.parse::<usize>();
-
-            let group = if let Ok(group) = group_number {
-                Some(group)
-            } else if let Some(group) = self.named_groups.get(id) {
-                Some(*group)
-            } else if let Some(relative_group) = relative {
-                if id.is_empty() {
-                    relative = None;
-                    self.curr_group.checked_add_signed(if relative_group < 0 {
-                        relative_group + 1
-                    } else {
-                        relative_group
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            if let Some(group) = group {
-                Ok(NamedBackrefOrSubroutine {
-                    ix: ix + skip,
-                    group_ix: Some(group),
-                    group_name: None,
-                    recursion_level: relative,
-                    was_numeric: group_number.is_ok(),
-                })
-            } else {
-                // here the name was parsed but doesn't match a capture group we have already parsed
-                Ok(NamedBackrefOrSubroutine {
-                    ix: ix + skip,
-                    group_ix: None,
-                    group_name: Some(id),
-                    recursion_level: relative,
-                    was_numeric: false,
-                })
-            }
-        } else {
-            // in this case the name can't be parsed
-            Err(Error::ParseError(ix, ParseError::InvalidGroupName))
-        }
-    }*/
 
     fn parse_numbered_backref(&mut self, ix: usize) -> Result<(usize, Expr)> {
         let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
@@ -1391,7 +1287,6 @@ impl Resolver {
                         self.next_group_index += 1;
                     }
 
-                    //let resolved_inner = self.resolve_groups(&mut *inner);
                     self.resolve_groups(&mut *inner);
 
                     // If we have a group index, create a capturing group
