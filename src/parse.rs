@@ -1362,13 +1362,13 @@ impl Resolver {
                 } => {
                     // TODO: if multiple groups with the same name, return an Alt with all the backrefs
                     if let Some(resolved_group) = self.resolve_target(target, Some(*ix)) {
-                        // Protect the BitSet against unreasonably large group numbers: if the
-                        // number exceeds the total group count it is already invalid, so cap it
-                        // to total_groups + 1 as a sentinel. The analyzer will detect it as an
-                        // out-of-range backref without allocating memory proportional to the raw
-                        // value.
-                        self.backrefs
-                            .insert(resolved_group.min(self.total_groups + 1));
+                        // Validate against the known total group count before inserting into the
+                        // BitSet: an out-of-range number would both be invalid and could allocate
+                        // memory proportional to the raw value.
+                        if resolved_group > self.total_groups {
+                            return Err(Error::ParseError(*ix, ParseError::InvalidBackref));
+                        }
+                        self.backrefs.insert(resolved_group);
                         *expr = if let Some(relative_recursion_level) = *relative_recursion_level {
                             Expr::BackrefWithRelativeRecursionLevel {
                                 group: resolved_group,
@@ -2554,14 +2554,34 @@ mod tests {
 
     #[test]
     fn invalid_backref() {
-        // Only syntactic tests (non-decimal or number overflow); see tests in the analyze module
-        // for out-of-range group number validation.
+        // Non-decimal or number overflow: syntactic errors caught during parsing.
         assert_error(
             r".\18446744073709551616",
             "Parsing error at position 2: Invalid back reference",
         ); // overflows usize - not a valid integer
-        assert_error(r".\c", "Parsing error at position 1: Invalid escape: \\c");
-        // not decimal
+        assert_error(r".\c", "Parsing error at position 1: Invalid escape: \\c"); // not decimal
+
+        // Out-of-range group number: caught during the resolve pass (still a ParseError).
+        assert_error(
+            r"aa\1",
+            "Parsing error at position 3: Invalid back reference",
+        ); // no groups
+        assert_error(
+            r"aaaa\2",
+            "Parsing error at position 5: Invalid back reference",
+        ); // no groups
+        assert_error(
+            r"(a)\2",
+            "Parsing error at position 4: Invalid back reference",
+        ); // only 1 group
+        assert_error(
+            r"a(a)\2",
+            "Parsing error at position 5: Invalid back reference",
+        ); // only 1 group
+        assert_error(
+            r".\1999999999",
+            "Parsing error at position 2: Invalid back reference",
+        ); // valid usize but no such group
     }
 
     #[test]

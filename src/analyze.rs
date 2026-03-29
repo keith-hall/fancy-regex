@@ -845,36 +845,6 @@ mod tests {
     }
 
     #[test]
-    fn invalid_backref_no_captures() {
-        assert_invalid_backref(r"aa\1", false, 1);
-        // group 2 exceeds total_groups (0), so the sentinel value is inserted instead;
-        // the exact group number in the error is not meaningful here
-        let tree = Expr::parse_tree(r"aaaa\2").unwrap();
-        assert_matches!(
-            analyze(&tree, false).unwrap_err(),
-            Error::CompileError(ref e) if matches!(**e, CompileError::InvalidBackref(_))
-        );
-    }
-
-    #[test]
-    fn invalid_backref_unreasonably_large_number() {
-        // A group number that is a valid usize but far exceeds the number of groups in the
-        // pattern. The resolver must not insert this raw value into the BitSet (which would
-        // allocate memory proportional to the number); validation is deferred to the analyzer.
-        let tree = Expr::parse_tree(r".\1999999999").unwrap();
-        assert_matches!(
-            analyze(&tree, false).unwrap_err(),
-            Error::CompileError(ref e) if matches!(**e, CompileError::InvalidBackref(_))
-        );
-    }
-
-    #[test]
-    fn invalid_backref_with_captures() {
-        assert_invalid_backref(r"a(a)\2", false, 2);
-        assert_invalid_backref(r"a(a)\2\1", false, 2);
-    }
-
-    #[test]
     fn invalid_backref_with_captures_explict_capture_group_zero() {
         assert_invalid_backref(r"(a(b)\2)c", true, 2);
         assert_invalid_backref(r"(a(b)\1\2)c", true, 2);
