@@ -875,6 +875,24 @@ mod tests {
     }
 
     #[test]
+    fn invalid_backref_unreasonably_large_number() {
+        // A group number that is a valid usize but far exceeds the number of groups in the
+        // pattern. The resolver must not insert this raw value into the BitSet (which would
+        // allocate memory proportional to the number); validation is deferred to the analyzer.
+        let tree = Expr::parse_tree(r".\1999999999").unwrap();
+        let result = analyze(&tree, false);
+        assert!(
+            result.is_err(),
+            "Expected an error for out-of-range backref, got: {:?}",
+            result
+        );
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(_))
+        ));
+    }
+
+    #[test]
     fn invalid_backref_with_captures() {
         let tree = Expr::parse_tree(r"a(a)\2").unwrap();
         let result = analyze(&tree, false);

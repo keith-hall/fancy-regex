@@ -81,10 +81,12 @@ impl<'a> Parser<'a> {
             has_unnamed_groups: false,
             ignore_numbered_groups_if_named_groups_exist: false,
             next_group_index: 1,
+            total_groups: 0,
             curr_group: 0,
             backrefs: Default::default(),
         };
         resolver.resolve_groups(&mut expr);
+        resolver.total_groups = resolver.next_group_index - 1;
         resolver.next_group_index = 1;
         resolver.curr_group = 0;
         resolver.resolve_capture_group_targets(&mut expr)?;
@@ -224,7 +226,7 @@ impl<'a> Parser<'a> {
         let mut end = ix;
         let lo = if bytes[ix] == b',' {
             0
-        } else if let Some((next, lo)) = parse_decimal(self.re, ix) {
+        } else if let Some((next, lo)) = parse_usize(self.re, ix) {
             end = next;
             lo
         } else {
@@ -239,7 +241,7 @@ impl<'a> Parser<'a> {
             b'}' => lo,
             b',' => {
                 end = self.optional_whitespace(ix + 1)?; // past ','
-                if let Some((next, hi)) = parse_decimal(self.re, end) {
+                if let Some((next, hi)) = parse_usize(self.re, end) {
                     end = next;
                     hi
                 } else {
@@ -407,13 +409,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_numbered_backref_or_subroutine_call(&self, ix: usize) -> Result<(usize, usize)> {
-        if let Some((end, group)) = parse_decimal(self.re, ix) {
-            // protect BitSet against unreasonably large value
-            if group < self.re.len() / 2 {
-                return Ok((end, group));
-            }
-        }
-        Err(Error::ParseError(ix, ParseError::InvalidBackref))
+        parse_usize(self.re, ix).ok_or(Error::ParseError(ix, ParseError::InvalidBackref))
     }
 
     // ix points to \ character
@@ -1250,6 +1246,9 @@ pub struct Resolver {
     has_unnamed_groups: bool,
     ignore_numbered_groups_if_named_groups_exist: bool,
     next_group_index: usize,
+    /// Total number of capture groups in the pattern, set after the first resolution pass.
+    /// Used to guard `backrefs` BitSet insertions against unreasonably large group numbers.
+    total_groups: usize,
     /// The number of the most recently opened capture group, mirroring the old single-pass
     /// parser's `curr_group` counter. It is updated each time a `Group` node is entered
     /// during `resolve_capture_group_targets`, and never decremented, so that a relative
@@ -1412,7 +1411,10 @@ impl Resolver {
                 }
                 Expr::Backref { group, .. }
                 | Expr::BackrefWithRelativeRecursionLevel { group, .. } => {
-                    self.backrefs.insert(*group);
+                    // Protect BitSet against unreasonably large group numbers: cap to
+                    // total_groups + 1 so the analyzer can still report an out-of-range error
+                    // without allocating memory proportional to the (potentially huge) raw number.
+                    self.backrefs.insert((*group).min(self.total_groups + 1));
                 }
                 _ => {}
             }
@@ -1428,7 +1430,7 @@ impl Resolver {
 }
 
 // return (ix, value)
-pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
+pub(crate) fn parse_usize(s: &str, ix: usize) -> Option<(usize, usize)> {
     let mut end = ix;
     while end < s.len() && s.as_bytes()[end].is_ascii_digit() {
         end += 1;
@@ -1480,7 +1482,7 @@ pub(crate) fn parse_id<'a>(
     }
     let relative_sign = s.as_bytes()[id_end];
     if relative_sign == b'+' || relative_sign == b'-' {
-        if let Some((end, relative_amount)) = parse_decimal(s, id_end + 1) {
+        if let Some((end, relative_amount)) = parse_usize(s, id_end + 1) {
             if s[end..].starts_with(close) {
                 if relative_amount == 0 && id_len == 0 {
                     return None;
@@ -2541,21 +2543,14 @@ mod tests {
 
     #[test]
     fn invalid_backref() {
-        // only syntactic tests; see similar test in analyze module
+        // Only syntactic tests (non-decimal or number overflow); see tests in the analyze module
+        // for out-of-range group number validation.
         assert_error(
             r".\18446744073709551616",
             "Parsing error at position 2: Invalid back reference",
-        ); // unreasonably large number
-        assert_error(r".\c", "Parsing error at position 1: Invalid escape: \\c"); // not decimal
-
-        assert_error(
-            r"a\1",
-            "Parsing error at position 2: Invalid back reference",
-        ); // invalid back reference according to regex length - not long enough to contain that many paren pairs
-        assert_error(
-            r"(a)\2",
-            "Parsing error at position 4: Invalid back reference",
-        ); // invalid back reference according to regex length - not long enough to contain that many paren pairs
+        ); // overflows usize - not a valid integer
+        assert_error(r".\c", "Parsing error at position 1: Invalid escape: \\c");
+        // not decimal
     }
 
     #[test]
