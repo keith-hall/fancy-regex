@@ -765,6 +765,13 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
     } else {
         tree.total_groups
     };
+    // Out-of-range group numbers are not in the BitSet (to avoid huge allocations), so check the
+    // dedicated field first.
+    if let Some(group) = tree.out_of_range_backref {
+        return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
+            group,
+        ))));
+    }
     for group in tree.backrefs.iter() {
         if group < start_group || group > max_valid_group {
             return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(

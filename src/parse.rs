@@ -52,6 +52,10 @@ pub struct ExprTree {
     /// Total number of capture groups in the pattern, as counted by the resolver.
     /// Used by the analyzer to validate that backreferences refer to groups that exist.
     pub(crate) total_groups: usize,
+    /// The first backreference group number that exceeds `total_groups`, if any.
+    /// Such numbers are not inserted into `backrefs` (to avoid allocating memory proportional
+    /// to an arbitrarily large value); the analyzer reads this field instead to report the error.
+    pub(crate) out_of_range_backref: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -85,6 +89,7 @@ impl<'a> Parser<'a> {
             ignore_numbered_groups_if_named_groups_exist: false,
             next_group_index: 1,
             total_groups: 0,
+            out_of_range_backref: None,
             curr_group: 0,
             backrefs: Default::default(),
         };
@@ -102,6 +107,7 @@ impl<'a> Parser<'a> {
             contains_subroutines: p.contains_subroutines,
             self_recursive: p.self_recursive,
             total_groups: resolver.total_groups,
+            out_of_range_backref: resolver.out_of_range_backref,
         })
     }
 
@@ -1255,6 +1261,9 @@ pub struct Resolver {
     /// Total number of capture groups in the pattern, set after the first resolution pass.
     /// Used to guard `backrefs` BitSet insertions against unreasonably large group numbers.
     total_groups: usize,
+    /// The first backreference group number that exceeds `total_groups`, if any. Such numbers
+    /// are not inserted into `backrefs` to avoid allocating memory proportional to the raw value.
+    out_of_range_backref: Option<usize>,
     /// The number of the most recently opened capture group, mirroring the old single-pass
     /// parser's `curr_group` counter. It is updated each time a `Group` node is entered
     /// during `resolve_capture_group_targets`, and never decremented, so that a relative
@@ -1366,7 +1375,14 @@ impl Resolver {
                 } => {
                     // TODO: if multiple groups with the same name, return an Alt with all the backrefs
                     if let Some(resolved_group) = self.resolve_target(target, Some(*ix)) {
-                        self.backrefs.insert(resolved_group);
+                        if resolved_group > self.total_groups {
+                            // Don't insert into the BitSet: an out-of-range number could allocate
+                            // memory proportional to its raw value. Record the first occurrence so
+                            // the analyzer can report it.
+                            self.out_of_range_backref.get_or_insert(resolved_group);
+                        } else {
+                            self.backrefs.insert(resolved_group);
+                        }
                         *expr = if let Some(relative_recursion_level) = *relative_recursion_level {
                             Expr::BackrefWithRelativeRecursionLevel {
                                 group: resolved_group,

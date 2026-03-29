@@ -992,6 +992,7 @@ mod tests {
             contains_subroutines: false,
             self_recursive: false,
             total_groups: 0,
+            out_of_range_backref: None,
         };
         let info = analyze(&tree, false).unwrap();
 
