@@ -16,7 +16,7 @@
   // Compile failed: ParseError(2, InvalidEscape("\\c"))
   x2("q[\\c\\\\]", "q\034", 0, 2);
 
-  // Compile failed: ParseError(1, InvalidBackref)
+  // Compile failed: CompileError(InvalidBackref(17))
   x2("\\17", "\017", 0, 1);
 
   // No match found

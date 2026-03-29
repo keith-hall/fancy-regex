@@ -991,6 +991,7 @@ mod tests {
             numeric_capture_group_references: false,
             contains_subroutines: false,
             self_recursive: false,
+            total_groups: 0,
         };
         let info = analyze(&tree, false).unwrap();
 
