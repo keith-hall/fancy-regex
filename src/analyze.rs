@@ -809,9 +809,14 @@ mod tests {
     use matches::assert_matches;
 
     #[cfg_attr(feature = "track_caller", track_caller)]
-    fn assert_invalid_backref(result: crate::Result<super::Info<'_>>, expected_group: usize) {
+    fn assert_invalid_backref(
+        pattern: &str,
+        explicit_capture_group_0: bool,
+        expected_group: usize,
+    ) {
+        let tree = Expr::parse_tree(pattern).unwrap();
         assert_matches!(
-            result.unwrap_err(),
+            analyze(&tree, explicit_capture_group_0).unwrap_err(),
             Error::CompileError(ref e) if matches!(**e, CompileError::InvalidBackref(g) if g == expected_group)
         );
     }
@@ -832,25 +837,21 @@ mod tests {
 
     #[test]
     fn invalid_backref_zero() {
-        let tree = Expr::parse_tree(r".\0").unwrap();
-        assert_invalid_backref(analyze(&tree, false), 0);
-        assert_invalid_backref(analyze(&tree, true), 0);
-
-        let tree = Expr::parse_tree(r"(.)\0").unwrap();
-        assert_invalid_backref(analyze(&tree, false), 0);
-        assert_invalid_backref(analyze(&tree, true), 0);
-
-        let tree = Expr::parse_tree(r"(.)\0\1").unwrap();
-        assert_invalid_backref(analyze(&tree, false), 0);
+        assert_invalid_backref(r".\0", false, 0);
+        assert_invalid_backref(r".\0", true, 0);
+        assert_invalid_backref(r"(.)\0", false, 0);
+        assert_invalid_backref(r"(.)\0", true, 0);
+        assert_invalid_backref(r"(.)\0\1", false, 0);
     }
 
     #[test]
     fn invalid_backref_no_captures() {
-        assert_invalid_backref(analyze(&Expr::parse_tree(r"aa\1").unwrap(), false), 1);
+        assert_invalid_backref(r"aa\1", false, 1);
         // group 2 exceeds total_groups (0), so the sentinel value is inserted instead;
         // the exact group number in the error is not meaningful here
+        let tree = Expr::parse_tree(r"aaaa\2").unwrap();
         assert_matches!(
-            analyze(&Expr::parse_tree(r"aaaa\2").unwrap(), false).unwrap_err(),
+            analyze(&tree, false).unwrap_err(),
             Error::CompileError(ref e) if matches!(**e, CompileError::InvalidBackref(_))
         );
     }
@@ -869,16 +870,16 @@ mod tests {
 
     #[test]
     fn invalid_backref_with_captures() {
-        assert_invalid_backref(analyze(&Expr::parse_tree(r"a(a)\2").unwrap(), false), 2);
-        assert_invalid_backref(analyze(&Expr::parse_tree(r"a(a)\2\1").unwrap(), false), 2);
+        assert_invalid_backref(r"a(a)\2", false, 2);
+        assert_invalid_backref(r"a(a)\2\1", false, 2);
     }
 
     #[test]
     fn invalid_backref_with_captures_explict_capture_group_zero() {
-        assert_invalid_backref(analyze(&Expr::parse_tree(r"(a(b)\2)c").unwrap(), true), 2);
-        assert_invalid_backref(analyze(&Expr::parse_tree(r"(a(b)\1\2)c").unwrap(), true), 2);
-        assert_invalid_backref(analyze(&Expr::parse_tree(r"(a\1)b").unwrap(), true), 1);
-        assert_invalid_backref(analyze(&Expr::parse_tree(r"(a(b))\2").unwrap(), true), 2);
+        assert_invalid_backref(r"(a(b)\2)c", true, 2);
+        assert_invalid_backref(r"(a(b)\1\2)c", true, 2);
+        assert_invalid_backref(r"(a\1)b", true, 1);
+        assert_invalid_backref(r"(a(b))\2", true, 2);
     }
 
     #[test]
