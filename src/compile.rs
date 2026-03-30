@@ -150,11 +150,14 @@ impl<'a> Compiler<'a> {
                     self.compile_delegate(info)?;
                 }
             }
-            Expr::Any { newline: true } => {
+            Expr::Any { newline: true, .. } => {
                 self.b.add(Insn::Any);
             }
-            Expr::Any { newline: false } => {
-                self.b.add(Insn::AnyNoNL);
+            Expr::Any {
+                newline: false,
+                crlf,
+            } => {
+                self.b.add(Insn::AnyNoNL { crlf });
             }
             Expr::GeneralNewline { unicode } => {
                 self.compile_general_newline(unicode)?;
@@ -1222,7 +1225,7 @@ mod tests {
 
         assert_matches!(prog[0], SaveCaptureGroupStart(0));
         assert_matches!(prog[1], SaveCaptureGroupStart(1));
-        assert_matches!(prog[2], AnyNoNL);
+        assert_matches!(prog[2], AnyNoNL { .. });
         assert_matches!(prog[3], Save(3));
         assert_matches!(prog[4], Lit(ref l) if l == "b");
         assert_matches!(prog[5], Split(4, 6));
@@ -1361,7 +1364,7 @@ mod tests {
         assert_matches!(prog[0], SaveCaptureGroupStart(0));
         assert_delegate_insn(&prog[1], "(.)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[2], SaveCaptureGroupStart(1));
-        assert_matches!(prog[3], AnyNoNL);
+        assert_matches!(prog[3], AnyNoNL { .. });
         assert_matches!(prog[4], Save(3));
         assert_matches!(prog[5], Save(1));
         assert_matches!(prog[6], End);
@@ -1375,7 +1378,7 @@ mod tests {
 
         assert_matches!(prog[0], SaveCaptureGroupStart(0));
         assert_matches!(prog[1], SaveCaptureGroupStart(1));
-        assert_matches!(prog[2], AnyNoNL);
+        assert_matches!(prog[2], AnyNoNL { .. });
         assert_matches!(prog[3], Save(3));
         assert_delegate_insn(&prog[4], "(.)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[5], Save(1));

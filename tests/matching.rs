@@ -333,6 +333,42 @@ fn general_newline_not_in_character_class() {
     assert_no_match(r"[\R]", "\r\n");
 }
 
+#[test]
+fn crlf_flag_multiline() {
+    // (?mR) treats \r\n as a single line ending for ^ and $
+    assert_match(r"(?mR)^test$", "test");
+    assert_match(r"(?mR)^test$", "\r\ntest\r\n");
+    assert_match(r"(?mR)^test$", "test\r\n");
+    assert_match(r"(?mR)^test$", "\r\ntest");
+    // In CRLF mode bare \r is also treated as a line ending
+    assert_match(r"(?mR)^test$", "\rtest\r");
+    // ^ should not match between \r and \n (they form a single unit)
+    assert_no_match(r"(?mR)^\ntest$", "\r\ntest");
+    // In non-CRLF multiline mode, \r is not a line ending
+    assert_no_match(r"(?m)^test$", "\rtest\r");
+    // Works with a lookahead (hard/fancy regex)
+    assert_match(r"(?mR)(?=^test$)", "\r\ntest\r\n");
+}
+
+#[test]
+fn crlf_flag_dot() {
+    // Without CRLF: dot skips \n but matches \r
+    assert_match(".", "\r");
+    assert_no_match(".", "\n");
+    // With CRLF: dot skips both \r and \n
+    assert_no_match(r"(?R).", "\r");
+    assert_no_match(r"(?R).", "\n");
+    assert_match(r"(?R).", "a");
+    // With dotall: dot matches everything regardless of CRLF
+    assert_match(r"(?s).", "\r");
+    assert_match(r"(?s).", "\n");
+    assert_match(r"(?Rs).", "\r");
+    assert_match(r"(?Rs).", "\n");
+    // CRLF dot in a hard/fancy regex (lookahead) context
+    assert_no_match(r"(?R)(?=.)\r", "\r");
+    assert_match(r"(?R)(?=.)a", "a");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);

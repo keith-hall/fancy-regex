@@ -266,13 +266,15 @@ impl<'a> Parser<'a> {
                 ix + 1,
                 Expr::Any {
                     newline: self.flag(FLAG_DOTNL),
+                    crlf: self.flag(FLAG_CRLF),
                 },
             )),
             b'^' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    // TODO: support crlf flag
-                    Expr::Assertion(Assertion::StartLine { crlf: false })
+                    Expr::Assertion(Assertion::StartLine {
+                        crlf: self.flag(FLAG_CRLF),
+                    })
                 } else {
                     Expr::Assertion(Assertion::StartText)
                 },
@@ -280,8 +282,9 @@ impl<'a> Parser<'a> {
             b'$' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    // TODO: support crlf flag
-                    Expr::Assertion(Assertion::EndLine { crlf: false })
+                    Expr::Assertion(Assertion::EndLine {
+                        crlf: self.flag(FLAG_CRLF),
+                    })
                 } else {
                     Expr::Assertion(Assertion::EndText)
                 },
@@ -603,9 +606,21 @@ impl<'a> Parser<'a> {
                 },
             )
         } else if b == b'O' && !in_class {
-            (end, Expr::Any { newline: true })
+            (
+                end,
+                Expr::Any {
+                    newline: true,
+                    crlf: self.flag(FLAG_CRLF),
+                },
+            )
         } else if b == b'N' && !in_class {
-            (end, Expr::Any { newline: false })
+            (
+                end,
+                Expr::Any {
+                    newline: false,
+                    crlf: self.flag(FLAG_CRLF),
+                },
+            )
         } else if b == b'g' && !in_class {
             if end == self.re.len() {
                 return Err(Error::ParseError(
@@ -999,6 +1014,7 @@ impl<'a> Parser<'a> {
             match b {
                 b'i' => self.update_flag(FLAG_CASEI, neg),
                 b'm' => self.update_flag(FLAG_MULTI, neg),
+                b'R' => self.update_flag(FLAG_CRLF, neg),
                 b's' => self.update_flag(FLAG_DOTNL, neg),
                 b'U' => self.update_flag(FLAG_SWAP_GREED, neg),
                 b'x' => self.update_flag(FLAG_IGNORE_SPACE, neg),
@@ -1514,8 +1530,34 @@ mod tests {
 
     #[test]
     fn any() {
-        assert_eq!(p("."), Expr::Any { newline: false });
-        assert_eq!(p("(?s:.)"), Expr::Any { newline: true });
+        assert_eq!(
+            p("."),
+            Expr::Any {
+                newline: false,
+                crlf: false
+            }
+        );
+        assert_eq!(
+            p("(?s:.)"),
+            Expr::Any {
+                newline: true,
+                crlf: false
+            }
+        );
+        assert_eq!(
+            p("(?R:.)"),
+            Expr::Any {
+                newline: false,
+                crlf: true
+            }
+        );
+        assert_eq!(
+            p("(?Rs:.)"),
+            Expr::Any {
+                newline: true,
+                crlf: true
+            }
+        );
     }
 
     #[test]
@@ -2016,7 +2058,10 @@ mod tests {
         assert_eq!(
             tree.expr,
             Expr::Concat(vec![
-                make_group(Expr::Any { newline: false }),
+                make_group(Expr::Any {
+                    newline: false,
+                    crlf: false
+                }),
                 Expr::Backref {
                     group: 1,
                     casei: false,
@@ -2032,7 +2077,10 @@ mod tests {
         assert_eq!(
             tree.expr,
             Expr::Concat(vec![
-                make_group(Expr::Any { newline: false }),
+                make_group(Expr::Any {
+                    newline: false,
+                    crlf: false
+                }),
                 Expr::Backref {
                     group: 1,
                     casei: false,
@@ -2049,7 +2097,10 @@ mod tests {
             tree.expr,
             Expr::Concat(vec![
                 make_group(make_literal("a")),
-                make_group(Expr::Any { newline: false }),
+                make_group(Expr::Any {
+                    newline: false,
+                    crlf: false
+                }),
                 Expr::Backref {
                     group: 2,
                     casei: false,
@@ -2068,7 +2119,10 @@ mod tests {
                     group: 2,
                     casei: false,
                 },
-                make_group(Expr::Any { newline: false }),
+                make_group(Expr::Any {
+                    newline: false,
+                    crlf: false
+                }),
             ])
         );
         // this doesn't count as a numeric reference
@@ -2139,9 +2193,15 @@ mod tests {
                 Expr::Assertion(Assertion::StartText),
                 make_group(Expr::Alt(vec![
                     Expr::Empty,
-                    Expr::Any { newline: false },
+                    Expr::Any {
+                        newline: false,
+                        crlf: false
+                    },
                     Expr::Concat(vec![
-                        make_group(Expr::Any { newline: false }),
+                        make_group(Expr::Any {
+                            newline: false,
+                            crlf: false
+                        }),
                         Expr::SubroutineCall(1),
                         Expr::BackrefWithRelativeRecursionLevel {
                             group: 2,
@@ -2161,7 +2221,10 @@ mod tests {
             p(r"(a)(.)\g<-1>"),
             Expr::Concat(vec![
                 make_group(make_literal("a")),
-                make_group(Expr::Any { newline: false }),
+                make_group(Expr::Any {
+                    newline: false,
+                    crlf: false
+                }),
                 Expr::SubroutineCall(2),
             ])
         );
@@ -2171,7 +2234,10 @@ mod tests {
             Expr::Concat(vec![
                 make_group(make_literal("a")),
                 Expr::SubroutineCall(2),
-                make_group(Expr::Any { newline: false }),
+                make_group(Expr::Any {
+                    newline: false,
+                    crlf: false
+                }),
             ])
         );
 
@@ -2215,20 +2281,44 @@ mod tests {
 
     #[test]
     fn flag_state() {
-        assert_eq!(p("(?s)."), Expr::Any { newline: true });
-        assert_eq!(p("(?s:(?-s:.))"), Expr::Any { newline: false });
+        assert_eq!(
+            p("(?s)."),
+            Expr::Any {
+                newline: true,
+                crlf: false
+            }
+        );
+        assert_eq!(
+            p("(?s:(?-s:.))"),
+            Expr::Any {
+                newline: false,
+                crlf: false
+            }
+        );
         assert_eq!(
             p("(?s:.)."),
             Expr::Concat(vec![
-                Expr::Any { newline: true },
-                Expr::Any { newline: false },
+                Expr::Any {
+                    newline: true,
+                    crlf: false
+                },
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
             ])
         );
         assert_eq!(
             p("(?:(?s).)."),
             Expr::Concat(vec![
-                Expr::Any { newline: true },
-                Expr::Any { newline: false },
+                Expr::Any {
+                    newline: true,
+                    crlf: false
+                },
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
             ])
         );
     }
@@ -2244,6 +2334,27 @@ mod tests {
         assert_eq!(
             p("(?m:$)"),
             Expr::Assertion(Assertion::EndLine { crlf: false })
+        );
+    }
+
+    #[test]
+    fn flag_crlf() {
+        assert_eq!(
+            p("(?mR:^)"),
+            Expr::Assertion(Assertion::StartLine { crlf: true })
+        );
+        assert_eq!(
+            p("(?Rm:^)"),
+            Expr::Assertion(Assertion::StartLine { crlf: true })
+        );
+        assert_eq!(
+            p("(?mR:$)"),
+            Expr::Assertion(Assertion::EndLine { crlf: true })
+        );
+        // Negating R reverts to LF-only
+        assert_eq!(
+            p("(?mR)(?-R:^)"),
+            Expr::Assertion(Assertion::StartLine { crlf: false })
         );
     }
 
@@ -2889,9 +3000,15 @@ mod tests {
                 Expr::Assertion(Assertion::StartText,),
                 make_group(Expr::Alt(vec![
                     Expr::Empty,
-                    Expr::Any { newline: false },
+                    Expr::Any {
+                        newline: false,
+                        crlf: false
+                    },
                     Expr::Concat(vec![
-                        make_group(Expr::Any { newline: false },),
+                        make_group(Expr::Any {
+                            newline: false,
+                            crlf: false
+                        },),
                         Expr::SubroutineCall(1,),
                         Expr::Backref {
                             group: 2,
@@ -3112,7 +3229,10 @@ mod tests {
         assert_eq!(
             expr,
             make_group(Expr::Repeat {
-                child: Box::new(Expr::Any { newline: true }),
+                child: Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }),
                 lo: 0,
                 hi: usize::MAX,
                 greedy: true
@@ -3130,7 +3250,10 @@ mod tests {
         assert_eq!(
             expr,
             make_group(Expr::Repeat {
-                child: Box::new(Expr::Any { newline: true }),
+                child: Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }),
                 lo: 0,
                 hi: usize::MAX,
                 greedy: true
@@ -3149,7 +3272,10 @@ mod tests {
             expr,
             Expr::Concat(vec![
                 make_group(Expr::Repeat {
-                    child: Box::new(Expr::Any { newline: true }),
+                    child: Box::new(Expr::Any {
+                        newline: true,
+                        crlf: false
+                    }),
                     lo: 0,
                     hi: usize::MAX,
                     greedy: true
