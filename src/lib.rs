@@ -1454,6 +1454,10 @@ pub enum Expr {
     Any {
         /// Whether it also matches newlines or not
         newline: bool,
+        /// Whether CRLF mode is active (treat `\r\n` as a line ending unit)
+        ///
+        /// When `true` and `newline` is `false`, `.` does not match `\r` or `\n`.
+        crlf: bool,
     },
     /// An assertion
     Assertion(Assertion),
@@ -1895,7 +1899,12 @@ impl Expr {
     pub fn to_str(&self, buf: &mut String, precedence: u8) {
         match *self {
             Expr::Empty => (),
-            Expr::Any { newline } => buf.push_str(if newline { "(?s:.)" } else { "." }),
+            Expr::Any { newline, crlf } => buf.push_str(match (newline, crlf) {
+                (true, false) => "(?s:.)",
+                (true, true) => "(?Rs:.)",
+                (false, false) => ".",
+                (false, true) => "(?R:.)",
+            }),
             Expr::Literal { ref val, casei } => {
                 if casei {
                     buf.push_str("(?i:");
@@ -2235,8 +2244,16 @@ mod tests {
     fn test_is_leaf_node_leaf_nodes() {
         // Test all leaf node variants
         assert!(Expr::Empty.is_leaf_node());
-        assert!(Expr::Any { newline: false }.is_leaf_node());
-        assert!(Expr::Any { newline: true }.is_leaf_node());
+        assert!(Expr::Any {
+            newline: false,
+            crlf: false
+        }
+        .is_leaf_node());
+        assert!(Expr::Any {
+            newline: true,
+            crlf: false
+        }
+        .is_leaf_node());
         assert!(Expr::Assertion(crate::Assertion::StartText).is_leaf_node());
         assert!(Expr::Literal {
             val: "test".to_string(),
@@ -2302,7 +2319,10 @@ mod tests {
         assert!(!Expr::Absent(Absent::Expression {
             absent: Box::new(make_literal("/*")),
             exp: Box::new(Expr::Repeat {
-                child: Box::new(Expr::Any { newline: true }),
+                child: Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false,
+                }),
                 lo: 0,
                 hi: usize::MAX,
                 greedy: true
@@ -2370,7 +2390,10 @@ mod tests {
         let expr = Expr::Absent(Absent::Expression {
             absent: Box::new(make_literal("/*")),
             exp: Box::new(Expr::Repeat {
-                child: Box::new(Expr::Any { newline: true }),
+                child: Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false,
+                }),
                 lo: 0,
                 hi: usize::MAX,
                 greedy: true,
