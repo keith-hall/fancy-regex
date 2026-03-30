@@ -1687,4 +1687,31 @@ mod tests {
         assert_eq!(info.children[4].start_group(), 6);
         assert_eq!(info.children[4].end_group(), 6);
     }
+
+    #[test]
+    fn define_group_is_hard_zero_size() {
+        // A DEFINE block should be analyzed as: min_size=0, const_size=true, hard=true
+        let tree = Expr::parse_tree(r"(?(DEFINE)(?<word>\w+))").unwrap();
+        let info = analyze(&tree, false).unwrap();
+
+        assert!(matches!(info.expr, Expr::DefineGroup { .. }));
+        assert_eq!(info.min_size, 0);
+        assert!(info.const_size);
+        assert!(info.hard);
+    }
+
+    #[test]
+    fn define_group_assigns_group_numbers() {
+        // Groups inside a DEFINE block should still be assigned group numbers,
+        // so that subroutine calls can reference them.
+        let tree = Expr::parse_tree(r"(?(DEFINE)(?<first>a)(?<second>b))").unwrap();
+        let info = analyze(&tree, false).unwrap();
+
+        // The DEFINE block itself has min_size 0
+        assert_eq!(info.min_size, 0);
+        assert!(info.const_size);
+        // The definitions child: a Concat of two groups (groups 1 and 2)
+        assert_eq!(info.children[0].start_group(), 1);
+        assert_eq!(info.children[0].end_group(), 3);
+    }
 }
