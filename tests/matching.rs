@@ -742,3 +742,30 @@ fn test_forward_refrence_subroutine_zero_repetition_capture_group() {
     // This has a forward reference to group n, which is defined as . with {0} repetition
     assert_match(r"\g<n>(?<n>.){0}", "X");
 }
+
+#[test]
+fn test_define_group_subroutine_call() {
+    // Basic DEFINE block: the definition does not match, the subroutine call does
+    assert_match(r"(?(DEFINE)(?<word>\w+))\g<word>", "hello");
+    assert_no_match(r"^(?(DEFINE)(?<word>\w+))\g<word>$", "hello world");
+}
+
+#[test]
+fn test_define_group_multiple_definitions() {
+    // DEFINE block with multiple named groups used as subroutines
+    assert_match(
+        r"^(?(DEFINE)(?<year>\d{4})(?<month>\d{2})(?<day>\d{2}))\g<year>-\g<month>-\g<day>$",
+        "2024-03-17",
+    );
+    assert_no_match(
+        r"^(?(DEFINE)(?<year>\d{4})(?<month>\d{2})(?<day>\d{2}))\g<year>-\g<month>-\g<day>$",
+        "24-03-17",
+    );
+}
+
+#[test]
+fn test_define_group_does_not_consume_input() {
+    // The DEFINE block itself must not consume any input; only the subroutine call does
+    assert_match(r"^(?(DEFINE)(?<digit>\d))X\g<digit>Y$", "X5Y");
+    assert_no_match(r"^(?(DEFINE)(?<digit>\d))X\g<digit>Y$", "X Y");
+}

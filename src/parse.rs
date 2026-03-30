@@ -3676,4 +3676,43 @@ mod tests {
     fn parse_absent_range_clear() {
         assert_eq!(p(r"(?~|)"), Expr::Absent(Absent::Clear));
     }
+
+    #[test]
+    fn define_group() {
+        assert_eq!(
+            p(r"(?(DEFINE)(?<word>\w+))"),
+            Expr::DefineGroup {
+                definitions: Box::new(make_group(Expr::Repeat {
+                    child: Box::new(Expr::Delegate {
+                        inner: "\\w".to_string(),
+                        casei: false,
+                    }),
+                    lo: 1,
+                    hi: usize::MAX,
+                    greedy: true,
+                })),
+            }
+        );
+    }
+
+    #[test]
+    fn define_group_with_subroutine_call() {
+        assert_eq!(
+            p(r"(?(DEFINE)(?<word>\w+))\g<word>"),
+            Expr::Concat(vec![
+                Expr::DefineGroup {
+                    definitions: Box::new(make_group(Expr::Repeat {
+                        child: Box::new(Expr::Delegate {
+                            inner: "\\w".to_string(),
+                            casei: false,
+                        }),
+                        lo: 1,
+                        hi: usize::MAX,
+                        greedy: true,
+                    })),
+                },
+                Expr::SubroutineCall(1),
+            ])
+        );
+    }
 }

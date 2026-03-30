@@ -1389,6 +1389,15 @@ mod tests {
         assert_matches!(prog[6], End);
     }
 
+    #[test]
+    fn define_group_is_a_no_op() {
+        // A standalone DEFINE block should produce only the End instruction
+        let prog = compile_prog(r"(?(DEFINE)(?<word>\w+))");
+
+        assert_eq!(prog.len(), 1, "prog: {:?}", prog);
+        assert_matches!(prog[0], End);
+    }
+
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
         let info = analyze(&tree, true).unwrap();
