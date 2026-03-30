@@ -21,7 +21,7 @@
 //! A simple test app for exercising and debugging the regex engine.
 
 use fancy_regex::internal::{
-    analyze, can_compile_as_anchored, compile, optimize, run_trace, Insn, Prog,
+    analyze, can_compile_as_anchored, compile, optimize, run_trace, CompileInfo, Insn, Prog,
 };
 use fancy_regex::*;
 use std::env;
@@ -90,7 +90,14 @@ fn main() {
             let tree = Expr::parse_tree(&re).unwrap();
             let text = args.next().expect("expected text argument");
             let a = analyze(&tree, false).unwrap();
-            let p = compile(&a, true, tree.contains_subroutines).unwrap();
+            let p = compile(
+                &a,
+                CompileInfo {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                },
+            )
+            .unwrap();
             run_trace(&p, &text, 0).unwrap();
         } else if cmd == "graph" {
             let re = args.next().expect("expected regexp argument");
@@ -148,8 +155,10 @@ fn prog(re: &str) -> Prog {
     let result = analyze(&tree, requires_capture_group_fixup).expect("Expected analyze to succeed");
     compile(
         &result,
-        can_compile_as_anchored(&tree.expr),
-        tree.contains_subroutines,
+        CompileInfo {
+            anchored: can_compile_as_anchored(&tree.expr),
+            contains_subroutines: tree.contains_subroutines,
+        },
     )
     .expect("Expected compile to succeed")
 }
