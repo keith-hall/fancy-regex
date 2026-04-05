@@ -425,8 +425,9 @@ impl RegexOptions {
         let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
         let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
+        let crlf = Self::get_flag_value(self.syntaxc.get_crlf(), FLAG_CRLF);
 
-        insensitive | multiline | whitespace | dotnl | unicode | oniguruma_mode
+        insensitive | multiline | whitespace | dotnl | unicode | oniguruma_mode | crlf
     }
 }
 
@@ -488,6 +489,18 @@ impl RegexOptionsBuilder {
     /// except for a new line character.
     pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
         self.set_config(|x| x.dot_matches_new_line(yes))
+    }
+
+    /// Enable or disable the CRLF mode flag (`R`).
+    ///
+    /// When enabled, `\r\n` is treated as a single line ending for the purposes of
+    /// `^` and `$` in multi-line mode, instead of treating `\r` and `\n` as separate
+    /// line endings.
+    ///
+    /// By default, this is disabled. It may be selectively enabled in the regular
+    /// expression by using the `R` flag, e.g. `(?mR)` or `(?Rm)`.
+    pub fn crlf(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.crlf(yes))
     }
 
     /// Enable verbose mode in the regular expression.
@@ -670,6 +683,12 @@ impl RegexBuilder {
     /// See [`RegexOptionsBuilder::oniguruma_mode`]
     pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
         self.options.oniguruma_mode(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::crlf`]
+    pub fn crlf(&mut self, yes: bool) -> &mut Self {
+        self.options.crlf(yes);
         self
     }
 }
@@ -2128,7 +2147,8 @@ pub mod internal {
     pub use crate::compile::compile;
     pub use crate::optimize::optimize;
     pub use crate::parse_flags::{
-        FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
+        FLAG_CASEI, FLAG_CRLF, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE,
+        FLAG_UNICODE,
     };
     pub use crate::vm::{run_default, run_trace, Insn, Prog};
 }

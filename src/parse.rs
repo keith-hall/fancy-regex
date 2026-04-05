@@ -271,8 +271,9 @@ impl<'a> Parser<'a> {
             b'^' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    // TODO: support crlf flag
-                    Expr::Assertion(Assertion::StartLine { crlf: false })
+                    Expr::Assertion(Assertion::StartLine {
+                        crlf: self.flag(FLAG_CRLF),
+                    })
                 } else {
                     Expr::Assertion(Assertion::StartText)
                 },
@@ -280,8 +281,9 @@ impl<'a> Parser<'a> {
             b'$' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    // TODO: support crlf flag
-                    Expr::Assertion(Assertion::EndLine { crlf: false })
+                    Expr::Assertion(Assertion::EndLine {
+                        crlf: self.flag(FLAG_CRLF),
+                    })
                 } else {
                     Expr::Assertion(Assertion::EndText)
                 },
@@ -999,6 +1001,7 @@ impl<'a> Parser<'a> {
             match b {
                 b'i' => self.update_flag(FLAG_CASEI, neg),
                 b'm' => self.update_flag(FLAG_MULTI, neg),
+                b'R' => self.update_flag(FLAG_CRLF, neg),
                 b's' => self.update_flag(FLAG_DOTNL, neg),
                 b'U' => self.update_flag(FLAG_SWAP_GREED, neg),
                 b'x' => self.update_flag(FLAG_IGNORE_SPACE, neg),
@@ -2244,6 +2247,27 @@ mod tests {
         assert_eq!(
             p("(?m:$)"),
             Expr::Assertion(Assertion::EndLine { crlf: false })
+        );
+    }
+
+    #[test]
+    fn flag_crlf() {
+        assert_eq!(
+            p("(?mR:^)"),
+            Expr::Assertion(Assertion::StartLine { crlf: true })
+        );
+        assert_eq!(
+            p("(?Rm:^)"),
+            Expr::Assertion(Assertion::StartLine { crlf: true })
+        );
+        assert_eq!(
+            p("(?mR:$)"),
+            Expr::Assertion(Assertion::EndLine { crlf: true })
+        );
+        // Negating R reverts to LF-only
+        assert_eq!(
+            p("(?mR)(?-R:^)"),
+            Expr::Assertion(Assertion::StartLine { crlf: false })
         );
     }
 
