@@ -69,6 +69,14 @@ With the absent repeater, the intention becomes a lot easier to understand - mat
 [*]{2}(?:In|Out)put:[*]{2}\n```(?~```)```
 ```
 
+Where it really shines is when you need more complicated expressions, like to match a variable number of backticks from the code fence boundaries, it becomes a lot easier to read than an expanded alternative which would avoid catastrophic backtracking.
+```regexp
+(?# NOTE: this ensures the absent operator matches at least 1 character because of the negative lookahead at the end of the capture group)
+(?<!`)(`{3,}(?!`))(?~\1)(\1)
+```
+
+TODO: add an doctest example, which would assert on the position of the capture groups.
+
 It also allows the engine to optimize it accordingly.
 
 ### Other ways of looking at it
