@@ -415,7 +415,8 @@ impl<'a> Compiler<'a> {
     /// conditional form: `(?((?!inner))\O|)*`
     ///
     /// This is a greedy loop that:
-    /// - When `inner` does not match at the current position: consumes one character (`\O`)
+    /// - When `inner` does not match at the current position: consumes one character (`\O`,
+    ///   which matches any character including newlines)
     /// - When `inner` matches: consumes nothing and exits the loop
     fn compile_hard_absent_repeater(&mut self, inner: &Info<'_>) -> Result<()> {
         let repeat = self.b.newsave();
@@ -1351,10 +1352,10 @@ mod tests {
         // Split (lookahead), Backref, FailNegativeLookAround, EndAtomic, Any, Jmp
         //
         // Use explicit_capture_group_0=false so that (\w) = group 1 and \1 refers to it
-        let tree = Expr::parse_tree(r"(\w)(?~\1)").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let tree = Expr::parse_tree(r"(\w)(?~\1)").expect("Failed to parse tree");
+        let info = analyze(&tree, false).expect("Failed to analyze tree");
         let prog = compile(&info, false, tree.contains_subroutines)
-            .unwrap()
+            .expect("Failed to compile program")
             .body;
 
         // The absent repeater body should contain these key structural instructions
