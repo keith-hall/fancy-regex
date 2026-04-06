@@ -759,3 +759,28 @@ fn test_forward_refrence_subroutine_zero_repetition_capture_group() {
     // This has a forward reference to group n, which is defined as . with {0} repetition
     assert_match(r"\g<n>(?<n>.){0}", "X");
 }
+
+#[test]
+fn absent_repeater_with_hard_inner_backref() {
+    // Hard absent repeater: (?~\1) where \1 is a backreference.
+    // The pattern matches: capture 1+ backticks, then absent-repeat while those backticks
+    // are absent, then match those backticks again as the closing delimiter.
+    assert_match(r"(`+)(?~\1)\1", "```code```");
+    assert_match(r"(`+)(?~\1)\1", "``code``");
+    assert_match(r"(`+)(?~\1)\1", "`code`");
+    // Require at least 3 backticks: "```code``" has no matching 3-backtick close, so no match
+    assert_no_match(r"^(`{3,})(?~\1)\1$", "```code``");
+    // No body between open/close with distinct content - just backticks alone doesn't open+close
+    assert_no_match(r"^(`{3,})(?~\1)\1$", "```");
+    // A 4-backtick fence can contain 3-backtick sequences
+    assert_match(r"^(`{3,})(?~\1)\1$", "````has ``` inside````");
+}
+
+#[test]
+fn absent_repeater_with_lookahead_inner() {
+    // Hard absent repeater: (?~(?=end)) where the inner is a lookahead (hard).
+    // This matches everything until "end" appears.
+    assert_match(r"(?~(?=end))end", "endend");
+    assert_match(r"(?~(?=end))end", "abcend");
+    assert_no_match(r"^(?~(?=end))$", "abcend");
+}
