@@ -1132,7 +1132,8 @@ fn build_seek_pattern_impl<'a>(
                 buf.push(')');
             }
         }
-        Expr::Backref { group, casei } => {
+        Expr::Backref { group, casei }
+        | Expr::BackrefWithRelativeRecursionLevel { group, casei, .. } => {
             // Inline the body of the referenced capture group, wrapping with (?i:...) when
             // the backref is case-insensitive so the approximation remains correct.
             //
@@ -1140,6 +1141,9 @@ fn build_seek_pattern_impl<'a>(
             // captured text, not a position, so anchors from the group definition do not hold
             // at the backref's position.  Dropping them (rather than the whole backref) gives
             // a tighter over-approximation.
+            //
+            // For BackrefWithRelativeRecursionLevel, the relative_level is ignored here —
+            // for seeking purposes, the group body is the same regardless of recursion level.
             //
             // If inlining is not possible (depth limit, group not in map), emit a permissive
             // placeholder so that no match positions are incorrectly skipped.
@@ -1326,7 +1330,7 @@ fn build_seek_pattern_impl<'a>(
         }
         // These variants cause a compile error during analysis and are therefore unreachable
         // after a successful `analyze()` call.
-        Expr::BackrefWithRelativeRecursionLevel { .. } | Expr::AstNode(..) => {
+        Expr::AstNode(..) => {
             unreachable!("unexpected expr variant after analysis")
         }
     }
