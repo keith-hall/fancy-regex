@@ -114,21 +114,29 @@ Insn::Seek { inner, .. } =>
     match inner.find_at(s, ix):
         None  => return Ok(None)          // no position could ever match; fail definitively
         Some(m) =>
-            if m.start() == ix:
-                // already at a valid position; proceed to the next instruction
-                pc += 1; continue
-            else:
-                // advance ix to the start of the seek match
-                // but first push a backtrack point so we can try the next position if this
-                // position fails.
-                push(pc, m.start() + 1)   // next seek attempt starts one past current seek match
-                ix = m.start()
-                pc += 1; continue
+            // Compute the next position to resume seeking from if this candidate fails.
+            // Empty seek matches must advance by at least one codepoint to avoid an infinite loop.
+            // All offsets must be codepoint-aligned — adding a flat +1 byte is wrong for
+            // multi-byte UTF-8 codepoints (e.g. `é` is 2 bytes, `中` is 3 bytes).
+            let next_seek_start = if m.start() == m.end() {
+                m.end() + codepoint_len_at(s, m.end())
+            } else {
+                m.start() + codepoint_len_at(s, m.start())
+            }
+            // Always push a backtrack point so that if the VM fails at this candidate position
+            // the Seek instruction is retried from the next potential position.
+            // This must happen even when m.start() == ix: without the push, a failure at ix
+            // would pop to an earlier entry and return None immediately, skipping all later
+            // candidate positions.
+            push(pc, next_seek_start)
+            ix = m.start()
+            match_attempt_start = ix    // needed for OPTION_FIND_NOT_EMPTY zero-length rejection
+            pc += 1; continue
 ```
 
-*False-positive handling:* when the VM fails at `ix = m.start()`, it pops to `(pc_seek, m.start() + 1)` and the `Seek` instruction is re-executed from one byte past the previous seek-match start, so it finds the next candidate position.
+*False-positive handling:* when the VM fails at `ix = m.start()`, it pops to `(pc_seek, next_seek_start)` and the `Seek` instruction is re-executed from one codepoint past the previous seek-match start, so it finds the next candidate position.
 
-*Empty-match handling:* The `Seek` instruction must not loop infinitely on zero-length seek matches. Before pushing the backtrack point, if `m.start() == m.end()`, the "next" seek offset is `m.end() + 1` (or one `codepoint_len` forward).
+*Empty-match handling:* handled uniformly above — the "next" seek offset advances by one codepoint past `m.end()` rather than `m.start()` to guarantee progress when the seek match is zero-width.
 
 ### Phase 3: Emitting `Seek` During Compilation
 
@@ -154,7 +162,7 @@ The `Seek` instruction takes over the role of `SplitUnanchored`: it advances `ix
 
 When `Seek` is not applicable (anchored patterns, or no useful seek pattern), the existing `SplitUnanchored` preamble is emitted unchanged.
 
-**Integration with `OPTION_FIND_NOT_EMPTY`:** If `find_not_empty` is set, the `Seek` instruction should record `match_attempt_start = ix` before proceeding (the same way `SplitUnanchored` does), so that zero-length match rejection still works.
+**Integration with `OPTION_FIND_NOT_EMPTY`:** The `Seek` instruction always records `match_attempt_start = ix` (after updating `ix` to the candidate position) before falling through to the next instruction — exactly the same assignment that `SplitUnanchored` performs. This is required for zero-length match rejection at `Insn::End` to work correctly regardless of where in the haystack the candidate appears. The pseudocode in Phase 2 shows this assignment explicitly.
 
 **Integration with `OPTION_SKIPPED_EMPTY_MATCH`:** The `Seek` instruction receives this flag in `option_flags`; when set and `ix == pos`, it should advance one code-point before seeking, mirroring the behaviour of `SplitUnanchored`.
 
@@ -183,12 +191,14 @@ For the MVP, the flag defaults to `false` so existing users are not affected. Th
 
 ### Phase 5: Seek State in the VM Run Loop
 
-The `Seek` instruction's backtrack point needs to know the correct next offset to try. The approach in Phase 2 (pushing `m.start() + 1` as the next `ix` for the `Seek` instruction) means the backtrack stack entry is `(pc_seek, ix_next)`. When the VM pops that entry:
+The `Seek` instruction's backtrack point needs to know the correct next offset to try. The approach in Phase 2 (pushing `next_seek_start` as the next `ix` for the `Seek` instruction) means the backtrack stack entry is `(pc_seek, ix_next)`. When the VM pops that entry:
 
 - `pc = pc_seek` (points to the `Seek` instruction again)
-- `ix = ix_next` (starts the next seek from one past the previous candidate)
+- `ix = ix_next` (starts the next seek from one codepoint past the previous candidate)
 
 The `Seek` instruction then searches for the next match of `inner` starting at the new `ix`. This is clean and reuses the existing backtracking machinery.
+
+**Stack-depth invariant and `\G` (`ContinueFromPreviousMatchEnd`) interaction:** The existing `\G` fast-exit path checks `state.stack.len() == 1` to detect that the only remaining backtrack entry is the one from `SplitUnanchored`, and returns `None` immediately to avoid scanning the rest of the haystack. Because the `Seek` instruction (like `SplitUnanchored`) always pushes exactly one base backtrack entry at the bottom of the stack, this invariant is preserved. The comment at that code site currently says *"The only item on the stack is from the `SplitUnanchored` instruction"* and should be updated to *"The only item on the stack is the base entry from the `SplitUnanchored` or `Seek` instruction"*.
 
 ### Phase 6: Interaction with `find_iter` / `captures_iter`
 
