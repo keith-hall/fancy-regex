@@ -1075,20 +1075,14 @@ pub(crate) fn run(
                     }
                 }
                 Insn::Seek(Seek { ref inner, .. }) => {
-                    // When skipping an empty match, start the seek one codepoint ahead to avoid
-                    // re-trying the position we just rejected.
-                    let seek_from = if option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 && ix == pos {
-                        if ix < s.len() {
-                            ix + codepoint_len_at(s, ix)
-                        } else {
-                            // Already at end; nothing can match.
-                            return Ok(None);
-                        }
-                    } else {
-                        ix
-                    };
+                    // A sentinel value greater than s.len() is pushed onto the backtrack stack
+                    // when the seek found a zero-width match at end-of-string.  On re-entry with
+                    // that sentinel, there are no more positions to try.
+                    if ix > s.len() {
+                        return Ok(None);
+                    }
 
-                    let input = Input::new(s).span(seek_from..s.len());
+                    let input = Input::new(s).span(ix..s.len());
                     match inner.search(&input) {
                         None => return Ok(None),
                         Some(m) => {
@@ -1099,10 +1093,11 @@ pub(crate) fn run(
                                 if m.end() < s.len() {
                                     m.end() + codepoint_len_at(s, m.end())
                                 } else {
-                                    // Already at the end: a subsequent seek will find nothing and
-                                    // return None; use s.len() as the retry position so the span
-                                    // is valid.
-                                    s.len()
+                                    // Zero-width match at end-of-string.  Push a sentinel value
+                                    // (s.len() + 1) so that if the main pattern fails and we
+                                    // backtrack here, the `ix > s.len()` guard above returns None
+                                    // immediately instead of looping.
+                                    s.len() + 1
                                 }
                             } else {
                                 m.start() + codepoint_len_at(s, m.start())

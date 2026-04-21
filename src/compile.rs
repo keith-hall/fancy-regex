@@ -900,11 +900,40 @@ fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Inf
     }
 }
 
+/// Returns `true` if the expression tree contains a `StartText` or `EndText` assertion anywhere.
+///
+/// This is used to decide whether it is safe to inline a group body when approximating a backref:
+/// text-anchor assertions in an inlined body would be evaluated at the wrong string position and
+/// could cause false negatives (missing valid match positions).
+fn expr_contains_positional_anchor(expr: &Expr) -> bool {
+    use crate::Assertion;
+    match expr {
+        // StartText (^), EndText ($), StartLine ((?m)^), EndLine ((?m)$) are positional anchors
+        // that depend on absolute position in the string.  When a group containing such anchors
+        // is inlined for a backref approximation, the anchors would be evaluated at the wrong
+        // position (the backref position rather than the original capture position), potentially
+        // producing false negatives.
+        Expr::Assertion(
+            Assertion::StartText
+            | Assertion::EndText
+            | Assertion::EndTextIgnoreTrailingNewlines
+            | Assertion::StartLine { .. }
+            | Assertion::EndLine { .. },
+        ) => true,
+        _ => expr
+            .children_iter()
+            .any(|child| expr_contains_positional_anchor(child)),
+    }
+}
+
 /// Write the seek-pattern approximation for `info` into `buf`.
 ///
 /// Easy (non-hard) subtrees are serialised verbatim via [`Expr::to_str`].
 /// Hard nodes are handled as follows:
-/// - `Backref` / `SubroutineCall`: inline the referenced group's body (up to `MAX_SUBROUTINE_RECURSION_DEPTH`).
+/// - `Backref` / `SubroutineCall`: inline the referenced group's body (up to `MAX_SUBROUTINE_RECURSION_DEPTH`),
+///   unless the body contains a positional anchor (`StartText`, `EndText`, `StartLine`, `EndLine`)
+///   — such anchors only hold at the original capture position, not the backref position, so
+///   inlining them would produce false negatives (the backref is dropped as an over-approximation).
 /// - `LookAround`, `KeepOut`, `ContinueFromPreviousMatchEnd`, `BacktrackingControlVerb`,
 ///   `BackrefExistsCondition`, `Absent`: dropped (emit nothing — safe over-approximation).
 /// - `AtomicGroup`: keep the contents, discard the atomicity wrapper.
@@ -912,7 +941,7 @@ fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Inf
 /// - `Conditional`: emit the union of the true and false branches.
 /// - `GeneralNewline`: replaced with an explicit alternation.
 /// - `Assertion`: anchors and word-boundary assertions are emitted; half-boundaries are
-///   approximated with `\b` (over-approximation).
+///   dropped (over-approximation — `\b` would be too restrictive).
 fn build_seek_pattern<'a>(
     info: &Info<'a>,
     group_info_map: &Map<usize, &'a Info<'a>>,
@@ -941,11 +970,12 @@ fn build_seek_pattern<'a>(
                 Assertion::EndLine { crlf: true } => buf.push_str("(?Rm:$)"),
                 Assertion::WordBoundary => buf.push_str(r"\b"),
                 Assertion::NotWordBoundary => buf.push_str(r"\B"),
-                // Half-boundaries: \< and \> — overapproximate with \b.
-                Assertion::LeftWordBoundary
-                | Assertion::LeftWordHalfBoundary
-                | Assertion::RightWordBoundary
-                | Assertion::RightWordHalfBoundary => buf.push_str(r"\b"),
+                // Full word boundaries: \< and \> — overapproximate with \b.
+                Assertion::LeftWordBoundary | Assertion::RightWordBoundary => buf.push_str(r"\b"),
+                // Half-boundaries (\b{start-half}, \b{end-half}) can match in positions where
+                // \b does not (e.g. before punctuation), so \b would be an under-approximation.
+                // Drop them (emit nothing) which is a safe over-approximation.
+                Assertion::LeftWordHalfBoundary | Assertion::RightWordHalfBoundary => {}
             }
         }
         Expr::Concat(_) => {
@@ -1011,18 +1041,43 @@ fn build_seek_pattern<'a>(
                 buf.push(')');
             }
         }
-        Expr::Backref { group, .. } => {
-            // Inline the body of the referenced capture group.
+        Expr::Backref { group, casei } => {
+            // Inline the body of the referenced capture group, wrapping with (?i:...) when
+            // the backref is case-insensitive so the approximation remains correct.
+            //
+            // If the group body contains a StartText/EndText anchor we skip inlining entirely:
+            // such anchors only hold at the original capture position and not at the backref
+            // position, so inlining them would produce false negatives.
             if depth < MAX_SUBROUTINE_RECURSION_DEPTH {
                 if let Some(group_info) = group_info_map.get(group) {
                     if !group_info.children.is_empty() {
-                        build_seek_pattern(
-                            &group_info.children[0],
-                            group_info_map,
-                            depth + 1,
-                            buf,
-                            precedence,
-                        );
+                        let child = &group_info.children[0];
+                        if !expr_contains_positional_anchor(child.expr) {
+                            if *casei {
+                                let mut inner = String::new();
+                                build_seek_pattern(
+                                    child,
+                                    group_info_map,
+                                    depth + 1,
+                                    &mut inner,
+                                    // Precedence 0 (alternation) so content inside (?i:...) is unambiguous.
+                                    0,
+                                );
+                                if !inner.is_empty() {
+                                    buf.push_str("(?i:");
+                                    buf.push_str(&inner);
+                                    buf.push(')');
+                                }
+                            } else {
+                                build_seek_pattern(
+                                    child,
+                                    group_info_map,
+                                    depth + 1,
+                                    buf,
+                                    precedence,
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -1060,30 +1115,61 @@ fn build_seek_pattern<'a>(
             }
         }
         Expr::Conditional { .. } => {
-            // Use the union of the true and false branches (children[1] and children[2]).
+            // Emit the union of (condition + true_branch) and (false_branch).
+            //
+            // Including the condition prefix in the true alternative ensures that consuming
+            // conditions (e.g. `(?(a)b|c)` where `a` is matched and consumed) are
+            // over-approximated correctly.  For zero-width conditions (e.g. backref-exists
+            // checks) the condition emits nothing and the result degenerates to
+            // `true_branch | false_branch`, preserving the original behaviour.
+            let mut cond_pat = String::new();
             let mut true_pat = String::new();
             let mut false_pat = String::new();
+            if info.children.len() >= 1 {
+                build_seek_pattern(&info.children[0], group_info_map, depth, &mut cond_pat, 2);
+            }
             if info.children.len() >= 2 {
-                build_seek_pattern(&info.children[1], group_info_map, depth, &mut true_pat, 1);
+                build_seek_pattern(&info.children[1], group_info_map, depth, &mut true_pat, 2);
             }
             if info.children.len() >= 3 {
                 build_seek_pattern(&info.children[2], group_info_map, depth, &mut false_pat, 1);
             }
-            match (true_pat.is_empty(), false_pat.is_empty()) {
+            // Build the "condition then true-branch" alternative.
+            let cond_true = if cond_pat.is_empty() {
+                true_pat.clone()
+            } else if true_pat.is_empty() {
+                cond_pat.clone()
+            } else {
+                format!("(?:{}{})", cond_pat, true_pat)
+            };
+            match (cond_true.is_empty(), false_pat.is_empty()) {
                 (true, true) => {}
                 (true, false) => buf.push_str(&false_pat),
-                (false, true) => buf.push_str(&true_pat),
+                (false, true) => buf.push_str(&cond_true),
                 (false, false) => {
                     if precedence > 0 {
                         buf.push_str("(?:");
                     }
-                    buf.push_str(&true_pat);
+                    buf.push_str(&cond_true);
                     buf.push('|');
                     buf.push_str(&false_pat);
                     if precedence > 0 {
                         buf.push(')');
                     }
                 }
+            }
+        }
+        // Absent repeater `(?~expr)` matches any content not containing `expr`.
+        // Approximate with `(?s:.*)` (any characters, including newline) since the repeater
+        // can consume an arbitrary number of characters.
+        Expr::Absent(Absent::Repeater(_)) => buf.push_str("(?s:.*)"),
+        // Absent expression `(?~|absent|exp)` matches `exp` subject to the absent constraint.
+        // Approximate by seeking only for `exp`, dropping the constraint — this is a safe
+        // over-approximation since any position where `exp` matches (ignoring the constraint)
+        // is a superset of positions where the full expression matches.
+        Expr::Absent(crate::Absent::Expression { .. }) => {
+            if info.children.len() >= 2 {
+                build_seek_pattern(&info.children[1], group_info_map, depth, buf, precedence);
             }
         }
         // Zero-width / control nodes — drop them.

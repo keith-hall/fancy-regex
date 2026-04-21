@@ -397,7 +397,7 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct RegexOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
@@ -406,6 +406,20 @@ struct RegexOptions {
     ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
     seek: bool,
+}
+
+impl Default for RegexOptions {
+    fn default() -> Self {
+        Self {
+            syntaxc: SyntaxConfig::default(),
+            delegate_size_limit: None,
+            delegate_dfa_size_limit: None,
+            oniguruma_mode: false,
+            ignore_numbered_groups_when_named_groups_exist: false,
+            hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
+            seek: true,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -620,7 +634,7 @@ impl RegexOptionsBuilder {
     /// The seek pattern is always a conservative over-approximation — it may report false-positive
     /// positions but will never skip a true match.
     ///
-    /// Default is `false`.
+    /// Default is `true`.
     pub fn seek(&mut self, yes: bool) -> &mut Self {
         self.options.seek = yes;
         self
