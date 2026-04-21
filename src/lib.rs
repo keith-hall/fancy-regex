@@ -57,6 +57,7 @@ mod optimize;
 mod parse;
 mod parse_flags;
 mod replacer;
+mod seek;
 mod vm;
 
 use crate::analyze::can_compile_as_anchored;
