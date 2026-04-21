@@ -96,6 +96,7 @@ fn main() {
                 CompileOptions {
                     anchored: true,
                     contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
                 },
             )
             .unwrap();
@@ -172,6 +173,7 @@ fn prog(re: &str) -> Prog {
         CompileOptions {
             anchored: can_compile_as_anchored(&tree.expr),
             contains_subroutines: tree.contains_subroutines,
+            ..CompileOptions::default()
         },
     )
     .expect("Expected compile to succeed")

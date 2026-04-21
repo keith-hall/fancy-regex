@@ -405,6 +405,7 @@ struct RegexOptions {
     oniguruma_mode: bool,
     ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
+    seek: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -609,6 +610,22 @@ impl RegexOptionsBuilder {
         self
     }
 
+    /// Enable the Seek pre-filter optimisation for hard (backtracking) patterns.
+    ///
+    /// When enabled, the compiler attempts to derive a regular approximation of the pattern
+    /// which is used to skip to the earliest plausible match position in the haystack before
+    /// invoking the backtracking VM. This can dramatically speed up searches in long haystacks
+    /// when the pattern can only match at infrequent positions.
+    ///
+    /// The seek pattern is always a conservative over-approximation — it may report false-positive
+    /// positions but will never skip a true match.
+    ///
+    /// Default is `false`.
+    pub fn seek(&mut self, yes: bool) -> &mut Self {
+        self.options.seek = yes;
+        self
+    }
+
     /// Attempts to better match [Oniguruma](https://github.com/kkos/oniguruma)'s default behavior
     ///
     /// Currently this amounts to changing behavior with:
@@ -746,6 +763,12 @@ impl RegexBuilder {
             .ignore_numbered_groups_when_named_groups_exist(yes);
         self
     }
+
+    /// See [`RegexOptionsBuilder::seek`]
+    pub fn seek(&mut self, yes: bool) -> &mut Self {
+        self.options.seek(yes);
+        self
+    }
 }
 
 impl fmt::Debug for Regex {
@@ -831,6 +854,7 @@ impl Regex {
             CompileOptions {
                 anchored: can_compile_as_anchored(&tree.expr),
                 contains_subroutines: tree.contains_subroutines,
+                seek: options.seek,
             },
         )?;
         Ok(Regex {
@@ -1856,7 +1880,7 @@ impl<'r> Iterator for CaptureNames<'r> {
 
 // silly to write my own, but this is super-fast for the common 1-digit
 // case.
-fn push_usize(s: &mut String, x: usize) {
+pub(crate) fn push_usize(s: &mut String, x: usize) {
     if x >= 10 {
         push_usize(s, x / 10);
         s.push((b'0' + (x % 10) as u8) as char);
@@ -2305,7 +2329,7 @@ pub mod internal {
         FLAG_CASEI, FLAG_CRLF, FLAG_DOTNL, FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
         FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
     };
-    pub use crate::vm::{run_default, run_trace, Insn, Prog};
+    pub use crate::vm::{run_default, run_trace, Insn, Prog, Seek};
 }
 
 #[cfg(test)]

@@ -255,17 +255,74 @@ criterion_group!(
     continue_from_end_of_prev_match_long_haystack,
 );
 
+fn seek_backref_in_long_haystack(c: &mut Criterion) {
+    // Pattern with a backref — the seek approximation inlines the group body ("abc"),
+    // so the seek will jump directly to "abc" occurrences and skip the rest.
+    let tree = Expr::parse_tree(r"(abc)\1").unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            seek: true,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
+    // Haystack: long run of unrelated text with "abcabc" near the end.
+    let mut haystack = String::new();
+    for _ in 0..10_000 {
+        haystack.push('x');
+    }
+    haystack.push_str("abcabc");
+    c.bench_function("seek_backref_in_long_haystack", |b| {
+        b.iter(|| run_default(&p, &haystack, 0).unwrap())
+    });
+}
+
+fn seek_backref_in_long_haystack_no_match(c: &mut Criterion) {
+    // Same pattern, but haystack never contains "abcabc" — the seek pre-filter realises
+    // there is no plausible position and returns None quickly.
+    let tree = Expr::parse_tree(r"(abc)\1").unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            seek: true,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
+    let mut haystack = String::new();
+    for _ in 0..10_000 {
+        haystack.push('x');
+    }
+    c.bench_function("seek_backref_in_long_haystack_no_match", |b| {
+        b.iter(|| run_default(&p, &haystack, 0).unwrap())
+    });
+}
+
+criterion_group!(
+    name = seek_benches;
+    config = Criterion::default();
+    targets = seek_backref_in_long_haystack,
+    seek_backref_in_long_haystack_no_match,
+);
+
 #[cfg(feature = "variable-lookbehinds")]
 criterion_main!(
     benches,
     slow_benches,
     lookbehind_benches,
-    continue_from_end_of_prev_match_benches
+    continue_from_end_of_prev_match_benches,
+    seek_benches
 );
 
 #[cfg(not(feature = "variable-lookbehinds"))]
 criterion_main!(
     benches,
     slow_benches,
-    continue_from_end_of_prev_match_benches
+    continue_from_end_of_prev_match_benches,
+    seek_benches
 );

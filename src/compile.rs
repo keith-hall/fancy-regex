@@ -43,10 +43,11 @@ use std::collections::HashMap as Map;
 use crate::analyze::Info;
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
-use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
+use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog, Seek};
 use crate::LookAround::*;
 use crate::{
-    Absent, BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result,
+    Absent, Assertion, BacktrackingControlVerb, CompileError, Error, Expr, LookAround,
+    RegexOptions, Result,
 };
 
 /// Maximum recursion depth for subroutine calls (matches Oniguruma's limit)
@@ -899,6 +900,211 @@ fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Inf
     }
 }
 
+/// Write the seek-pattern approximation for `info` into `buf`.
+///
+/// Easy (non-hard) subtrees are serialised verbatim via [`Expr::to_str`].
+/// Hard nodes are handled as follows:
+/// - `Backref` / `SubroutineCall`: inline the referenced group's body (up to `MAX_SUBROUTINE_RECURSION_DEPTH`).
+/// - `LookAround`, `KeepOut`, `ContinueFromPreviousMatchEnd`, `BacktrackingControlVerb`,
+///   `BackrefExistsCondition`, `Absent`: dropped (emit nothing — safe over-approximation).
+/// - `AtomicGroup`: keep the contents, discard the atomicity wrapper.
+/// - `Group`: keep the contents, discard the capture group wrapper.
+/// - `Conditional`: emit the union of the true and false branches.
+/// - `GeneralNewline`: replaced with an explicit alternation.
+/// - `Assertion`: anchors and word-boundary assertions are emitted; half-boundaries are
+///   approximated with `\b` (over-approximation).
+fn build_seek_pattern<'a>(
+    info: &Info<'a>,
+    group_info_map: &Map<usize, &'a Info<'a>>,
+    depth: usize,
+    buf: &mut String,
+    precedence: u8,
+) {
+    if !info.hard {
+        // Easy subtree — serialise it directly.
+        info.expr.to_str(buf, precedence);
+        return;
+    }
+
+    match info.expr {
+        Expr::Empty => {}
+        Expr::Assertion(assertion) => {
+            // Emit all assertion types, approximating half-word-boundaries with \b.
+            match assertion {
+                Assertion::StartText => buf.push('^'),
+                Assertion::EndText => buf.push('$'),
+                // EndTextIgnoreTrailingNewlines (\Z) — drop; overapproximation is fine here.
+                Assertion::EndTextIgnoreTrailingNewlines => {}
+                Assertion::StartLine { crlf: false } => buf.push_str("(?m:^)"),
+                Assertion::StartLine { crlf: true } => buf.push_str("(?Rm:^)"),
+                Assertion::EndLine { crlf: false } => buf.push_str("(?m:$)"),
+                Assertion::EndLine { crlf: true } => buf.push_str("(?Rm:$)"),
+                Assertion::WordBoundary => buf.push_str(r"\b"),
+                Assertion::NotWordBoundary => buf.push_str(r"\B"),
+                // Half-boundaries: \< and \> — overapproximate with \b.
+                Assertion::LeftWordBoundary
+                | Assertion::LeftWordHalfBoundary
+                | Assertion::RightWordBoundary
+                | Assertion::RightWordHalfBoundary => buf.push_str(r"\b"),
+            }
+        }
+        Expr::Concat(_) => {
+            if precedence > 1 {
+                buf.push_str("(?:");
+            }
+            for child in &info.children {
+                build_seek_pattern(child, group_info_map, depth, buf, 2);
+            }
+            if precedence > 1 {
+                buf.push(')');
+            }
+        }
+        Expr::Alt(_) => {
+            if precedence > 0 {
+                buf.push_str("(?:");
+            }
+            let mut first = true;
+            for child in &info.children {
+                if !first {
+                    buf.push('|');
+                }
+                build_seek_pattern(child, group_info_map, depth, buf, 1);
+                first = false;
+            }
+            if precedence > 0 {
+                buf.push(')');
+            }
+        }
+        Expr::Group(_) => {
+            // Drop the capture group wrapper; keep the contents.
+            if !info.children.is_empty() {
+                build_seek_pattern(&info.children[0], group_info_map, depth, buf, precedence);
+            }
+        }
+        Expr::Repeat { lo, hi, greedy, .. } => {
+            if precedence > 2 {
+                buf.push_str("(?:");
+            }
+            if !info.children.is_empty() {
+                build_seek_pattern(&info.children[0], group_info_map, depth, buf, 3);
+            }
+            match (*lo, *hi) {
+                (0, 1) => buf.push('?'),
+                (0, usize::MAX) => buf.push('*'),
+                (1, usize::MAX) => buf.push('+'),
+                (lo, hi) => {
+                    buf.push('{');
+                    crate::push_usize(buf, lo);
+                    if lo != hi {
+                        buf.push(',');
+                        if hi != usize::MAX {
+                            crate::push_usize(buf, hi);
+                        }
+                    }
+                    buf.push('}');
+                }
+            }
+            if !greedy {
+                buf.push('?');
+            }
+            if precedence > 2 {
+                buf.push(')');
+            }
+        }
+        Expr::Backref { group, .. } => {
+            // Inline the body of the referenced capture group.
+            if depth < MAX_SUBROUTINE_RECURSION_DEPTH {
+                if let Some(group_info) = group_info_map.get(group) {
+                    if !group_info.children.is_empty() {
+                        build_seek_pattern(
+                            &group_info.children[0],
+                            group_info_map,
+                            depth + 1,
+                            buf,
+                            precedence,
+                        );
+                    }
+                }
+            }
+        }
+        Expr::SubroutineCall(target_group) => {
+            // Inline the body of the target group, honouring the recursion depth limit.
+            if depth < MAX_SUBROUTINE_RECURSION_DEPTH {
+                if let Some(group_info) = group_info_map.get(target_group) {
+                    if !group_info.children.is_empty() {
+                        build_seek_pattern(
+                            &group_info.children[0],
+                            group_info_map,
+                            depth + 1,
+                            buf,
+                            precedence,
+                        );
+                    }
+                }
+            }
+        }
+        // LookAround is zero-width — drop it.
+        Expr::LookAround(_, _) => {}
+        Expr::AtomicGroup(_) => {
+            // Keep the contents; atomicity is invisible to the seek approximation.
+            if !info.children.is_empty() {
+                build_seek_pattern(&info.children[0], group_info_map, depth, buf, precedence);
+            }
+        }
+        Expr::GeneralNewline { unicode } => {
+            // Replace \R with an explicit alternation accepted by regex-automata.
+            if *unicode {
+                buf.push_str(r"(?:\r\n|[\n\x0B\x0C\r\x85\u{2028}\u{2029}])");
+            } else {
+                buf.push_str(r"(?:\r\n|[\n\x0B\x0C\r])");
+            }
+        }
+        Expr::Conditional { .. } => {
+            // Use the union of the true and false branches (children[1] and children[2]).
+            let mut true_pat = String::new();
+            let mut false_pat = String::new();
+            if info.children.len() >= 2 {
+                build_seek_pattern(&info.children[1], group_info_map, depth, &mut true_pat, 1);
+            }
+            if info.children.len() >= 3 {
+                build_seek_pattern(&info.children[2], group_info_map, depth, &mut false_pat, 1);
+            }
+            match (true_pat.is_empty(), false_pat.is_empty()) {
+                (true, true) => {}
+                (true, false) => buf.push_str(&false_pat),
+                (false, true) => buf.push_str(&true_pat),
+                (false, false) => {
+                    if precedence > 0 {
+                        buf.push_str("(?:");
+                    }
+                    buf.push_str(&true_pat);
+                    buf.push('|');
+                    buf.push_str(&false_pat);
+                    if precedence > 0 {
+                        buf.push(')');
+                    }
+                }
+            }
+        }
+        // Zero-width / control nodes — drop them.
+        Expr::KeepOut
+        | Expr::ContinueFromPreviousMatchEnd
+        | Expr::BacktrackingControlVerb(_)
+        | Expr::BackrefExistsCondition { .. }
+        | Expr::Absent(_) => {}
+        // Anything else (shouldn't occur after analysis) — drop.
+        _ => {}
+    }
+}
+
+/// Returns `true` if `pattern` contains at least one character that provides useful filtering
+/// (i.e. a literal character, character class, or anchor rather than just wildcards/quantifiers).
+fn seek_pattern_is_useful(pattern: &str) -> bool {
+    pattern
+        .bytes()
+        .any(|b| matches!(b, b'[' | b'\\' | b'^' | b'$' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'))
+}
+
 /// Options for compiling analyzed expressions into a program.
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
@@ -907,6 +1113,10 @@ pub struct CompileOptions {
     pub anchored: bool,
     /// Whether the regex contains subroutine calls, requiring group info to be pre-populated.
     pub contains_subroutines: bool,
+    /// Whether to attempt to derive and use a Seek pre-filter for hard patterns.
+    /// When `true` and a useful approximation can be built, the `SplitUnanchored` preamble is
+    /// replaced with a `Seek` instruction that jumps directly to plausible match positions.
+    pub seek: bool,
 }
 
 /// Compile the analyzed expressions into a program.
@@ -922,13 +1132,47 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     }
 
     if !options.anchored {
-        // add instructions as if \O*? was used at the start of the expression
-        // so that we bump the haystack index by one when failing to match at the current position
-        let current_pc = c.b.pc();
-        // we are adding 3 instructions, so the current program counter plus 3 gives us the first real instruction
-        c.b.add(Insn::SplitUnanchored(current_pc + 3, current_pc + 1));
-        c.b.add(Insn::Any);
-        c.b.add(Insn::Jmp(current_pc));
+        // Attempt to build a Seek pre-filter when requested.
+        let mut used_seek = false;
+        if options.seek && info.hard {
+            // Build the group_info_map if not already populated (needed for backref inlining).
+            let mut local_group_info_map: Map<usize, &Info<'_>>;
+            let group_info_map: &Map<usize, &Info<'_>> = if options.contains_subroutines {
+                &c.group_info_map
+            } else {
+                local_group_info_map = Map::new();
+                populate_group_info_map(&mut local_group_info_map, info);
+                &local_group_info_map
+            };
+
+            let mut seek_pat = String::new();
+            build_seek_pattern(info, group_info_map, 0, &mut seek_pat, 0);
+
+            if seek_pattern_is_useful(&seek_pat) {
+                match compile_inner(&seek_pat, &c.options) {
+                    Ok(inner) => {
+                        c.b.add(Insn::Seek(Seek {
+                            inner,
+                            pattern: seek_pat,
+                        }));
+                        used_seek = true;
+                    }
+                    // If compilation of the seek pattern fails for any reason, fall back to the
+                    // standard SplitUnanchored preamble.
+                    Err(_) => {}
+                }
+            }
+        }
+
+        if !used_seek {
+            // add instructions as if \O*? was used at the start of the expression
+            // so that we bump the haystack index by one when failing to match at the current position
+            let current_pc = c.b.pc();
+            // we are adding 3 instructions, so the current program counter plus 3 gives us the first real instruction
+            c.b.add(Insn::SplitUnanchored(current_pc + 3, current_pc + 1));
+            c.b.add(Insn::Any);
+            c.b.add(Insn::Jmp(current_pc));
+        }
     }
     if info.start_group() == 1 {
         // add implicit capture group 0 begin
