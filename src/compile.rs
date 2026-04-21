@@ -1099,6 +1099,12 @@ fn build_seek_pattern<'a>(
 
 /// Returns `true` if `pattern` contains at least one character that provides useful filtering
 /// (i.e. a literal character, character class, or anchor rather than just wildcards/quantifiers).
+///
+/// This is a conservative approximation: any pattern containing `[`, `\`, `^`, `$`, or an
+/// alphanumeric character is considered useful.  A character class like `[*]` technically
+/// matches only a single character which is no better than `.`, but it is uncommon enough to
+/// matter in practice and will still be admitted by this check.  The primary goal is to reject
+/// fully unconstrained patterns such as `.*`.
 fn seek_pattern_is_useful(pattern: &str) -> bool {
     pattern
         .bytes()

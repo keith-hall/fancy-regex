@@ -1099,7 +1099,10 @@ pub(crate) fn run(
                                 if m.end() < s.len() {
                                     m.end() + codepoint_len_at(s, m.end())
                                 } else {
-                                    s.len() + 1
+                                    // Already at the end: a subsequent seek will find nothing and
+                                    // return None; use s.len() as the retry position so the span
+                                    // is valid.
+                                    s.len()
                                 }
                             } else {
                                 m.start() + codepoint_len_at(s, m.start())
