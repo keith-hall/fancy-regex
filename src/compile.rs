@@ -942,6 +942,7 @@ fn expr_contains_positional_anchor(expr: &Expr) -> bool {
 /// - `GeneralNewline`: replaced with an explicit alternation.
 /// - `Assertion`: anchors and word-boundary assertions are emitted; half-boundaries are
 ///   dropped (over-approximation — `\b` would be too restrictive).
+// TODO: refactor to re-use as much of to_str as possible - perhaps using a closure callback to make both methods use the same logic
 fn build_seek_pattern<'a>(
     info: &Info<'a>,
     group_info_map: &Map<usize, &'a Info<'a>>,
@@ -1048,10 +1049,13 @@ fn build_seek_pattern<'a>(
             // If the group body contains a StartText/EndText anchor we skip inlining entirely:
             // such anchors only hold at the original capture position and not at the backref
             // position, so inlining them would produce false negatives.
+            // TODO: do we need to check recursion depth here? it should be handled by the subroutine calls
             if depth < MAX_SUBROUTINE_RECURSION_DEPTH {
                 if let Some(group_info) = group_info_map.get(group) {
                     if !group_info.children.is_empty() {
                         let child = &group_info.children[0];
+                        // TODO: just drop positional anchors instead of dropping the whole seek pattern
+                        //       - surely dropping the whole thing shouldn't work anyway, it would need to be replaced with .{min_size,} if not const size, or .{min_size} if const size - where . allows newlines I guess
                         if !expr_contains_positional_anchor(child.expr) {
                             if *casei {
                                 let mut inner = String::new();
@@ -1179,6 +1183,8 @@ fn build_seek_pattern<'a>(
         | Expr::BackrefExistsCondition { .. }
         | Expr::Absent(_) => {}
         // Anything else (shouldn't occur after analysis) — drop.
+        // TODO: make it explicit what we are dropping so when a new Expr is implemented, we would remember to handle it
+        // TODO: perhaps drop anything zero width const size hard
         _ => {}
     }
 }
