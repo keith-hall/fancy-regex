@@ -201,6 +201,7 @@ impl<'a> Display for CompileFormatterWrapper<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::RegexBuilder;
     use crate::Write;
 
     #[test]
@@ -280,7 +281,31 @@ digraph G {
 
     #[test]
     fn test_compilation_fancy_debug_output() {
-        let expected = "  ".to_owned()
+        // With seek enabled (default): the SplitUnanchored preamble is replaced by a Seek
+        // instruction that pre-filters positions before running the full VM.
+        let expected_with_seek = "  ".to_owned()
+            + "\
+  0: Seek(Seek { pattern: \"a+b*b*\" })
+  1: Save(0)
+  2: Lit(\"a\")
+  3: Split(2, 4)
+  4: SaveCaptureGroupStart(1)
+  5: Split(6, 8)
+  6: Lit(\"b\")
+  7: Jmp(5)
+  8: Save(3)
+  9: Save(4)
+ 10: Lit(\"c\")
+ 11: Restore(4)
+ 12: Backref { slot: 2, casei: false }
+ 13: Save(1)
+ 14: End
+";
+
+        assert_compiled_prog("a+(?<b>b*)(?=c)\\k<b>", &expected_with_seek);
+
+        // With seek disabled: the classic SplitUnanchored preamble is used.
+        let expected_no_seek = "  ".to_owned()
             + "\
   0: SplitUnanchored(3, 1)
   1: Any
@@ -301,13 +326,30 @@ digraph G {
  16: End
 ";
 
-        assert_compiled_prog("a+(?<b>b*)(?=c)\\k<b>", &expected);
+        assert_compiled_prog_no_seek("a+(?<b>b*)(?=c)\\k<b>", &expected_no_seek);
     }
 
     #[test]
     #[cfg(feature = "variable-lookbehinds")]
     fn test_compilation_variable_lookbehind_debug_output() {
-        let expected = "  ".to_owned()
+        // With seek enabled (default): the SplitUnanchored preamble is replaced by a Seek
+        // instruction that pre-filters positions before running the full VM.
+        let expected_with_seek = "  ".to_owned()
+            + "\
+  0: Seek(Seek { pattern: \"x\" })
+  1: Save(0)
+  2: Save(2)
+  3: BackwardsDelegate(ReverseBackwardsDelegate { pattern: \"ab+\", capture_groups: None })
+  4: Restore(2)
+  5: Lit(\"x\")
+  6: Save(1)
+  7: End
+";
+
+        assert_compiled_prog("(?<=ab+)x", &expected_with_seek);
+
+        // With seek disabled: the classic SplitUnanchored preamble is used.
+        let expected_no_seek = "  ".to_owned()
             + "\
   0: SplitUnanchored(3, 1)
   1: Any
@@ -321,7 +363,7 @@ digraph G {
   9: End
 ";
 
-        assert_compiled_prog("(?<=ab+)x", &expected);
+        assert_compiled_prog_no_seek("(?<=ab+)x", &expected_no_seek);
     }
 
     #[test]
@@ -359,6 +401,22 @@ digraph G {
         write!(&mut buf, "{}", CompileFormatterWrapper { regex: &re })
             .expect("error compiling regexp");
         let output = String::from_utf8(buf).expect("string not utf8");
+        assert_eq!(&output, &expected);
+    }
+
+    fn assert_compiled_prog_no_seek(re: &str, expected: &str) {
+        use std::fmt::{Display, Formatter};
+        struct DebugPrintWrapper<'a>(&'a fancy_regex::Regex);
+        impl<'a> Display for DebugPrintWrapper<'a> {
+            fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+                self.0.debug_print(f)
+            }
+        }
+        let r = RegexBuilder::new(re)
+            .seek(false)
+            .build()
+            .expect("error compiling regexp");
+        let output = format!("{}", DebugPrintWrapper(&r));
         assert_eq!(&output, &expected);
     }
 
