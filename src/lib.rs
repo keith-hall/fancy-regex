@@ -1967,7 +1967,11 @@ pub enum Assertion {
     /// End of input text
     EndText,
     /// End of input text, or before any trailing newlines at the end (Oniguruma's `\Z`)
-    EndTextIgnoreTrailingNewlines,
+    EndTextIgnoreTrailingNewlines {
+        /// Whether CRLF mode is enabled.
+        /// If `true`, trailing `\r\n` pairs (in addition to bare `\n`) are also ignored.
+        crlf: bool,
+    },
     /// Start of a line
     StartLine {
         /// CRLF mode.
@@ -2008,7 +2012,7 @@ impl Assertion {
                 | RightWordHalfBoundary
                 | WordBoundary
                 | NotWordBoundary
-                | EndTextIgnoreTrailingNewlines
+                | EndTextIgnoreTrailingNewlines { .. }
         )
     }
 }

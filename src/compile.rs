@@ -916,7 +916,7 @@ fn expr_contains_positional_anchor(expr: &Expr) -> bool {
         Expr::Assertion(
             Assertion::StartText
             | Assertion::EndText
-            | Assertion::EndTextIgnoreTrailingNewlines
+            | Assertion::EndTextIgnoreTrailingNewlines { .. }
             | Assertion::StartLine { .. }
             | Assertion::EndLine { .. },
         ) => true,
@@ -1003,6 +1003,7 @@ fn build_seek_pattern_impl<'a>(
         if let Expr::Assertion(
             Assertion::StartText
             | Assertion::EndText
+            | Assertion::EndTextIgnoreTrailingNewlines { .. }
             | Assertion::StartLine { .. }
             | Assertion::EndLine { .. },
         ) = info.expr
@@ -1031,10 +1032,13 @@ fn build_seek_pattern_impl<'a>(
             // the early drop at the top of this function (drop_positional_anchors=true).
             // Only hard assertions reach this arm.
             match assertion {
-                // EndTextIgnoreTrailingNewlines (\Z) is a hard assertion but is still
-                // zero width (min_size = 0).  Dropping it is a safe over-approximation:
-                // any position that satisfies \Z also satisfies the seek pattern without it.
-                Assertion::EndTextIgnoreTrailingNewlines => {}
+                // \Z matches at the end of the string, or before any trailing newlines.
+                // Approximate with `\n*$` (non-CRLF) or `(?:\r?\n)*$` (CRLF mode).
+                // The `$` anchors to end-of-text, providing a useful seek filter.
+                Assertion::EndTextIgnoreTrailingNewlines { crlf: false } => buf.push_str(r"\n*$"),
+                Assertion::EndTextIgnoreTrailingNewlines { crlf: true } => {
+                    buf.push_str(r"(?:\r?\n)*$")
+                }
                 Assertion::WordBoundary => buf.push_str(r"\b"),
                 Assertion::NotWordBoundary => buf.push_str(r"\B"),
                 // Full word boundaries: \< and \> — overapproximate with \b.
@@ -1314,13 +1318,19 @@ fn build_seek_pattern_impl<'a>(
         | Expr::BacktrackingControlVerb(_)
         | Expr::BackrefExistsCondition { .. }
         | Expr::Absent(_) => {}
-        // Any remaining hard node that is not explicitly handled above (e.g. a future variant)
-        // must not be silently dropped if it has a non-zero minimum match size, as that would
-        // create false negatives.  Emit a permissive placeholder instead.
-        _ => emit_min_size_placeholder(buf, info.min_size, precedence),
+        // Easy leaf nodes (Literal, Any, Delegate) are always handled by the `!info.hard`
+        // early return above and never reach here.  Listed explicitly so that adding a new
+        // Expr variant produces a compile error until the seek-pattern case is handled.
+        Expr::Literal { .. } | Expr::Any { .. } | Expr::Delegate { .. } => {
+            info.expr.to_str(buf, precedence)
+        }
+        // These variants cause a compile error during analysis and are therefore unreachable
+        // after a successful `analyze()` call.
+        Expr::BackrefWithRelativeRecursionLevel { .. } | Expr::AstNode(..) => {
+            unreachable!("unexpected expr variant after analysis")
+        }
     }
 }
-
 /// Returns `true` if `pattern` contains at least one character that provides useful filtering
 /// (i.e. a literal character, character class, or anchor rather than just wildcards/quantifiers).
 ///
@@ -2182,5 +2192,32 @@ mod tests {
         assert_eq!(get_seek_pattern(r"abc"), "abc");
         assert_eq!(get_seek_pattern(r"a|b"), "a|b");
         assert_eq!(get_seek_pattern(r"a+b*c?"), "a+b*c?");
+    }
+
+    #[test]
+    fn seek_pattern_end_text_ignore_trailing_newlines_non_crlf() {
+        // \Z (non-CRLF mode) — approximate with `\n*$` so the seek only visits positions
+        // near end-of-text.
+        assert_eq!(get_seek_pattern(r"abc\Z"), r"abc\n*$");
+    }
+
+    #[test]
+    fn seek_pattern_end_text_ignore_trailing_newlines_crlf() {
+        // \Z in CRLF mode — approximate with `(?:\r?\n)*$`.
+        assert_eq!(get_seek_pattern(r"(?R)abc\Z"), r"abc(?:\r?\n)*$");
+    }
+
+    #[test]
+    fn seek_pattern_end_text_ignore_trailing_newlines_only() {
+        // \Z alone (hard assertion) — just the seek pattern with no surrounding literal.
+        assert_eq!(get_seek_pattern(r"\Z"), r"\n*$");
+    }
+
+    #[test]
+    fn seek_pattern_backref_with_end_text_ignore_trailing_newlines() {
+        // Backref to a group that ends with \Z: \Z is a positional anchor and should be
+        // dropped when inlining the group body for the backref.
+        // `(a\Z)\1` — seek = `(?:a\n*$)` (group) + `(?:a)` (backref, \Z dropped)
+        assert_eq!(get_seek_pattern(r"(a\Z)\1"), r"(?:a\n*$)(?:a)");
     }
 }
