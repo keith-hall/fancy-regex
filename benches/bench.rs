@@ -255,52 +255,51 @@ criterion_group!(
     continue_from_end_of_prev_match_long_haystack,
 );
 
-fn seek_backref_in_long_haystack(c: &mut Criterion) {
-    // Pattern with a backref — the seek approximation inlines the group body ("abc"),
-    // so the seek will jump directly to "abc" occurrences and skip the rest.
+/// Shared logic for the backref-in-long-haystack seek benchmarks.
+///
+/// Compiles `(abc)\1` with the given `seek` setting, builds a 10,000-`x` haystack
+/// (optionally with `"abcabc"` appended), and registers a criterion benchmark under
+/// `name`.
+fn bench_backref_in_long_haystack(c: &mut Criterion, name: &str, seek: bool, with_match: bool) {
+    // Pattern with a backref — when seek is true the approximation inlines the group
+    // body ("abc"), so the engine jumps directly to "abc" occurrences and skips the rest.
     let tree = Expr::parse_tree(r"(abc)\1").unwrap();
     let a = analyze(&tree, AnalyzeContext::default()).unwrap();
     let p = compile(
         &a,
         CompileOptions {
             contains_subroutines: tree.contains_subroutines,
-            seek: true,
+            seek,
             ..CompileOptions::default()
         },
     )
     .unwrap();
-    // Haystack: long run of unrelated text with "abcabc" near the end.
     let mut haystack = String::new();
     for _ in 0..10_000 {
         haystack.push('x');
     }
-    haystack.push_str("abcabc");
-    c.bench_function("seek_backref_in_long_haystack", |b| {
-        b.iter(|| run_default(&p, &haystack, 0).unwrap())
-    });
+    if with_match {
+        // Place the match target at the very end so the seek pre-filter must scan
+        // the entire haystack before finding the single candidate position.
+        haystack.push_str("abcabc");
+    }
+    c.bench_function(name, |b| b.iter(|| run_default(&p, &haystack, 0).unwrap()));
+}
+
+fn seek_backref_in_long_haystack(c: &mut Criterion) {
+    bench_backref_in_long_haystack(c, "seek_backref_in_long_haystack", true, true);
 }
 
 fn seek_backref_in_long_haystack_no_match(c: &mut Criterion) {
-    // Same pattern, but haystack never contains "abcabc" — the seek pre-filter realises
-    // there is no plausible position and returns None quickly.
-    let tree = Expr::parse_tree(r"(abc)\1").unwrap();
-    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
-    let p = compile(
-        &a,
-        CompileOptions {
-            contains_subroutines: tree.contains_subroutines,
-            seek: true,
-            ..CompileOptions::default()
-        },
-    )
-    .unwrap();
-    let mut haystack = String::new();
-    for _ in 0..10_000 {
-        haystack.push('x');
-    }
-    c.bench_function("seek_backref_in_long_haystack_no_match", |b| {
-        b.iter(|| run_default(&p, &haystack, 0).unwrap())
-    });
+    bench_backref_in_long_haystack(c, "seek_backref_in_long_haystack_no_match", true, false);
+}
+
+fn no_seek_backref_in_long_haystack(c: &mut Criterion) {
+    bench_backref_in_long_haystack(c, "no_seek_backref_in_long_haystack", false, true);
+}
+
+fn no_seek_backref_in_long_haystack_no_match(c: &mut Criterion) {
+    bench_backref_in_long_haystack(c, "no_seek_backref_in_long_haystack_no_match", false, false);
 }
 
 criterion_group!(
@@ -308,6 +307,8 @@ criterion_group!(
     config = Criterion::default();
     targets = seek_backref_in_long_haystack,
     seek_backref_in_long_haystack_no_match,
+    no_seek_backref_in_long_haystack,
+    no_seek_backref_in_long_haystack_no_match,
 );
 
 #[cfg(feature = "variable-lookbehinds")]
