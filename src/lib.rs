@@ -1903,6 +1903,31 @@ pub(crate) fn push_usize(s: &mut String, x: usize) {
     }
 }
 
+/// Emit a repeat quantifier `?`, `*`, `+`, or `{lo,hi}` (optionally non-greedy) into `buf`.
+///
+/// This is shared between [`Expr::to_str`] and `build_seek_pattern` in the compiler.
+pub(crate) fn write_quantifier(buf: &mut String, lo: usize, hi: usize, greedy: bool) {
+    match (lo, hi) {
+        (0, 1) => buf.push('?'),
+        (0, usize::MAX) => buf.push('*'),
+        (1, usize::MAX) => buf.push('+'),
+        (lo, hi) => {
+            buf.push('{');
+            push_usize(buf, lo);
+            if lo != hi {
+                buf.push(',');
+                if hi != usize::MAX {
+                    push_usize(buf, hi);
+                }
+            }
+            buf.push('}');
+        }
+    }
+    if !greedy {
+        buf.push('?');
+    }
+}
+
 fn is_special(c: char) -> bool {
     matches!(
         c,
@@ -2228,25 +2253,7 @@ impl Expr {
                     buf.push_str("(?:");
                 }
                 child.to_str(buf, 3);
-                match (lo, hi) {
-                    (0, 1) => buf.push('?'),
-                    (0, usize::MAX) => buf.push('*'),
-                    (1, usize::MAX) => buf.push('+'),
-                    (lo, hi) => {
-                        buf.push('{');
-                        push_usize(buf, lo);
-                        if lo != hi {
-                            buf.push(',');
-                            if hi != usize::MAX {
-                                push_usize(buf, hi);
-                            }
-                        }
-                        buf.push('}');
-                    }
-                }
-                if !greedy {
-                    buf.push('?');
-                }
+                write_quantifier(buf, lo, hi, greedy);
                 if precedence > 2 {
                     buf.push(')');
                 }
