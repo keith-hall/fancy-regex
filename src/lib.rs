@@ -71,6 +71,7 @@ use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
+pub use crate::seek::seek_pattern_is_useful;
 
 const MAX_RECURSION: usize = 64;
 
@@ -406,7 +407,7 @@ struct RegexOptions {
     oniguruma_mode: bool,
     ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
-    seek: bool,
+    seek_filter: Option<fn(&str) -> bool>,
 }
 
 impl Default for RegexOptions {
@@ -418,7 +419,7 @@ impl Default for RegexOptions {
             oniguruma_mode: false,
             ignore_numbered_groups_when_named_groups_exist: false,
             hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
-            seek: true,
+            seek_filter: Some(seek_pattern_is_useful),
         }
     }
 }
@@ -635,9 +636,44 @@ impl RegexOptionsBuilder {
     /// The seek pattern is always a conservative over-approximation — it may report false-positive
     /// positions but will never skip a true match.
     ///
+    /// When `yes` is `true`, uses the default [`seek_pattern_is_useful`] filter to decide
+    /// whether the derived pattern is worth using. When `false`, disables seek entirely.
+    ///
+    /// To supply a custom filter, use [`seek_filter`](Self::seek_filter) instead.
+    ///
     /// Default is `true`.
     pub fn seek(&mut self, yes: bool) -> &mut Self {
-        self.options.seek = yes;
+        self.options.seek_filter = if yes {
+            Some(seek_pattern_is_useful)
+        } else {
+            None
+        };
+        self
+    }
+
+    /// Set a custom filter function that decides whether the derived seek pattern is useful.
+    ///
+    /// The function receives the seek pattern string and returns `true` if the pattern should
+    /// be used as a pre-filter, or `false` to fall back to the standard unanchored search.
+    ///
+    /// Calling this method implicitly enables seek. Pass [`seek_pattern_is_useful`] to restore
+    /// the default behaviour.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use fancy_regex::{RegexOptionsBuilder, seek_pattern_is_useful};
+    ///
+    /// // Use the default filter (equivalent to seek(true))
+    /// let mut builder = RegexOptionsBuilder::new();
+    /// builder.seek_filter(seek_pattern_is_useful);
+    ///
+    /// // Use a custom filter that additionally requires the pattern to be longer than 3 bytes
+    /// let mut builder = RegexOptionsBuilder::new();
+    /// builder.seek_filter(|pat| pat.len() > 3 && seek_pattern_is_useful(pat));
+    /// ```
+    pub fn seek_filter(&mut self, filter: fn(&str) -> bool) -> &mut Self {
+        self.options.seek_filter = Some(filter);
         self
     }
 
@@ -784,6 +820,12 @@ impl RegexBuilder {
         self.options.seek(yes);
         self
     }
+
+    /// See [`RegexOptionsBuilder::seek_filter`]
+    pub fn seek_filter(&mut self, filter: fn(&str) -> bool) -> &mut Self {
+        self.options.seek_filter(filter);
+        self
+    }
 }
 
 impl fmt::Debug for Regex {
@@ -869,7 +911,7 @@ impl Regex {
             CompileOptions {
                 anchored: can_compile_as_anchored(&tree.expr),
                 contains_subroutines: tree.contains_subroutines,
-                seek: options.seek,
+                seek_filter: options.seek_filter,
             },
         )?;
         Ok(Regex {

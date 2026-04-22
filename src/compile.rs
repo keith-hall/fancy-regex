@@ -41,7 +41,7 @@ use alloc::collections::BTreeMap as Map;
 use std::collections::HashMap as Map;
 
 use crate::analyze::Info;
-use crate::seek::{build_seek_pattern, seek_pattern_is_useful};
+use crate::seek::build_seek_pattern;
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog, Seek};
@@ -908,10 +908,11 @@ pub struct CompileOptions {
     pub anchored: bool,
     /// Whether the regex contains subroutine calls, requiring group info to be pre-populated.
     pub contains_subroutines: bool,
-    /// Whether to attempt to derive and use a Seek pre-filter for hard patterns.
-    /// When `true` and a useful approximation can be built, the `SplitUnanchored` preamble is
-    /// replaced with a `Seek` instruction that jumps directly to plausible match positions.
-    pub seek: bool,
+    /// Optional filter function for the Seek pre-filter optimisation.
+    /// When `Some(f)` and a seek pattern can be derived, `f` is called with the pattern string
+    /// to decide whether it is useful enough to replace the `SplitUnanchored` preamble with a
+    /// `Seek` instruction. When `None`, seek is disabled entirely.
+    pub seek_filter: Option<fn(&str) -> bool>,
 }
 
 /// Compile the analyzed expressions into a program.
@@ -929,32 +930,34 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     if !options.anchored {
         // Attempt to build a Seek pre-filter when requested.
         let mut used_seek = false;
-        if options.seek && info.hard {
-            // Build the group_info_map if not already populated (needed for backref inlining).
-            let mut local_group_info_map: Map<usize, &Info<'_>>;
-            let group_info_map: &Map<usize, &Info<'_>> = if options.contains_subroutines {
-                &c.group_info_map
-            } else {
-                local_group_info_map = Map::new();
-                populate_group_info_map(&mut local_group_info_map, info);
-                &local_group_info_map
-            };
+        if let Some(filter) = options.seek_filter {
+            if info.hard {
+                // Build the group_info_map if not already populated (needed for backref inlining).
+                let mut local_group_info_map: Map<usize, &Info<'_>>;
+                let group_info_map: &Map<usize, &Info<'_>> = if options.contains_subroutines {
+                    &c.group_info_map
+                } else {
+                    local_group_info_map = Map::new();
+                    populate_group_info_map(&mut local_group_info_map, info);
+                    &local_group_info_map
+                };
 
-            let mut seek_pat = String::new();
-            build_seek_pattern(info, group_info_map, 0, &mut seek_pat, 0);
+                let mut seek_pat = String::new();
+                build_seek_pattern(info, group_info_map, 0, &mut seek_pat, 0);
 
-            if seek_pattern_is_useful(&seek_pat) {
-                match compile_inner(&seek_pat, &c.options) {
-                    Ok(inner) => {
-                        c.b.add(Insn::Seek(Seek {
-                            inner,
-                            pattern: seek_pat,
-                        }));
-                        used_seek = true;
+                if filter(&seek_pat) {
+                    match compile_inner(&seek_pat, &c.options) {
+                        Ok(inner) => {
+                            c.b.add(Insn::Seek(Seek {
+                                inner,
+                                pattern: seek_pat,
+                            }));
+                            used_seek = true;
+                        }
+                        // If compilation of the seek pattern fails for any reason, fall back to the
+                        // standard SplitUnanchored preamble.
+                        Err(_) => {}
                     }
-                    // If compilation of the seek pattern fails for any reason, fall back to the
-                    // standard SplitUnanchored preamble.
-                    Err(_) => {}
                 }
             }
         }

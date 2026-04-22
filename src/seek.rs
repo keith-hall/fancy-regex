@@ -476,7 +476,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
 /// matches only a single character which is no better than `.`, but it is uncommon enough to
 /// matter in practice and will still be admitted by this check.  The primary goal is to reject
 /// fully unconstrained patterns such as `.*`.
-pub(crate) fn seek_pattern_is_useful(pattern: &str) -> bool {
+pub fn seek_pattern_is_useful(pattern: &str) -> bool {
     pattern
         .bytes()
         .any(|b| matches!(b, b'[' | b'\\' | b'^' | b'$' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'))
