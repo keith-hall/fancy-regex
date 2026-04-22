@@ -626,7 +626,7 @@ impl RegexOptionsBuilder {
         self
     }
 
-    /// Enable the Seek pre-filter optimisation for hard (backtracking) patterns.
+    /// Enable the Seek pre-filter optimization for hard (backtracking) patterns.
     ///
     /// When enabled, the compiler attempts to derive a regular approximation of the pattern
     /// which is used to skip to the earliest plausible match position in the haystack before
@@ -636,12 +636,12 @@ impl RegexOptionsBuilder {
     /// The seek pattern is always a conservative over-approximation — it may report false-positive
     /// positions but will never skip a true match.
     ///
+    /// Default is `true`.
+    ///
     /// When `yes` is `true`, uses the default [`seek_pattern_is_useful`] filter to decide
     /// whether the derived pattern is worth using. When `false`, disables seek entirely.
     ///
     /// To supply a custom filter, use [`seek_filter`](Self::seek_filter) instead.
-    ///
-    /// Default is `true`.
     pub fn seek(&mut self, yes: bool) -> &mut Self {
         self.options.seek_filter = if yes {
             Some(seek_pattern_is_useful)
@@ -657,7 +657,7 @@ impl RegexOptionsBuilder {
     /// be used as a pre-filter, or `false` to fall back to the standard unanchored search.
     ///
     /// Calling this method implicitly enables seek. Pass [`seek_pattern_is_useful`] to restore
-    /// the default behaviour.
+    /// the default behavior.
     ///
     /// # Example
     ///

@@ -908,7 +908,7 @@ pub struct CompileOptions {
     pub anchored: bool,
     /// Whether the regex contains subroutine calls, requiring group info to be pre-populated.
     pub contains_subroutines: bool,
-    /// Optional filter function for the Seek pre-filter optimisation.
+    /// Optional filter function for the Seek pre-filter optimization.
     /// When `Some(f)` and a seek pattern can be derived, `f` is called with the pattern string
     /// to decide whether it is useful enough to replace the `SplitUnanchored` preamble with a
     /// `Seek` instruction. When `None`, seek is disabled entirely.
