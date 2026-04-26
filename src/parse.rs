@@ -306,9 +306,20 @@ impl<'a> Parser<'a> {
             b'^' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    Expr::Assertion(Assertion::StartLine {
-                        crlf: self.flag(FLAG_CRLF),
-                    })
+                    if !self.flag(FLAG_ONIGURUMA_MODE) {
+                        Expr::Assertion(Assertion::StartLine {
+                            crlf: self.flag(FLAG_CRLF),
+                        })
+                    } else {
+                        Expr::Concat(vec!(
+                        Expr::Assertion(Assertion::StartLine {
+                            crlf: self.flag(FLAG_CRLF),
+                        }),
+                        Expr::LookAround(Box::new(
+                            Expr::Assertion(Assertion::EndText)),
+                            LookAheadNeg)
+                        ))
+                    }
                 } else {
                     Expr::Assertion(Assertion::StartText)
                 },
