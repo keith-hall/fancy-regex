@@ -1,4 +1,6 @@
 use fancy_regex::{CompileError, Error, Regex, RegexBuilder};
+//use fancy_regex::common::DebugRegex;
+mod common;
 
 fn build_regex(builder: &RegexBuilder) -> Regex {
     let result = builder.build();
@@ -323,12 +325,13 @@ fn disallow_empty_match_at_eof_after_newline_does_as_it_says() {
     }
 
     fn create_regex(pattern: &str) -> Regex {
-        build_regex(
+        let regex = build_regex(
             RegexBuilder::new(pattern)
             .multi_line(true)
             .disallow_empty_match_at_eof_after_newline(true)
-        )
-        // TODO: debug_print regex
+        );
+        println!("{}", common::DebugRegex(&regex));
+        regex
     }
 
     assert_eq!(find_all_matches(&create_regex(r"^"), "a\nb\n"), [0, 2]);
