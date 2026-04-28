@@ -341,9 +341,9 @@ fn bench_digit_backref_worst_case(c: &mut Criterion, name: &str, seek: bool, wit
     .unwrap();
     let mut haystack = "1234567890".repeat(100);
     if with_match {
-        // Append "00" so the string ends with "...000" giving a match ("000" + "000")
+        // Append 5 zeros so the string ends with 6 zeros giving a match ("000" + "000")
         // near the very end, forcing the seek pre-filter to traverse the whole haystack.
-        haystack.push_str("00");
+        haystack.push_str("00000");
     }
     c.bench_function(name, |b| b.iter(|| run_default(&p, &haystack, 0).unwrap()));
 }
