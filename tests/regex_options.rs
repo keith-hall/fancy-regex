@@ -324,17 +324,47 @@ fn disallow_empty_match_at_eof_after_newline_does_as_it_says() {
         regex.find_iter(text).map(|m| m.unwrap().start()).collect()
     }
 
-    fn create_regex(pattern: &str) -> Regex {
+    fn create_regex(pattern: &str, disallow: bool) -> Regex {
         let regex = build_regex(
             RegexBuilder::new(pattern)
             .multi_line(true)
-            .disallow_empty_match_at_eof_after_newline(true)
+            .disallow_empty_match_at_eof_after_newline(disallow)
         );
         println!("{}", common::DebugRegex(&regex));
         regex
     }
 
-    assert_eq!(find_all_matches(&create_regex(r"^"), "a\nb\n"), [0, 2]);
-    assert_eq!(find_all_matches(&create_regex(r"$"), "a\nb\n"), [0, 2]);
-    assert_eq!(find_all_matches(&create_regex(r"(?=)"), "a\nb\n"), [0, 1, 2, 3]);
+    let haystack = "a\nb\n";
+    assert_eq!(find_all_matches(&create_regex(r"^", true), haystack), [0, 2]);
+    assert_eq!(find_all_matches(&create_regex(r"$", true), haystack), [1, 3]);
+    assert_eq!(find_all_matches(&create_regex(r"(?=)", true), haystack), [0, 1, 2, 3]);
+
+    // to demonstrate the difference, here is how it looks without this option
+    assert_eq!(find_all_matches(&create_regex(r"^", false), haystack), [0, 2, 4]);
+    assert_eq!(find_all_matches(&create_regex(r"$", false), haystack), [1, 3, 4]);
+    assert_eq!(find_all_matches(&create_regex(r"(?=)", false), haystack), [0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn disallow_empty_match_at_eof_after_newline_still_allows_slash_z() {
+    fn find_all_matches(regex: &Regex, text: &'static str) -> Vec<usize> {
+        regex.find_iter(text).map(|m| m.unwrap().start()).collect()
+    }
+
+    fn create_regex(pattern: &str, disallow: bool) -> Regex {
+        let regex = build_regex(
+            RegexBuilder::new(pattern)
+            .multi_line(true)
+            .disallow_empty_match_at_eof_after_newline(disallow)
+        );
+        println!("{}", common::DebugRegex(&regex));
+        regex
+    }
+
+    let haystack = "a\nb\n";
+    assert_eq!(find_all_matches(&create_regex(r"\z", true), haystack), [4]);
+    assert_eq!(find_all_matches(&create_regex(r"$\z", true), haystack), [4]);
+
+    assert_eq!(find_all_matches(&create_regex(r"\z", false), haystack), [4]);
+    assert_eq!(find_all_matches(&create_regex(r"$\z", false), haystack), [4]);
 }

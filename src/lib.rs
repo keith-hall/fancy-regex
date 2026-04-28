@@ -408,7 +408,6 @@ struct RegexOptions {
     ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
     seek_filter: Option<fn(&str) -> bool>,
-    disallow_empty_match_at_eof_after_newline: bool,
 }
 
 impl fmt::Debug for RegexOptions {
@@ -434,7 +433,6 @@ impl fmt::Debug for RegexOptions {
                 &self.hard_regex_runtime_options,
             )
             .field("seek_filter", &seek_filter_desc)
-            .field("disallow_empty_match_at_eof_after_newline", &self.disallow_empty_match_at_eof_after_newline)
             .finish()
     }
 }
@@ -742,7 +740,7 @@ impl RegexOptionsBuilder {
     /// and even for lookarounds, unless \z is specifically used to anchor to the end of the string.
     /// This is how Oniguruma works for example.
     pub fn disallow_empty_match_at_eof_after_newline(&mut self, yes: bool) -> &mut Self {
-        self.options.disallow_empty_match_at_eof_after_newline = yes;
+        self.options.hard_regex_runtime_options.disallow_empty_match_at_eof_after_newline = yes;
         self
     }
 }
