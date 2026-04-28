@@ -311,13 +311,27 @@ fn check_find_not_empty_is_match() {
 #[test]
 fn check_find_not_empty_allows_trailing_lookahead_with_content() {
     // a?(?=b) optimizes to (a?)b — group 0 is "a?" which is not always empty, so it should compile
-    let result = RegexBuilder::new(r"a(?=b)").find_not_empty(true).build();
-    assert!(
-        result.is_ok(),
-        "Expected a?(?=b) to compile with find_not_empty"
-    );
-
-    let regex = result.unwrap();
+    let regex = build_regex(RegexBuilder::new(r"a(?=b)").find_not_empty(true));
     assert!(regex.is_match("ab").unwrap());
     assert!(!regex.is_match("ac").unwrap());
+}
+
+#[test]
+fn disallow_empty_match_at_eof_after_newline_does_as_it_says() {
+    fn find_all_matches(regex: &Regex, text: &'static str) -> Vec<usize> {
+        regex.find_iter(text).map(|m| m.unwrap().start()).collect()
+    }
+
+    fn create_regex(pattern: &str) -> Regex {
+        build_regex(
+            RegexBuilder::new(pattern)
+            .multi_line(true)
+            .disallow_empty_match_at_eof_after_newline(true)
+        )
+        // TODO: debug_print regex
+    }
+
+    assert_eq!(find_all_matches(&create_regex(r"^"), "a\nb\n"), [0, 2]);
+    assert_eq!(find_all_matches(&create_regex(r"$"), "a\nb\n"), [0, 2]);
+    assert_eq!(find_all_matches(&create_regex(r"(?=)"), "a\nb\n"), [0, 1, 2, 3]);
 }
