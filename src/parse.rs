@@ -306,11 +306,11 @@ impl<'a> Parser<'a> {
             b'^' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    if !self.flag(FLAG_ONIGURUMA_MODE) {
-                        Expr::Assertion(Assertion::StartLine {
-                            crlf: self.flag(FLAG_CRLF),
-                        })
-                    } else {
+                    //if !self.flag(FLAG_ONIGURUMA_MODE) {
+                    Expr::Assertion(Assertion::StartLine {
+                        crlf: self.flag(FLAG_CRLF),
+                    })
+                    /*} else { // (?(\z)(?<!\n))$ // dollar/^ comes last because could with quantifiers? Otherwise have to wrap in concat... maybe better actually...
                         Expr::Concat(vec!(
                         Expr::Assertion(Assertion::StartLine {
                             crlf: self.flag(FLAG_CRLF),
@@ -319,7 +319,7 @@ impl<'a> Parser<'a> {
                             Expr::Assertion(Assertion::EndText)),
                             LookAheadNeg)
                         ))
-                    }
+                    }*/
                 } else {
                     Expr::Assertion(Assertion::StartText)
                 },

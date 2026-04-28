@@ -983,6 +983,8 @@ pub struct CompileOptions {
     /// to decide whether it is useful enough to replace the `SplitUnanchored` preamble with a
     /// `Seek` instruction. When `None`, seek is disabled entirely.
     pub seek_filter: Option<fn(&str) -> bool>,
+    /// To match Oniguruma behavior where only \z can match at EOF if preceeded by a newline character
+    pub disallow_empty_match_at_eof_after_newline: bool,
 }
 
 impl core::fmt::Debug for CompileOptions {
@@ -998,6 +1000,10 @@ impl core::fmt::Debug for CompileOptions {
             .field("anchored", &self.anchored)
             .field("contains_subroutines", &self.contains_subroutines)
             .field("seek_filter", &seek_filter_desc)
+            .field(
+                "disallow_empty_match_at_eof_after_newline",
+                &self.disallow_empty_match_at_eof_after_newline,
+            )
             .finish()
     }
 }
@@ -1064,6 +1070,9 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     if info.start_group() == 1 {
         // add implicit capture group 0 end
         c.b.add(Insn::Save(1));
+    }
+    if options.disallow_empty_match_at_eof_after_newline {
+        c.b.add(Insn::RejectEmptyMatchAtEOFFollowingNewline);
     }
     c.b.add(Insn::End);
     Ok(c.b.build())

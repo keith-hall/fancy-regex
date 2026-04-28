@@ -130,6 +130,9 @@ struct Analyzer<'a> {
     /// When true, nodes that could produce empty matches (min size 0 and not const size)
     /// are promoted to hard so the VM can backtrack past them to find a non-empty match.
     find_not_empty: bool,
+    /// When true, nodes that could produce empty matches (min size 0 and not const size)
+    /// are promoted to hard so the VM can ensure the whole match at EOF isn't empty.
+    disallow_empty_match_at_eof_after_newline: bool,
 }
 
 impl<'a> Analyzer<'a> {
@@ -153,6 +156,10 @@ impl<'a> Analyzer<'a> {
                 const_size = true;
                 hard = true;
             }
+            /*Expr::Assertion(Assertion::EndText) if self.disallow_empty_match_at_eof_after_newline => {
+                const_size = true;
+                hard = true; // NOTE: \Z is already considered hard and covered in the branch above
+            }*/ // NOTE: coverered in the condition at the end looking for min_size 0 and disallow_empty_match_at_eof_after_newline
             Expr::Empty | Expr::Assertion(_) => {
                 const_size = true;
             }
@@ -518,9 +525,12 @@ impl<'a> Analyzer<'a> {
             }
         };
 
-        // When find_not_empty is active, any node that could produce an empty match
+        // When find_not_empty or disallow_empty_match_at_eof_after_newline is active, any node that could produce an empty match
         // must be handled by the VM so it can backtrack past it to find a non-empty match.
-        if self.find_not_empty && min_size == 0 && !const_size {
+        if (self.find_not_empty || self.disallow_empty_match_at_eof_after_newline)
+            && min_size == 0
+            && !const_size
+        {
             hard = true;
         }
 
@@ -785,12 +795,15 @@ pub struct AnalyzeContext {
     /// `const_size`) are promoted to `hard` so that the VM can backtrack past them to find a
     /// non-empty match.
     pub find_not_empty: bool,
+    /// To match Oniguruma behavior where only \z can match at EOF if preceeded by a newline character
+    pub disallow_empty_match_at_eof_after_newline: bool,
 }
 
 /// Analyze the parsed expression to determine whether it requires fancy features.
 pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> {
     let explicit_capture_group_0 = ctx.explicit_capture_group_0;
     let find_not_empty = ctx.find_not_empty;
+    let disallow_empty_match_at_eof_after_newline = ctx.disallow_empty_match_at_eof_after_newline;
 
     // Check that numeric capture group references (backrefs and subroutine calls) and named groups are not mixed
     if tree.numbered_groups_ignored
@@ -823,6 +836,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         group_exprs,
         analyzing_groups: BitSet::new(),
         find_not_empty,
+        disallow_empty_match_at_eof_after_newline,
     };
 
     let analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
@@ -854,6 +868,10 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         analyzer.check_left_recursion(&tree.named_groups)?;
         analyzer.check_unbounded_recursion(&tree.expr)?;
     }
+
+    /*if analyzed.min_size == 0 && disallow_empty_match_at_eof_after_newline { // TODO: change to pass it through to visit, mark \z as hard + whole thing if min_size 0
+        analyzed.hard = true;
+    }*/
 
     Ok(analyzed)
 }
