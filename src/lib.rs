@@ -884,6 +884,7 @@ impl Regex {
         let mut tree = Expr::parse_tree_with_flags(&pattern, options.compute_flags())?;
 
         let find_not_empty = options.hard_regex_runtime_options.find_not_empty;
+        let disallow_empty_match_at_eof_after_newline = true; //options.hard_regex_runtime_options.disallow_empty_match_at_eof_after_newline;
 
         let requires_capture_group_fixup = if find_not_empty {
             // if the find_not_empty flag is set, we skip optimizations
@@ -901,6 +902,7 @@ impl Regex {
             AnalyzeContext {
                 explicit_capture_group_0: requires_capture_group_fixup,
                 find_not_empty,
+                disallow_empty_match_at_eof_after_newline,
             },
         )?;
 
@@ -933,6 +935,7 @@ impl Regex {
                 anchored: can_compile_as_anchored(&tree.expr),
                 contains_subroutines: tree.contains_subroutines,
                 seek_filter: options.seek_filter,
+                disallow_empty_match_at_eof_after_newline,
             },
         )?;
         Ok(Regex {
