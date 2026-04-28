@@ -527,9 +527,7 @@ impl<'a> Analyzer<'a> {
 
         // When find_not_empty or disallow_empty_match_at_eof_after_newline is active, any node that could produce an empty match
         // must be handled by the VM so it can backtrack past it to find a non-empty match.
-        if (self.find_not_empty || self.disallow_empty_match_at_eof_after_newline)
-            && min_size == 0
-            && !const_size
+        if min_size == 0 && ((self.find_not_empty && !const_size) || self.disallow_empty_match_at_eof_after_newline)
         {
             hard = true;
         }
