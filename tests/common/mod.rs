@@ -1,6 +1,6 @@
 use fancy_regex::Regex;
 
-#[cfg(test)]
+#[allow(dead_code)]
 pub fn regex(re: &str) -> Regex {
     let parse_result = Regex::new(re);
     assert!(

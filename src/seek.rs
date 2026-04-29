@@ -535,7 +535,10 @@ mod tests {
     fn seek_pattern_casei_literal_backref_with_anchor() {
         // Group contains a case-insensitive literal and a start anchor.
         // The anchor is dropped during backref inlining; the casei literal emits (?i:...).
-        assert_eq!(get_seek_pattern(r"(?i:(^a))\1"), "(?:(?-m:^)(?i:a))(?:(?i:a))");
+        assert_eq!(
+            get_seek_pattern(r"(?i:(^a))\1"),
+            "(?:(?-m:^)(?i:a))(?:(?i:a))"
+        );
     }
 
     #[test]

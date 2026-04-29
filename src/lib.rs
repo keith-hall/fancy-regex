@@ -695,7 +695,7 @@ impl RegexOptionsBuilder {
         self
     }
 
-    /// Attempts to better match [Oniguruma](https://github.com/kkos/oniguruma)'s default behavior
+    /// Attempts to better match [Oniguruma](https://github.com/kkos/oniguruma)'s default parsing behavior
     ///
     /// Currently this amounts to changing behavior with:
     ///
@@ -740,7 +740,9 @@ impl RegexOptionsBuilder {
     /// and even for lookarounds, unless \z is specifically used to anchor to the end of the string.
     /// This is how Oniguruma works for example.
     pub fn disallow_empty_match_at_eof_after_newline(&mut self, yes: bool) -> &mut Self {
-        self.options.hard_regex_runtime_options.disallow_empty_match_at_eof_after_newline = yes;
+        self.options
+            .hard_regex_runtime_options
+            .disallow_empty_match_at_eof_after_newline = yes;
         self
     }
 }
@@ -901,7 +903,9 @@ impl Regex {
         let mut tree = Expr::parse_tree_with_flags(&pattern, options.compute_flags())?;
 
         let find_not_empty = options.hard_regex_runtime_options.find_not_empty;
-        let disallow_empty_match_at_eof_after_newline = options.hard_regex_runtime_options.disallow_empty_match_at_eof_after_newline;
+        let disallow_empty_match_at_eof_after_newline = options
+            .hard_regex_runtime_options
+            .disallow_empty_match_at_eof_after_newline;
 
         let requires_capture_group_fixup = if find_not_empty {
             // if the find_not_empty flag is set, we skip optimizations

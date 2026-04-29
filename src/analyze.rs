@@ -156,7 +156,9 @@ impl<'a> Analyzer<'a> {
                 const_size = true;
                 hard = true;
             }
-            Expr::Assertion(Assertion::EndText) if self.disallow_empty_match_at_eof_after_newline => {
+            Expr::Assertion(Assertion::EndText)
+                if self.disallow_empty_match_at_eof_after_newline =>
+            {
                 const_size = true;
                 hard = true; // NOTE: \Z is already considered hard and covered in the branch above
             }
@@ -527,8 +529,7 @@ impl<'a> Analyzer<'a> {
 
         // When find_not_empty is active, any node that could produce an empty match must be
         // handled by the VM so it can backtrack past it to find a non-empty match.
-        if min_size == 0 && self.find_not_empty && !const_size
-        {
+        if min_size == 0 && self.find_not_empty && !const_size {
             hard = true;
         }
 

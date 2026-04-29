@@ -1,5 +1,5 @@
 use fancy_regex::{CompileError, Error, Regex, RegexBuilder};
-//use fancy_regex::common::DebugRegex;
+
 mod common;
 
 fn build_regex(builder: &RegexBuilder) -> Regex {
@@ -327,22 +327,40 @@ fn disallow_empty_match_at_eof_after_newline_does_as_it_says() {
     fn create_regex(pattern: &str, disallow: bool) -> Regex {
         let regex = build_regex(
             RegexBuilder::new(pattern)
-            .multi_line(true)
-            .disallow_empty_match_at_eof_after_newline(disallow)
+                .multi_line(true)
+                .disallow_empty_match_at_eof_after_newline(disallow),
         );
         println!("{}", common::DebugRegex(&regex));
         regex
     }
 
     let haystack = "a\nb\n";
-    assert_eq!(find_all_matches(&create_regex(r"^", true), haystack), [0, 2]);
-    assert_eq!(find_all_matches(&create_regex(r"$", true), haystack), [1, 3]);
-    assert_eq!(find_all_matches(&create_regex(r"(?=)", true), haystack), [0, 1, 2, 3]);
+    assert_eq!(
+        find_all_matches(&create_regex(r"^", true), haystack),
+        [0, 2]
+    );
+    assert_eq!(
+        find_all_matches(&create_regex(r"$", true), haystack),
+        [1, 3]
+    );
+    assert_eq!(
+        find_all_matches(&create_regex(r"(?=)", true), haystack),
+        [0, 1, 2, 3]
+    );
 
     // to demonstrate the difference, here is how it looks without this option
-    assert_eq!(find_all_matches(&create_regex(r"^", false), haystack), [0, 2, 4]);
-    assert_eq!(find_all_matches(&create_regex(r"$", false), haystack), [1, 3, 4]);
-    assert_eq!(find_all_matches(&create_regex(r"(?=)", false), haystack), [0, 1, 2, 3, 4]);
+    assert_eq!(
+        find_all_matches(&create_regex(r"^", false), haystack),
+        [0, 2, 4]
+    );
+    assert_eq!(
+        find_all_matches(&create_regex(r"$", false), haystack),
+        [1, 3, 4]
+    );
+    assert_eq!(
+        find_all_matches(&create_regex(r"(?=)", false), haystack),
+        [0, 1, 2, 3, 4]
+    );
 }
 
 #[test]
@@ -354,8 +372,8 @@ fn disallow_empty_match_at_eof_after_newline_still_allows_slash_z() {
     fn create_regex(pattern: &str, disallow: bool) -> Regex {
         let regex = build_regex(
             RegexBuilder::new(pattern)
-            .multi_line(true)
-            .disallow_empty_match_at_eof_after_newline(disallow)
+                .multi_line(true)
+                .disallow_empty_match_at_eof_after_newline(disallow),
         );
         println!("{}", common::DebugRegex(&regex));
         regex
@@ -366,5 +384,8 @@ fn disallow_empty_match_at_eof_after_newline_still_allows_slash_z() {
     assert_eq!(find_all_matches(&create_regex(r"$\z", true), haystack), [4]);
 
     assert_eq!(find_all_matches(&create_regex(r"\z", false), haystack), [4]);
-    assert_eq!(find_all_matches(&create_regex(r"$\z", false), haystack), [4]);
+    assert_eq!(
+        find_all_matches(&create_regex(r"$\z", false), haystack),
+        [4]
+    );
 }
