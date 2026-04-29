@@ -2314,8 +2314,8 @@ impl Expr {
                     buf.push(')');
                 }
             }
-            Expr::Assertion(Assertion::StartText) => buf.push('^'),
-            Expr::Assertion(Assertion::EndText) => buf.push('$'),
+            Expr::Assertion(Assertion::StartText) => buf.push_str("(?-m:^)"),
+            Expr::Assertion(Assertion::EndText) => buf.push_str("(?-m:$)"),
             Expr::Assertion(Assertion::StartLine { crlf: false }) => buf.push_str("(?m:^)"),
             Expr::Assertion(Assertion::EndLine { crlf: false }) => buf.push_str("(?m:$)"),
             Expr::Assertion(Assertion::StartLine { crlf: true }) => buf.push_str("(?Rm:^)"),
