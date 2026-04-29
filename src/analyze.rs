@@ -31,7 +31,7 @@ use bit_set::BitSet;
 use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
 use crate::vm::CaptureGroupRange;
-use crate::{AstNode, CaptureGroupTarget, CompileError, Error, Expr, Result};
+use crate::{Assertion, AstNode, CaptureGroupTarget, CompileError, Error, Expr, Result};
 
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as Map;
@@ -156,10 +156,10 @@ impl<'a> Analyzer<'a> {
                 const_size = true;
                 hard = true;
             }
-            /*Expr::Assertion(Assertion::EndText) if self.disallow_empty_match_at_eof_after_newline => {
+            Expr::Assertion(Assertion::EndText) if self.disallow_empty_match_at_eof_after_newline => {
                 const_size = true;
                 hard = true; // NOTE: \Z is already considered hard and covered in the branch above
-            }*/ // NOTE: coverered in the condition at the end looking for min_size 0 and disallow_empty_match_at_eof_after_newline
+            }
             Expr::Empty | Expr::Assertion(_) => {
                 const_size = true;
             }
@@ -525,9 +525,9 @@ impl<'a> Analyzer<'a> {
             }
         };
 
-        // When find_not_empty or disallow_empty_match_at_eof_after_newline is active, any node that could produce an empty match
-        // must be handled by the VM so it can backtrack past it to find a non-empty match.
-        if min_size == 0 && ((self.find_not_empty && !const_size) || self.disallow_empty_match_at_eof_after_newline)
+        // When find_not_empty is active, any node that could produce an empty match must be
+        // handled by the VM so it can backtrack past it to find a non-empty match.
+        if min_size == 0 && self.find_not_empty && !const_size
         {
             hard = true;
         }
@@ -837,7 +837,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         disallow_empty_match_at_eof_after_newline,
     };
 
-    let analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
+    let mut analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
     // With start_group == 1 (no explicit group 0) the valid backref range is 1..=total_groups.
     // With start_group == 0 (explicit group 0) group 0 is the whole match and inner groups are
     // numbered 1..=total_groups-1, so the valid range is 0..=total_groups-1.
@@ -867,9 +867,9 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         analyzer.check_unbounded_recursion(&tree.expr)?;
     }
 
-    /*if analyzed.min_size == 0 && disallow_empty_match_at_eof_after_newline { // TODO: change to pass it through to visit, mark \z as hard + whole thing if min_size 0
+    if analyzed.min_size == 0 && disallow_empty_match_at_eof_after_newline {
         analyzed.hard = true;
-    }*/
+    }
 
     Ok(analyzed)
 }

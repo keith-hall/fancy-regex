@@ -502,27 +502,27 @@ mod tests {
         // Backref to a group whose body starts with `^`: the anchor should be dropped from the
         // inlined backref position but kept at the group definition site.
         // `(^a)\1` — seek = `(?:^a)` (group) + `(?:a)` (backref, anchor dropped)
-        assert_eq!(get_seek_pattern(r"(^a)\1"), "(?:^a)(?:a)");
+        assert_eq!(get_seek_pattern(r"(^a)\1"), "(?:(?-m:^)a)(?:a)");
     }
 
     #[test]
     fn seek_pattern_backref_with_start_anchor_variable_length() {
         // The group has a start anchor plus a variable-length content.
         // Anchor is dropped when inlining for the backref.
-        assert_eq!(get_seek_pattern(r"(^a+)\1"), "(?:^a+)(?:a+)");
+        assert_eq!(get_seek_pattern(r"(^a+)\1"), "(?:(?-m:^)a+)(?:a+)");
     }
 
     #[test]
     fn seek_pattern_backref_with_end_anchor() {
         // Backref to a group ending with `$`: the anchor is dropped in the inline position.
-        assert_eq!(get_seek_pattern(r"(a$)\1"), "(?:a$)(?:a)");
+        assert_eq!(get_seek_pattern(r"(a$)\1"), "(?:a(?-m:$))(?:a)");
     }
 
     #[test]
     fn seek_pattern_backref_only_anchor() {
         // Backref to a group that is only a positional anchor.
         // The group emits `^` (min_size=0); the backref drops `^` and emits nothing.
-        assert_eq!(get_seek_pattern(r"(^)\1"), "^");
+        assert_eq!(get_seek_pattern(r"(^)\1"), "(?-m:^)");
     }
 
     #[test]
@@ -535,7 +535,7 @@ mod tests {
     fn seek_pattern_casei_literal_backref_with_anchor() {
         // Group contains a case-insensitive literal and a start anchor.
         // The anchor is dropped during backref inlining; the casei literal emits (?i:...).
-        assert_eq!(get_seek_pattern(r"(?i:(^a))\1"), "(?:^(?i:a))(?:(?i:a))");
+        assert_eq!(get_seek_pattern(r"(?i:(^a))\1"), "(?:(?-m:^)(?i:a))(?:(?i:a))");
     }
 
     #[test]
