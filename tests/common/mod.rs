@@ -13,6 +13,7 @@ pub fn regex(re: &str) -> Regex {
 }
 
 use std::fmt;
+#[allow(dead_code)]
 pub struct DebugRegex<'a>(pub &'a Regex);
 impl fmt::Display for DebugRegex<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
