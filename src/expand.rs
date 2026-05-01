@@ -239,18 +239,27 @@ impl Expander {
                     id,
                     relative: None,
                     skip,
-                }) = parse_id(tail, self.open, self.close, false).or_else(|| {
-                    if self.allow_undelimited_name {
-                        parse_id(tail, "", "", false)
-                    } else {
-                        None
-                    }
-                }) {
+                }) = parse_id(tail, self.open, self.close, false)
+                {
                     f(Step::GroupName(id))?;
                     skip
                 } else if let Some((skip, num)) = parse_usize(tail, 0) {
                     f(Step::GroupNum(num))?;
                     skip
+                } else if self.allow_undelimited_name {
+                    if let Some(ParsedId {
+                        id,
+                        relative: None,
+                        skip,
+                    }) = parse_id(tail, "", "", false)
+                    {
+                        f(Step::GroupName(id))?;
+                        skip
+                    } else {
+                        f(Step::Error)?;
+                        f(Step::Char(self.sub_char))?;
+                        0
+                    }
                 } else {
                     f(Step::Error)?;
                     f(Step::Char(self.sub_char))?;

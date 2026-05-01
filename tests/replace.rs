@@ -74,6 +74,14 @@ fn replace_all() {
     assert_eq!(regex.replace_all("aaaa aaa aa a", "xx"), "xxxx xxa xx a");
 }
 
+/// `$1Suffix` treats `$1` as the numbered group and `Suffix` as a literal
+#[test]
+fn numbered_group_followed_by_literal() {
+    let regex = common::regex(r"(\w+)EventPayload");
+    let result = regex.replace("UserEventPayload", "$1Schema");
+    assert_eq!(result, "UserSchema");
+}
+
 /// `replacen()` replaces predefined number of times
 #[test]
 fn replacen() {

@@ -598,11 +598,11 @@ fn expand() {
     assert_expansion(&cap, "$4", "d");
     assert_expansion(&cap, "$π", "c");
     assert_expansion(&cap, "$x", "d");
-    assert_expansion(&cap, "$0π", "");
-    assert_expansion(&cap, "$1π", "");
-    assert_expansion(&cap, "$2π", "");
-    assert_expansion(&cap, "$3π", "");
-    assert_expansion(&cap, "$4π", "");
+    assert_expansion(&cap, "$0π", "abcdπ");
+    assert_expansion(&cap, "$1π", "aπ");
+    assert_expansion(&cap, "$2π", "bπ");
+    assert_expansion(&cap, "$3π", "cπ");
+    assert_expansion(&cap, "$4π", "dπ");
     assert_expansion(&cap, "$ππ", "");
     assert_expansion(&cap, "$xπ", "");
     assert_expansion(&cap, "${0}π", "abcdπ");
