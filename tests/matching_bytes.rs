@@ -103,7 +103,7 @@ fn bytes_find_from_pos() {
         .bytes_mode(BytesMode::Ascii)
         .build()
         .unwrap();
-    let mat = re.find_from_pos_bytes(b"abc 123", 4).unwrap().unwrap();
+    let mat = re.find_from_pos(b"abc 123", 4).unwrap().unwrap();
     assert_eq!(mat.start(), 4);
     assert_eq!(mat.end(), 7);
     assert_eq!(mat.as_bytes(), b"123");
@@ -115,7 +115,7 @@ fn bytes_find_from_pos_no_match() {
         .bytes_mode(BytesMode::Ascii)
         .build()
         .unwrap();
-    let result = re.find_from_pos_bytes(b"abc 123", 7).unwrap();
+    let result = re.find_from_pos(b"abc 123", 7).unwrap();
     assert!(result.is_none());
 }
 
@@ -128,7 +128,7 @@ fn bytes_non_utf8_input() {
     let input = b"\x80\x81\x82 123";
     assert!(re.is_match(input).unwrap());
 
-    let mat = re.find_from_pos_bytes(input, 0).unwrap().unwrap();
+    let mat = re.find_from_pos(input, 0).unwrap().unwrap();
     assert_eq!(mat.as_bytes(), b"123");
 }
 
@@ -151,10 +151,7 @@ fn bytes_ascii_dot_matches_non_utf8() {
         .bytes_mode(BytesMode::Ascii)
         .build()
         .unwrap();
-    let mat = re
-        .find_from_pos_bytes(b"\xff\xfe\xfd", 0)
-        .unwrap()
-        .unwrap();
+    let mat = re.find_from_pos(b"\xff\xfe\xfd", 0).unwrap().unwrap();
     assert_eq!(mat.as_bytes(), b"\xff\xfe\xfd");
 }
 
@@ -223,6 +220,66 @@ fn bytes_general_newline_escape() {
     assert_match_bytes(r"a\Rb", b"a\nb");
     assert_no_match_bytes(r"\R\n", b"\r\n");
     assert_no_match_bytes(r"^\R$", b"a");
+}
+
+#[test]
+fn bytes_find_returns_matchbytes() {
+    let re = RegexBuilder::new(r"\d+")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let mat = re.find(b"abc 123").unwrap().unwrap();
+    assert_eq!(mat.start(), 4);
+    assert_eq!(mat.end(), 7);
+    assert_eq!(mat.as_bytes(), b"123");
+}
+
+#[test]
+fn bytes_find_no_match() {
+    let re = RegexBuilder::new(r"\d+")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let result = re.find(b"abc").unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn bytes_find_iter() {
+    let re = RegexBuilder::new(r"\d+")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let mut matches = re.find_iter(b"a1 b23 c456");
+    let m1 = matches.next().unwrap().unwrap();
+    assert_eq!(m1.as_bytes(), b"1");
+    let m2 = matches.next().unwrap().unwrap();
+    assert_eq!(m2.as_bytes(), b"23");
+    let m3 = matches.next().unwrap().unwrap();
+    assert_eq!(m3.as_bytes(), b"456");
+    assert!(matches.next().is_none());
+}
+
+#[test]
+fn bytes_find_iter_non_utf8() {
+    let re = RegexBuilder::new(r".+")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let mut matches = re.find_iter(b"\x80\x81\x82");
+    let m = matches.next().unwrap().unwrap();
+    assert_eq!(m.as_bytes(), b"\x80\x81\x82");
+    assert!(matches.next().is_none());
+}
+
+#[test]
+fn bytes_find_with_str_still_works() {
+    let re = RegexBuilder::new(r"\d+")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let mat = re.find("abc 123").unwrap().unwrap();
+    assert_eq!(mat.as_str(), "123");
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
