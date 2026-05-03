@@ -119,7 +119,7 @@ impl<'a> Parser<'a> {
     }
 
     fn new(re: &str, flags: u32) -> Parser<'_> {
-        let flags = flags | FLAG_UNICODE;
+        //let flags = flags | FLAG_UNICODE;
 
         Parser {
             re,
