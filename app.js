@@ -2,7 +2,9 @@ import init, {
     find_captures,
     parse_regex,
     analyze_regex,
-} from './fancy_regex_playground.js';
+    analyze_regex_tree,
+    is_match
+} from './pkg/fancy_regex_playground.js';
 
 class FancyRegexPlayground {
     constructor() {
@@ -29,13 +31,14 @@ class FancyRegexPlayground {
             analysisDisplay: document.getElementById('analysis-display'),
             showParseTreeBtn: document.getElementById('show-parse-tree'),
             showAnalysisBtn: document.getElementById('show-analysis'),
-            debounceDelayInput: document.getElementById('debounce-delay'),
             flags: {
                 caseInsensitive: document.getElementById('flag-case-insensitive'),
                 multiLine: document.getElementById('flag-multi-line'),
                 dotMatchesNewline: document.getElementById('flag-dot-matches-newline'),
                 ignoreWhitespace: document.getElementById('flag-ignore-whitespace'),
-                unicode: document.getElementById('flag-unicode')
+                onigurumaMode: document.getElementById('flag-oniguruma-mode'),
+                findNotEmpty: document.getElementById('flag-find-not-empty'),
+                ignoreNumberedGroups: document.getElementById('flag-ignore-numbered-groups'),
             }
         };
 
@@ -53,12 +56,6 @@ class FancyRegexPlayground {
             flag.addEventListener('change', () => this.debounceUpdate());
         });
 
-        // Debounce delay change handler
-        this.elements.debounceDelayInput.addEventListener('input', () => {
-            // No need to debounce the debounce delay change itself
-            this.updateResults();
-        });
-
         // Toggle button handlers
         this.elements.showParseTreeBtn.addEventListener('click', () => this.toggleParseTree());
         this.elements.showAnalysisBtn.addEventListener('click', () => this.toggleAnalysis());
@@ -66,8 +63,8 @@ class FancyRegexPlayground {
 
     debounceUpdate() {
         clearTimeout(this.debounceTimer);
-        const delay = parseInt(this.elements.debounceDelayInput.value, 10) || 300;
-        this.debounceTimer = setTimeout(() => this.updateResults(), delay);
+        const delayMs = 300;
+        this.debounceTimer = setTimeout(() => this.updateResults(), delayMs);
     }
 
     getFlags() {
@@ -76,7 +73,10 @@ class FancyRegexPlayground {
             multi_line: this.elements.flags.multiLine.checked,
             dot_matches_new_line: this.elements.flags.dotMatchesNewline.checked,
             ignore_whitespace: this.elements.flags.ignoreWhitespace.checked,
-            unicode: this.elements.flags.unicode.checked
+            unicode: true,
+            oniguruma_mode: this.elements.flags.onigurumaMode.checked,
+            find_not_empty: this.elements.flags.findNotEmpty.checked,
+            ignore_numbered_groups_when_named_groups_exist: this.elements.flags.ignoreNumberedGroups.checked,
         };
     }
 
@@ -95,7 +95,10 @@ class FancyRegexPlayground {
             this.setLoading(true);
             const flags = this.getFlags();
 
-            // Test if pattern is valid by checking if it matches anything
+            this.updateParseTreeIfVisible(pattern, flags);
+            this.updateAnalysisIfVisible(pattern, flags);
+
+            // Test if pattern is valid
             const isValid = await this.testRegexValidity(pattern, flags);
             if (!isValid) return;
 
@@ -106,8 +109,6 @@ class FancyRegexPlayground {
             const matches = captures.map(capture => capture.full_match).filter(match => match !== null);
             
             this.displayResults(matches, captures, text);
-            this.updateParseTreeIfVisible(pattern, flags);
-            this.updateAnalysisIfVisible(pattern, flags);
 
         } catch (error) {
             this.displayError(error.toString());
@@ -122,7 +123,7 @@ class FancyRegexPlayground {
             parse_regex(pattern, flags);
             return true;
         } catch (error) {
-            this.displayError(`Pattern error: ${error.toString()}`);
+            this.displayError(error.toString());
             return false;
         }
     }
@@ -177,17 +178,20 @@ class FancyRegexPlayground {
         // Sort matches by start position (descending) to avoid position shifts during insertion
         const sortedMatches = [...matches].sort((a, b) => b.start - a.start);
         
-        let highlightedText = text;
+        const originalText = new Utf8String(text);
+        let highlightedTextChunks = [];
+        let latestOffset = originalText.buffer.length;
         
         sortedMatches.forEach((match, index) => {
-            const before = highlightedText.substring(0, match.start);
-            const matchText = highlightedText.substring(match.start, match.end);
-            const after = highlightedText.substring(match.end);
-            
-            highlightedText = before + 
-                `<span class="match-highlight" title="Match ${sortedMatches.length - index}: ${match.start}-${match.end}">${this.escapeHtml(matchText)}</span>` + 
-                after;
+            const matchText = originalText.substr(match.start, match.end);
+            highlightedTextChunks.push(originalText.substr(match.end, latestOffset));
+            highlightedTextChunks.push(
+                /*html*/`<span class="match-highlight" title="Match ${sortedMatches.length - index}: ${match.start}-${match.end}">${this.escapeHtml(matchText)}</span>`
+            );
+            latestOffset = match.start;
         });
+        highlightedTextChunks.push(originalText.substr(0, latestOffset));
+        const highlightedText = highlightedTextChunks.reverse().join('');
 
         this.elements.highlightedText.innerHTML = highlightedText;
     }
@@ -242,16 +246,11 @@ class FancyRegexPlayground {
             flags = this.getFlags();
         }
 
-        if (!pattern) {
-            this.elements.parseTreeDisplay.textContent = 'Enter a regex pattern to see its parse tree';
-            return;
-        }
-
         try {
             const parseTree = parse_regex(pattern, flags);
             this.elements.parseTreeDisplay.textContent = parseTree;
         } catch (error) {
-            this.elements.parseTreeDisplay.textContent = `Parse error: ${error.toString()}`;
+            this.elements.parseTreeDisplay.textContent = error.toString();
         }
     }
 
@@ -263,16 +262,122 @@ class FancyRegexPlayground {
             flags = this.getFlags();
         }
 
-        if (!pattern) {
-            this.elements.analysisDisplay.textContent = 'Enter a regex pattern to see its analysis';
-            return;
+        try {
+            const analysisTree = analyze_regex_tree(pattern, flags);
+            this.renderAnalysisTree(analysisTree);
+        } catch (error) {
+            this.elements.analysisDisplay.innerHTML = `<div class="error">${this.escapeHtml(error.toString())}</div>`;
+        }
+    }
+
+    renderAnalysisTree(analysisTree) {
+        // Clear and build the tree view
+        this.elements.analysisDisplay.innerHTML = '';
+
+        // Create header
+        const header = document.createElement('div');
+        header.className = 'analysis-grid__header';
+        header.innerHTML = `
+            <div class="analysis-row__node">Node</div>
+            <div class="analysis-row__min-size">min_size</div>
+            <div class="analysis-row__const-size">const_size</div>
+        `;
+        this.elements.analysisDisplay.appendChild(header);
+
+        // Create tree container
+        const treeContainer = document.createElement('div');
+        treeContainer.className = 'analysis-tree';
+        this.elements.analysisDisplay.appendChild(treeContainer);
+
+        // Render the tree
+        this.renderTreeNode(analysisTree, treeContainer, 0, '0');
+    }
+
+    renderTreeNode(node, container, depth, path) {
+        // Create row
+        const row = document.createElement('div');
+        row.id = `analysis-node-${path}`;
+        row.className = `analysis-row ${node.hard ? 'analysis-node--hard' : 'analysis-node--easy'}`;
+
+        // Create node cell with indentation
+        const nodeCell = document.createElement('div');
+        nodeCell.className = 'analysis-row__node';
+
+        const indent = document.createElement('span');
+        indent.className = 'analysis-node__indent';
+        indent.style.paddingLeft = `${depth * 1.5}rem`;
+
+        // Add toggle if has children
+        if (node.children.length > 0) {
+            const toggle = document.createElement('span');
+            toggle.className = 'analysis-node__toggle';
+            toggle.textContent = '-';
+            toggle.onclick = (e) => {
+                e.stopPropagation();
+                this.toggleNode(path);
+            };
+            indent.appendChild(toggle);
+        } else {
+            // Placeholder for alignment
+            const placeholder = document.createElement('span');
+            placeholder.className = 'analysis-node__toggle analysis-node__toggle--placeholder';
+            placeholder.textContent = ' ';
+            indent.appendChild(placeholder);
         }
 
-        try {
-            const analysis = analyze_regex(pattern, flags);
-            this.elements.analysisDisplay.textContent = analysis;
-        } catch (error) {
-            this.elements.analysisDisplay.textContent = `Analysis error: ${error.toString()}`;
+        // Add node label
+        const label = document.createElement('span');
+        label.className = 'analysis-node__label';
+        label.textContent = `${node.kind}${node.summary ? ' ' + node.summary : ''}`;
+        indent.appendChild(label);
+
+        nodeCell.appendChild(indent);
+        row.appendChild(nodeCell);
+
+        // Add min_size cell
+        const minSizeCell = document.createElement('div');
+        minSizeCell.className = 'analysis-row__min-size';
+        minSizeCell.textContent = node.min_size.toString();
+        row.appendChild(minSizeCell);
+
+        // Add const_size cell
+        const constSizeCell = document.createElement('div');
+        constSizeCell.className = 'analysis-row__const-size';
+        if (node.const_size) {
+            constSizeCell.className += ' const-size-tick';
+            constSizeCell.textContent = '✓';
+        } else {
+            constSizeCell.className += ' const-size-cross';
+            constSizeCell.textContent = '✗';
+        }
+        row.appendChild(constSizeCell);
+
+        container.appendChild(row);
+
+        // Render children if expanded - wrap in container for CSS toggling
+        if (node.children.length > 0) {
+            const childrenContainer = document.createElement('div');
+            childrenContainer.id = `analysis-children-${path}`;
+            childrenContainer.className = 'analysis-children';
+
+            node.children.forEach((child, index) => {
+                const childPath = `${path}-${index}`;
+                this.renderTreeNode(child, childrenContainer, depth + 1, childPath);
+            });
+
+            container.appendChild(childrenContainer);
+        }
+    }
+
+    toggleNode(path) {
+        const childrenContainer = document.getElementById(`analysis-children-${path}`);
+        if (!childrenContainer) return;
+
+        const isCollapsed = childrenContainer.classList.toggle('analysis-children--collapsed');
+
+        const toggle = document.querySelector(`#analysis-node-${path} .analysis-node__toggle`);
+        if (toggle) {
+            toggle.textContent = isCollapsed ? '+' : '-';
         }
     }
 
@@ -307,6 +412,7 @@ class FancyRegexPlayground {
         this.elements.textInput.value = `This is a test test with some some repeated words.
 Another line line with more more examples.
 Single words here.
+Here are some Greek letters and an emoji: δ Δ 🎯
 And and final test test case.`;
         
         // Trigger initial update
@@ -317,12 +423,12 @@ And and final test test case.`;
 // Initialize the playground when the page loads
 const playground = new FancyRegexPlayground();
 playground.init().then(() => {
-    console.log('Fancy Regex Playground initialized successfully!');
+    console.log('fancy-regex playground initialized successfully!');
 }).catch(error => {
     console.error('Failed to initialize playground:', error);
     document.body.innerHTML = `
         <div style="padding: 2rem; text-align: center; color: #e74c3c;">
-            <h1>Failed to load Fancy Regex Playground</h1>
+            <h1>Failed to load the fancy-regex playground</h1>
             <p>Error: ${error.message}</p>
             <p>Please check the browser console for more details.</p>
         </div>
