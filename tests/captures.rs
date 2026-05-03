@@ -15,61 +15,31 @@ fn capture_names() {
 
 #[test]
 fn captures_fancy() {
-    let captures = captures(r"\s*(\w+)(?=\.)", "foo bar.");
+    let captures = common::assert_captures(r"\s*(\w+)(?=\.)", "foo bar.").unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), " bar", 3, 7);
     assert_match(captures.get(1), "bar", 4, 7);
     assert!(captures.get(2).is_none());
-
-    // Same assertions through the bytes API
-    let re = common::bytes_regex(r"\s*(\w+)(?=\.)");
-    let caps = re.captures(b"foo bar.").unwrap().unwrap();
-    assert_eq!(caps.len(), 2);
-    assert_bytes_match(caps.get(0), b" bar", 3, 7);
-    assert_bytes_match(caps.get(1), b"bar", 4, 7);
-    assert!(caps.get(2).is_none());
 }
 
 #[test]
 fn captures_fancy_named() {
-    let captures = captures(r"\s*(?<name>\w+)(?=\.)", "foo bar.");
+    let captures = common::assert_captures(r"\s*(?<name>\w+)(?=\.)", "foo bar.").unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), " bar", 3, 7);
     assert_match(captures.name("name"), "bar", 4, 7);
     assert_eq!(captures.index(0), " bar");
     assert_eq!(captures.index("name"), "bar");
     assert!(captures.get(2).is_none());
-
-    // Same assertions through the bytes API
-    let re = common::bytes_regex(r"\s*(?<name>\w+)(?=\.)");
-    let caps = re.captures(b"foo bar.").unwrap().unwrap();
-    assert_eq!(caps.len(), 2);
-    assert_bytes_match(caps.get(0), b" bar", 3, 7);
-    assert_bytes_match(caps.name("name"), b"bar", 4, 7);
-    assert!(caps.get(2).is_none());
 }
 
 #[test]
 fn captures_fancy_unmatched_group() {
-    let captures = captures(r"(\w+)(?=\.)|(\w+)(?=!)", "foo! bar.");
+    let captures = common::assert_captures(r"(\w+)(?=\.)|(\w+)(?=!)", "foo! bar.").unwrap();
     assert_eq!(captures.len(), 3);
     assert_match(captures.get(0), "foo", 0, 3);
     assert!(captures.get(1).is_none());
     assert_match(captures.get(2), "foo", 0, 3);
-
-    // Same assertions through the bytes API
-    let re = common::bytes_regex(r"(\w+)(?=\.)|(\w+)(?=!)");
-    let caps = re.captures(b"foo! bar.").unwrap().unwrap();
-    assert_eq!(caps.len(), 3);
-    assert_bytes_match(caps.get(0), b"foo", 0, 3);
-    assert!(caps.get(1).is_none());
-    assert_bytes_match(caps.get(2), b"foo", 0, 3);
-    // Verify .iter() reflects the same None/Some pattern
-    let groups: Vec<_> = caps.iter().collect();
-    assert_eq!(groups.len(), 3);
-    assert!(groups[0].is_some());
-    assert!(groups[1].is_none());
-    assert!(groups[2].is_some());
 }
 
 #[test]
@@ -324,7 +294,7 @@ fn captures_iter() {
     }
 
     // Same assertions through the bytes API
-    let all_caps: Vec<_> = common::bytes_regex(r"(?P<num>\d)\d")
+    let all_caps: Vec<_> = common::ascii_bytes_regex(r"(?P<num>\d)\d")
         .captures_iter(b"11 21 33")
         .map(|c| c.unwrap())
         .collect();
@@ -370,7 +340,7 @@ fn captures_iter_continue_from_previous_match_end() {
     }
 
     // Same assertions through the bytes API
-    let all_caps: Vec<_> = common::bytes_regex(r"\G(\d)\d")
+    let all_caps: Vec<_> = common::ascii_bytes_regex(r"\G(\d)\d")
         .captures_iter(b"1122 33")
         .map(|c| c.unwrap())
         .collect();
@@ -495,7 +465,7 @@ fn captures_from_pos() {
     assert_match(matches[1], "3", 6, 7);
 
     // Same assertions through the bytes API
-    let re = common::bytes_regex(r"(\d)\d");
+    let re = common::ascii_bytes_regex(r"(\d)\d");
     let caps = re.captures_from_pos(b"11 21 33", 3).unwrap().unwrap();
     assert_eq!(caps.len(), 2);
     assert_bytes_match(caps.get(0), b"21", 3, 5);
@@ -505,7 +475,7 @@ fn captures_from_pos() {
     assert_bytes_match(groups[0], b"21", 3, 5);
     assert_bytes_match(groups[1], b"2", 3, 4);
 
-    let re = common::bytes_regex(r"(\d+)\1");
+    let re = common::ascii_bytes_regex(r"(\d+)\1");
     let caps = re.captures_from_pos(b"11 21 33", 3).unwrap().unwrap();
     assert_eq!(caps.len(), 2);
     assert_bytes_match(caps.get(0), b"33", 6, 8);
@@ -635,106 +605,54 @@ fn forward_reference_subroutine_capture_groups() {
 
 #[test]
 fn captures_easy() {
-    let re = common::regex(r"(\d+)-(\d+)");
-    let caps = re.captures("abc 123-456 def").unwrap().unwrap();
+    let caps = common::assert_captures(r"(\d+)-(\d+)", "abc 123-456 def").unwrap();
     assert_eq!(caps.len(), 3);
     assert_match(caps.get(0), "123-456", 4, 11);
     assert_match(caps.get(1), "123", 4, 7);
     assert_match(caps.get(2), "456", 8, 11);
     assert!(caps.get(3).is_none());
-
-    // Same assertions through the bytes API
-    let re = common::bytes_regex(r"(\d+)-(\d+)");
-    let caps = re.captures(b"abc 123-456 def").unwrap().unwrap();
-    assert_eq!(caps.len(), 3);
-    assert_bytes_match(caps.get(0), b"123-456", 4, 11);
-    assert_bytes_match(caps.get(1), b"123", 4, 7);
-    assert_bytes_match(caps.get(2), b"456", 8, 11);
-    assert!(caps.get(3).is_none());
 }
 
 #[test]
 fn captures_named() {
-    let re = common::regex(r"(?<first>\d+)-(?<second>\d+)");
-    let caps = re.captures("12-34").unwrap().unwrap();
+    let caps = common::assert_captures(r"(?<first>\d+)-(?<second>\d+)", "12-34").unwrap();
     assert_match(caps.name("first"), "12", 0, 2);
     assert_match(caps.name("second"), "34", 3, 5);
-    assert!(caps.name("nonexistent").is_none());
-
-    // Same assertions through the bytes API
-    let re = common::bytes_regex(r"(?<first>\d+)-(?<second>\d+)");
-    let caps = re.captures(b"12-34").unwrap().unwrap();
-    assert_bytes_match(caps.name("first"), b"12", 0, 2);
-    assert_bytes_match(caps.name("second"), b"34", 3, 5);
     assert!(caps.name("nonexistent").is_none());
 }
 
 #[test]
 fn captures_iter_groups() {
-    let re = common::regex(r"(\d+)-(\d+)");
-    let caps = re.captures("123-456").unwrap().unwrap();
+    let caps = common::assert_captures(r"(\d+)-(\d+)", "123-456").unwrap();
     let groups: Vec<_> = caps.iter().collect();
     assert_eq!(groups.len(), 3);
     assert_match(groups[0], "123-456", 0, 7);
     assert_match(groups[1], "123", 0, 3);
     assert_match(groups[2], "456", 4, 7);
-
-    // Same assertions through the bytes API
-    let re = common::bytes_regex(r"(\d+)-(\d+)");
-    let caps = re.captures(b"123-456").unwrap().unwrap();
-    let groups: Vec<_> = caps.iter().collect();
-    assert_eq!(groups.len(), 3);
-    assert_bytes_match(groups[0], b"123-456", 0, 7);
-    assert_bytes_match(groups[1], b"123", 0, 3);
-    assert_bytes_match(groups[2], b"456", 4, 7);
 }
 
 #[test]
 fn captures_backrefs() {
-    let re = common::regex(r"(\w+)\s+\1");
-    let caps = re.captures("abc abc").unwrap().unwrap();
+    let caps = common::assert_captures(r"(\w+)\s+\1", "abc abc").unwrap();
     assert_eq!(caps.len(), 2);
     assert_match(caps.get(0), "abc abc", 0, 7);
     assert_match(caps.get(1), "abc", 0, 3);
-
-    // Same assertions through the bytes API
-    let re = common::bytes_regex(r"(\w+)\s+\1");
-    let caps = re.captures(b"abc abc").unwrap().unwrap();
-    assert_eq!(caps.len(), 2);
-    assert_bytes_match(caps.get(0), b"abc abc", 0, 7);
-    assert_bytes_match(caps.get(1), b"abc", 0, 3);
 }
 
 #[test]
 fn captures_subroutine() {
-    let re = common::regex(r"^(?<pair>..)\g<pair>$");
-    let caps = re.captures("abcd").unwrap().unwrap();
+    let caps = common::assert_captures(r"^(?<pair>..)\g<pair>$", "abcd").unwrap();
     assert_eq!(caps.len(), 2);
     assert_match(caps.get(0), "abcd", 0, 4);
     assert_match(caps.name("pair"), "cd", 2, 4);
-
-    // Same assertions through the bytes API
-    let re = common::bytes_regex(r"^(?<pair>..)\g<pair>$");
-    let caps = re.captures(b"abcd").unwrap().unwrap();
-    assert_eq!(caps.len(), 2);
-    assert_bytes_match(caps.get(0), b"abcd", 0, 4);
-    assert_bytes_match(caps.name("pair"), b"cd", 2, 4);
 }
 
 #[test]
 fn captures_lookbehind_digits() {
-    let re = common::regex(r"(?<=[a-z])(\d+)");
-    let caps = re.captures("abc123").unwrap().unwrap();
+    let caps = common::assert_captures(r"(?<=[a-z])(\d+)", "abc123").unwrap();
     assert_eq!(caps.len(), 2);
     assert_match(caps.get(0), "123", 3, 6);
     assert_match(caps.get(1), "123", 3, 6);
-
-    // Same assertions through the bytes API
-    let re = common::bytes_regex(r"(?<=[a-z])(\d+)");
-    let caps = re.captures(b"abc123").unwrap().unwrap();
-    assert_eq!(caps.len(), 2);
-    assert_bytes_match(caps.get(0), b"123", 3, 6);
-    assert_bytes_match(caps.get(1), b"123", 3, 6);
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]

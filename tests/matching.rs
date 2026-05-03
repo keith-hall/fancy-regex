@@ -22,7 +22,7 @@ fn character_class_escapes() {
     // Other engines allow to escape any non-alphanumeric character.
     common::assert_is_match(r"[\<]", "<");
     common::assert_is_match(r"[\>]", ">");
-    assert_match(r"[\.]", "."); // not tested in bytes mode; keep str-only
+    assert_match(r"[\.]", ".");
     common::assert_is_match(r"[\ ]", " ");
 
     // Character class escape
