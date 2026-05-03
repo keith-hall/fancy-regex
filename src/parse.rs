@@ -20,7 +20,7 @@
 
 //! A regex parser yielding an AST.
 
-use crate::RegexOptions;
+//use crate::RegexOptions;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -114,9 +114,9 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub(crate) fn parse(re: &str) -> Result<ExprTree> {
+    /*pub(crate) fn parse(re: &str) -> Result<ExprTree> {
         Self::parse_with_flags(re, RegexOptions::default().compute_flags())
-    }
+    }*/
 
     fn new(re: &str, flags: u32) -> Parser<'_> {
         //let flags = flags | FLAG_UNICODE;
