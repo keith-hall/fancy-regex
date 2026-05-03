@@ -333,7 +333,9 @@ fn check_find_not_empty_allows_trailing_lookahead_with_content() {
 //   `\p{...}` fail to compile, because they could match individual bytes that
 //   violate UTF-8 boundaries (the underlying engine requires valid UTF-8 when
 //   operating on `str`).
-// - The inline `(?-u)` flag inside a pattern is always rejected.
+// - The inline `(?-u)` flag is rejected when it would change the unicode mode
+//   (i.e. when unicode_mode(true) is active, the default), but accepted as a
+//   no-op when it matches the current builder setting (i.e. unicode_mode(false)).
 // - The unicode flag is also honoured in "hard" (backtracking-VM) patterns
 //   such as those containing lookarounds.
 //
@@ -422,17 +424,48 @@ fn unicode_mode_false_unicode_properties_fail_to_compile() {
     );
 }
 
-/// The inline `(?-u)` flag inside a pattern is always rejected, regardless of
-/// the builder setting.
+/// The inline `(?-u)` flag is rejected when unicode mode is **enabled**
+/// (the default), because it would attempt to change the mode. It is accepted
+/// as a no-op when unicode mode is **already disabled** via the builder.
+/// Conversely, inline `(?u)` is accepted when unicode mode is already enabled,
+/// and rejected when it is disabled.
 #[test]
-fn unicode_mode_inline_disable_flag_rejected() {
+fn unicode_mode_inline_flag_only_allowed_when_matching_builder_setting() {
+    // (?-u) while unicode is ON (default) → error: would change the mode
     let result = Regex::new(r"(?-u)\w+");
     assert!(
         matches!(
             result,
-            Err(Error::ParseError(_, ParseError::NonUnicodeUnsupported))
+            Err(Error::ParseError(_, ParseError::ChangingUnicodeModeUnsupported))
         ),
-        "Expected NonUnicodeUnsupported error for (?-u), got {:?}",
+        "Expected ChangingUnicodeModeUnsupported for (?-u) with unicode enabled, got {:?}",
+        result
+    );
+
+    // (?-u) while unicode is OFF → accepted (no-op)
+    let result = RegexBuilder::new(r"(?-u)\w+").unicode_mode(false).build();
+    assert!(
+        result.is_ok(),
+        "Expected (?-u) to be accepted when unicode_mode(false), got {:?}",
+        result
+    );
+
+    // (?u) while unicode is ON (default) → accepted (no-op)
+    let result = Regex::new(r"(?u)\w+");
+    assert!(
+        result.is_ok(),
+        "Expected (?u) to be accepted when unicode is enabled (default), got {:?}",
+        result
+    );
+
+    // (?u) while unicode is OFF → error: would change the mode
+    let result = RegexBuilder::new(r"(?u)\w+").unicode_mode(false).build();
+    assert!(
+        matches!(
+            result,
+            Err(Error::ParseError(_, ParseError::ChangingUnicodeModeUnsupported))
+        ),
+        "Expected ChangingUnicodeModeUnsupported for (?u) with unicode disabled, got {:?}",
         result
     );
 }

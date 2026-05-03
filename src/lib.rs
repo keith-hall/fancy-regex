@@ -634,9 +634,12 @@ impl RegexOptionsBuilder {
 
     /// Enable or disable the Unicode flag (`u`) by default.
     ///
-    /// By default this is **enabled**. The inline `(?-u)` flag inside a
-    /// pattern is **always rejected** — use this builder method to disable
-    /// Unicode mode instead.
+    /// By default this is **enabled**. The inline `u` flag inside a pattern
+    /// is only accepted when it **matches** the current builder setting (e.g.
+    /// `(?u)` when unicode is already enabled, or `(?-u)` when it is already
+    /// disabled). Attempts to change the mode inline are rejected with a
+    /// [`ParseError::ChangingUnicodeModeUnsupported`] error. Use this builder
+    /// method to set the desired mode instead.
     ///
     /// ## Effect on `str` input (default)
     ///
