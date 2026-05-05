@@ -193,9 +193,8 @@ fn bytes_backrefs_casei() {
     // Unicode: case-insensitive backref no-match
     assert_no_match_bytes(r"(δ)(?i:\1)", "δσ".as_bytes());
 
-    // Non-UTF-8 bytes: no case-insensitive match possible.
-    // 0xFF has UTF-8 lead byte length 4, so (.) captures 4 bytes;
-    // need 8-byte input so the backref has room to compare at position 4.
+    // Non-UTF-8 bytes: 0xFF is not a valid UTF-8 byte, so (.) captures it as
+    // a single raw byte; no ASCII case-insensitive match possible for these bytes.
     assert_no_match_bytes(r"(.)(?i:\1)", b"\xff\xfe\xfd\xfc\xff\xfe\xfd\xfb");
 }
 

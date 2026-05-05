@@ -56,7 +56,9 @@ fn bytes_captures_input_as_bytes() {
         .build()
         .unwrap();
     let caps = re.captures(b"abc 123").unwrap().unwrap();
+    // input_as_bytes() returns the entire input, not just the matched portion
     assert_eq!(caps.input_as_bytes(), b"abc 123");
+    assert_eq!(caps.get(0).unwrap().as_bytes(), b"123");
 }
 
 #[test]
