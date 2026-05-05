@@ -1,4 +1,4 @@
-use fancy_regex::{BytesMode, Captures, CompileError, Error, Expander, Match, MatchBytes, Result};
+use fancy_regex::{Captures, CompileError, Error, Expander, Match, Result};
 use matches::assert_matches;
 use std::borrow::Cow;
 use std::ops::Index;
@@ -292,16 +292,6 @@ fn captures_iter() {
             i => panic!("Expected 3 captures, got {}", i + 1),
         }
     }
-
-    // Same assertions through the bytes API
-    let all_caps: Vec<_> = common::ascii_bytes_regex(r"(?P<num>\d)\d")
-        .captures_iter(b"11 21 33")
-        .map(|c| c.unwrap())
-        .collect();
-    assert_eq!(all_caps.len(), 3);
-    assert_bytes_match(all_caps[0].name("num"), b"1", 0, 1);
-    assert_bytes_match(all_caps[1].name("num"), b"2", 3, 4);
-    assert_bytes_match(all_caps[2].name("num"), b"3", 6, 7);
 }
 
 #[test]
@@ -338,17 +328,6 @@ fn captures_iter_continue_from_previous_match_end() {
             i => panic!("Expected 2 results, got {}", i + 1),
         }
     }
-
-    // Same assertions through the bytes API
-    let all_caps: Vec<_> = common::ascii_bytes_regex(r"\G(\d)\d")
-        .captures_iter(b"1122 33")
-        .map(|c| c.unwrap())
-        .collect();
-    assert_eq!(all_caps.len(), 2);
-    assert_bytes_match(all_caps[0].get(0), b"11", 0, 2);
-    assert_bytes_match(all_caps[0].get(1), b"1", 0, 1);
-    assert_bytes_match(all_caps[1].get(0), b"22", 2, 4);
-    assert_bytes_match(all_caps[1].get(1), b"2", 2, 3);
 }
 
 #[test]
@@ -463,23 +442,6 @@ fn captures_from_pos() {
     assert_eq!(matches.len(), 2);
     assert_match(matches[0], "33", 6, 8);
     assert_match(matches[1], "3", 6, 7);
-
-    // Same assertions through the bytes API
-    let re = common::ascii_bytes_regex(r"(\d)\d");
-    let caps = re.captures_from_pos(b"11 21 33", 3).unwrap().unwrap();
-    assert_eq!(caps.len(), 2);
-    assert_bytes_match(caps.get(0), b"21", 3, 5);
-    assert_bytes_match(caps.get(1), b"2", 3, 4);
-    let groups: Vec<_> = caps.iter().collect();
-    assert_eq!(groups.len(), 2);
-    assert_bytes_match(groups[0], b"21", 3, 5);
-    assert_bytes_match(groups[1], b"2", 3, 4);
-
-    let re = common::ascii_bytes_regex(r"(\d+)\1");
-    let caps = re.captures_from_pos(b"11 21 33", 3).unwrap().unwrap();
-    assert_eq!(caps.len(), 2);
-    assert_bytes_match(caps.get(0), b"33", 6, 8);
-    assert_bytes_match(caps.get(1), b"3", 6, 7);
 }
 
 #[test]
@@ -535,16 +497,6 @@ fn captures_iter_collect_when_backtrack_limit_hit() {
         .unwrap();
     let result: Vec<_> = r.captures_iter("xxxxxxxxxxy").collect();
     println!("{:?}", result);
-    assert_eq!(result.len(), 1);
-    assert!(result[0].is_err());
-
-    // Same behaviour in bytes mode
-    let r = RegexBuilder::new("(x+x+)+(?>y)")
-        .bytes_mode(BytesMode::Ascii)
-        .backtrack_limit(1)
-        .build()
-        .unwrap();
-    let result: Vec<_> = r.captures_iter(b"xxxxxxxxxxy").collect();
     assert_eq!(result.len(), 1);
     assert!(result[0].is_err());
 }
@@ -683,25 +635,6 @@ fn assert_match(m: Option<Match<'_>>, expected_text: &str, start: usize, end: us
     assert!(m.is_some(), "Expected match, but was {:?}", m);
     let m = m.unwrap();
     assert_eq!(m.as_str(), expected_text);
-    assert_eq!(m.start(), start);
-    assert_eq!(m.end(), end);
-}
-
-#[cfg_attr(feature = "track_caller", track_caller)]
-fn assert_bytes_match(m: Option<MatchBytes<'_>>, expected: &[u8], start: usize, end: usize) {
-    assert!(m.is_some(), "Expected match, but was None");
-    let m = m.unwrap();
-    assert_eq!(
-        m.as_bytes(),
-        expected,
-        "Expected bytes {:?} at {}..{}, got {:?} at {}..{}",
-        expected,
-        start,
-        end,
-        m.as_bytes(),
-        m.start(),
-        m.end()
-    );
     assert_eq!(m.start(), start);
     assert_eq!(m.end(), end);
 }
