@@ -883,7 +883,6 @@ impl RegexBuilder {
     }
 
     /// See [`RegexOptionsBuilder::bytes_mode`]
-    /// See [`RegexOptionsBuilder::bytes_mode`]
     pub fn bytes_mode(&mut self, mode: BytesMode) -> &mut Self {
         self.options.bytes_mode(mode);
         self
@@ -1701,8 +1700,8 @@ impl<'t, S: input::RegexInput + ?Sized> Captures<'t, S> {
         self.inner.len()
     }
 
-    /// Returns the byte slice of the input that was matched.
-    pub fn as_bytes(&self) -> &'t [u8] {
+    /// Returns the byte slice of the entire input that was searched.
+    pub fn input_as_bytes(&self) -> &'t [u8] {
         self.input.as_bytes()
     }
 }
