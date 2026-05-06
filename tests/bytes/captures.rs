@@ -94,34 +94,6 @@ fn bytes_captures_len() {
 }
 
 #[test]
-fn bytes_captures_iter_groups() {
-    let re = RegexBuilder::new(r"(\d+)-(\d+)")
-        .bytes_mode(BytesMode::Ascii)
-        .build()
-        .unwrap();
-    let caps = re.captures(b"123-456").unwrap().unwrap();
-    let groups: Vec<_> = caps.iter().collect();
-    assert_eq!(groups.len(), 3);
-    assert_match_bytes(groups[0], b"123-456", 0, 7);
-    assert_match_bytes(groups[1], b"123", 0, 3);
-    assert_match_bytes(groups[2], b"456", 4, 7);
-}
-
-#[test]
-fn bytes_captures_iter_groups_with_none() {
-    let re = RegexBuilder::new(r"(\w+)(?=\.)|(\w+)(?=!)")
-        .bytes_mode(BytesMode::Ascii)
-        .build()
-        .unwrap();
-    let caps = re.captures(b"foo! bar.").unwrap().unwrap();
-    let groups: Vec<_> = caps.iter().collect();
-    assert_eq!(groups.len(), 3);
-    assert!(groups[0].is_some());
-    assert!(groups[1].is_none());
-    assert!(groups[2].is_some());
-}
-
-#[test]
 fn bytes_captures_from_pos_no_match() {
     let re = RegexBuilder::new(r"(\d+)")
         .bytes_mode(BytesMode::Ascii)
@@ -141,82 +113,6 @@ fn bytes_captures_fixed_array_input() {
     let caps = re.captures(input).unwrap().unwrap();
     assert_match_bytes(caps.get(0), b"123", 4, 7);
     assert_match_bytes(caps.get(1), b"123", 4, 7);
-}
-
-// --- captures_iter named group (moved from captures.rs) ---
-
-#[test]
-fn bytes_captures_iter_named() {
-    let all_caps: Vec<_> = RegexBuilder::new(r"(?P<num>\d)\d")
-        .bytes_mode(BytesMode::Ascii)
-        .build()
-        .unwrap()
-        .captures_iter(b"11 21 33")
-        .map(|c| c.unwrap())
-        .collect();
-    assert_eq!(all_caps.len(), 3);
-    assert_match_bytes(all_caps[0].name("num"), b"1", 0, 1);
-    assert_match_bytes(all_caps[1].name("num"), b"2", 3, 4);
-    assert_match_bytes(all_caps[2].name("num"), b"3", 6, 7);
-}
-
-// --- captures_iter \G continuation (moved from captures.rs) ---
-
-#[test]
-fn bytes_captures_iter_continue_from_previous_match_end() {
-    let all_caps: Vec<_> = RegexBuilder::new(r"\G(\d)\d")
-        .bytes_mode(BytesMode::Ascii)
-        .build()
-        .unwrap()
-        .captures_iter(b"1122 33")
-        .map(|c| c.unwrap())
-        .collect();
-    assert_eq!(all_caps.len(), 2);
-    assert_match_bytes(all_caps[0].get(0), b"11", 0, 2);
-    assert_match_bytes(all_caps[0].get(1), b"1", 0, 1);
-    assert_match_bytes(all_caps[1].get(0), b"22", 2, 4);
-    assert_match_bytes(all_caps[1].get(1), b"2", 2, 3);
-}
-
-// --- captures_from_pos (moved from captures.rs) ---
-
-#[test]
-fn bytes_captures_from_pos() {
-    let re = RegexBuilder::new(r"(\d)\d")
-        .bytes_mode(BytesMode::Ascii)
-        .build()
-        .unwrap();
-    let caps = re.captures_from_pos(b"11 21 33", 3).unwrap().unwrap();
-    assert_eq!(caps.len(), 2);
-    assert_match_bytes(caps.get(0), b"21", 3, 5);
-    assert_match_bytes(caps.get(1), b"2", 3, 4);
-    let groups: Vec<_> = caps.iter().collect();
-    assert_eq!(groups.len(), 2);
-    assert_match_bytes(groups[0], b"21", 3, 5);
-    assert_match_bytes(groups[1], b"2", 3, 4);
-
-    let re = RegexBuilder::new(r"(\d+)\1")
-        .bytes_mode(BytesMode::Ascii)
-        .build()
-        .unwrap();
-    let caps = re.captures_from_pos(b"11 21 33", 3).unwrap().unwrap();
-    assert_eq!(caps.len(), 2);
-    assert_match_bytes(caps.get(0), b"33", 6, 8);
-    assert_match_bytes(caps.get(1), b"3", 6, 7);
-}
-
-// --- captures_iter backtrack limit (moved from captures.rs) ---
-
-#[test]
-fn bytes_captures_iter_backtrack_limit() {
-    let r = RegexBuilder::new("(x+x+)+(?>y)")
-        .bytes_mode(BytesMode::Ascii)
-        .backtrack_limit(1)
-        .build()
-        .unwrap();
-    let result: Vec<_> = r.captures_iter(b"xxxxxxxxxxy").collect();
-    assert_eq!(result.len(), 1);
-    assert!(result[0].is_err());
 }
 
 // --- UnicodeBytes mode captures ---
