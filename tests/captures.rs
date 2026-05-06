@@ -267,31 +267,20 @@ fn assert_capture_with_crlf_flag(
 fn captures_iter() {
     let text = "11 21 33";
 
-    for (i, captures) in common::regex(r"(?P<num>\d)\d")
-        .captures_iter(text)
-        .enumerate()
-    {
-        let captures = captures.unwrap();
+    let all_captures = common::assert_captures_iter(r"(?P<num>\d)\d", text);
+    assert_eq!(all_captures.len(), 3);
 
-        match i {
-            0 => {
-                assert_eq!(captures.len(), 2);
-                assert_match(captures.get(0), "11", 0, 2);
-                assert_match(captures.name("num"), "1", 0, 1);
-            }
-            1 => {
-                assert_eq!(captures.len(), 2);
-                assert_match(captures.get(0), "21", 3, 5);
-                assert_match(captures.name("num"), "2", 3, 4);
-            }
-            2 => {
-                assert_eq!(captures.len(), 2);
-                assert_match(captures.get(0), "33", 6, 8);
-                assert_match(captures.name("num"), "3", 6, 7);
-            }
-            i => panic!("Expected 3 captures, got {}", i + 1),
-        }
-    }
+    assert_eq!(all_captures[0].len(), 2);
+    assert_match(all_captures[0].get(0), "11", 0, 2);
+    assert_match(all_captures[0].name("num"), "1", 0, 1);
+
+    assert_eq!(all_captures[1].len(), 2);
+    assert_match(all_captures[1].get(0), "21", 3, 5);
+    assert_match(all_captures[1].name("num"), "2", 3, 4);
+
+    assert_eq!(all_captures[2].len(), 2);
+    assert_match(all_captures[2].get(0), "33", 6, 8);
+    assert_match(all_captures[2].name("num"), "3", 6, 7);
 }
 
 #[test]
@@ -309,25 +298,16 @@ fn captures_iter_attributes() {
 fn captures_iter_continue_from_previous_match_end() {
     let text = "1122 33";
 
-    for (i, caps) in common::regex(r"\G(\d)\d").captures_iter(text).enumerate() {
-        let caps = caps.unwrap();
-
-        match i {
-            0 => {
-                assert_eq!(caps.get(0).unwrap().start(), 0);
-                assert_eq!(caps.get(0).unwrap().end(), 2);
-                assert_eq!(caps.get(1).unwrap().start(), 0);
-                assert_eq!(caps.get(1).unwrap().end(), 1);
-            }
-            1 => {
-                assert_eq!(caps.get(0).unwrap().start(), 2);
-                assert_eq!(caps.get(0).unwrap().end(), 4);
-                assert_eq!(caps.get(1).unwrap().start(), 2);
-                assert_eq!(caps.get(1).unwrap().end(), 3);
-            }
-            i => panic!("Expected 2 results, got {}", i + 1),
-        }
-    }
+    let all_caps = common::assert_captures_iter(r"\G(\d)\d", text);
+    assert_eq!(all_caps.len(), 2);
+    assert_eq!(all_caps[0].get(0).unwrap().start(), 0);
+    assert_eq!(all_caps[0].get(0).unwrap().end(), 2);
+    assert_eq!(all_caps[0].get(1).unwrap().start(), 0);
+    assert_eq!(all_caps[0].get(1).unwrap().end(), 1);
+    assert_eq!(all_caps[1].get(0).unwrap().start(), 2);
+    assert_eq!(all_caps[1].get(0).unwrap().end(), 4);
+    assert_eq!(all_caps[1].get(1).unwrap().start(), 2);
+    assert_eq!(all_caps[1].get(1).unwrap().end(), 3);
 }
 
 #[test]
@@ -403,8 +383,7 @@ fn captures_iter_continue_from_previous_match_end_with_keepout() {
 fn captures_from_pos() {
     let text = "11 21 33";
 
-    let regex = common::regex(r"(\d)\d");
-    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    let captures = common::assert_captures_from_pos(r"(\d)\d", text, 3).unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), "21", 3, 5);
     assert_match(captures.get(1), "2", 3, 4);
@@ -413,8 +392,7 @@ fn captures_from_pos() {
     assert_match(matches[0], "21", 3, 5);
     assert_match(matches[1], "2", 3, 4);
 
-    let regex = common::regex(r"(\d+)\1");
-    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    let captures = common::assert_captures_from_pos(r"(\d+)\1", text, 3).unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), "33", 6, 8);
     assert_match(captures.get(1), "3", 6, 7);
@@ -423,8 +401,7 @@ fn captures_from_pos() {
     assert_match(matches[0], "33", 6, 8);
     assert_match(matches[1], "3", 6, 7);
 
-    let regex = common::regex(r"(?P<foo>\d+)\k<foo>");
-    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    let captures = common::assert_captures_from_pos(r"(?P<foo>\d+)\k<foo>", text, 3).unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), "33", 6, 8);
     assert_match(captures.name("foo"), "3", 6, 7);
@@ -433,8 +410,7 @@ fn captures_from_pos() {
     assert_match(matches[0], "33", 6, 8);
     assert_match(matches[1], "3", 6, 7);
 
-    let regex = common::regex(r"(?P<foo>\d+)(?P=foo)");
-    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    let captures = common::assert_captures_from_pos(r"(?P<foo>\d+)(?P=foo)", text, 3).unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), "33", 6, 8);
     assert_match(captures.name("foo"), "3", 6, 7);
@@ -490,13 +466,23 @@ fn captures_from_pos_looking_left() {
 
 #[test]
 fn captures_iter_collect_when_backtrack_limit_hit() {
-    use fancy_regex::RegexBuilder;
+    use fancy_regex::{BytesMode, RegexBuilder};
     let r = RegexBuilder::new("(x+x+)+(?>y)")
         .backtrack_limit(1)
         .build()
         .unwrap();
     let result: Vec<_> = r.captures_iter("xxxxxxxxxxy").collect();
     println!("{:?}", result);
+    assert_eq!(result.len(), 1);
+    assert!(result[0].is_err());
+
+    // The same behaviour must hold in bytes mode.
+    let r = RegexBuilder::new("(x+x+)+(?>y)")
+        .bytes_mode(BytesMode::Ascii)
+        .backtrack_limit(1)
+        .build()
+        .unwrap();
+    let result: Vec<_> = r.captures_iter(b"xxxxxxxxxxy").collect();
     assert_eq!(result.len(), 1);
     assert!(result[0].is_err());
 }

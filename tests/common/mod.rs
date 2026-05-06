@@ -89,6 +89,101 @@ pub fn assert_find(re: &str, text: &str) -> Option<(usize, usize)> {
     str_result
 }
 
+/// Run `captures_iter` against `text` in both str mode and ASCII bytes mode, assert
+/// that both agree on every match's group spans, and return the str-mode results.
+#[cfg_attr(feature = "track_caller", track_caller)]
+#[allow(dead_code)]
+pub fn assert_captures_iter<'t>(re: &str, text: &'t str) -> Vec<Captures<'t, str>> {
+    let str_results: Vec<_> = regex(re)
+        .captures_iter(text)
+        .map(|c| c.expect("captures_iter succeeded (str mode)"))
+        .collect();
+    let bytes_results: Vec<_> = ascii_bytes_regex(re)
+        .captures_iter(text.as_bytes())
+        .map(|c| c.expect("captures_iter succeeded (bytes mode)"))
+        .collect();
+    assert_eq!(
+        str_results.len(),
+        bytes_results.len(),
+        "Expected same number of captures_iter results for regex '{}' on '{}' between str and bytes modes",
+        re,
+        text
+    );
+    for (i, (s, b)) in str_results.iter().zip(bytes_results.iter()).enumerate() {
+        assert_eq!(
+            s.len(),
+            b.len(),
+            "Expected capture group count to agree for regex '{}' on '{}' at match {}",
+            re,
+            text,
+            i
+        );
+        for j in 0..s.len() {
+            let str_span = s.get(j).map(|m| (m.start(), m.end()));
+            let bytes_span = b.get(j).map(|m| (m.start(), m.end()));
+            assert_eq!(
+                str_span,
+                bytes_span,
+                "Expected capture group {} to agree between str and bytes modes for regex '{}' on '{}' at match {}",
+                j,
+                re,
+                text,
+                i
+            );
+        }
+    }
+    str_results
+}
+
+/// Run `captures_from_pos` against `text` starting at `pos` in both str mode and ASCII bytes
+/// mode, assert that both agree on every group span, and return the str-mode result.
+#[cfg_attr(feature = "track_caller", track_caller)]
+#[allow(dead_code)]
+pub fn assert_captures_from_pos<'t>(
+    re: &str,
+    text: &'t str,
+    pos: usize,
+) -> Option<Captures<'t, str>> {
+    let str_result = regex(re)
+        .captures_from_pos(text, pos)
+        .expect("expected captures_from_pos to succeed (str mode)");
+    let bytes_result = ascii_bytes_regex(re)
+        .captures_from_pos(text.as_bytes(), pos)
+        .expect("expected captures_from_pos to succeed (bytes mode)");
+    assert_eq!(
+        str_result.is_some(),
+        bytes_result.is_some(),
+        "Expected regex '{}' captures_from_pos({}) to agree between str and bytes modes for '{}'",
+        re,
+        pos,
+        text
+    );
+    if let (Some(ref s), Some(ref b)) = (&str_result, &bytes_result) {
+        assert_eq!(
+            s.len(),
+            b.len(),
+            "Expected capture group count to agree for regex '{}' on '{}' at pos {}",
+            re,
+            text,
+            pos
+        );
+        for i in 0..s.len() {
+            let str_span = s.get(i).map(|m| (m.start(), m.end()));
+            let bytes_span = b.get(i).map(|m| (m.start(), m.end()));
+            assert_eq!(
+                str_span,
+                bytes_span,
+                "Expected capture group {} to agree between str and bytes modes for regex '{}' on '{}' at pos {}",
+                i,
+                re,
+                text,
+                pos
+            );
+        }
+    }
+    str_result
+}
+
 /// Run `captures` against `text` in both str mode and ASCII bytes mode, assert
 /// that both engines agree on the spans of every capture group, and return the
 /// str-mode `Captures` (or `None` if neither engine matched).
