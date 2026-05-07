@@ -155,6 +155,7 @@ pub struct RegexOptionsBuilder {
 pub struct Regex {
     inner: RegexImpl,
     named_groups: Arc<NamedGroups>,
+    bytes_mode: BytesMode,
 }
 
 // Separate enum because we don't want to expose any of this
@@ -247,7 +248,7 @@ impl<'r, 't, S: input::RegexInput + ?Sized> Matches<'r, 't, S> {
             // This is an empty match. To ensure we make progress, start
             // the next search at the smallest possible starting position
             // of the next match following this one.
-            self.last_end = self.text.advance_position(match_end);
+            self.last_end = self.re.advance_position(self.text, match_end);
             // Only set OPTION_SKIPPED_EMPTY_MATCH on the next call if this was a
             // truly zero-length match (the VM consumed no bytes from `pos`).
             // This means that \K won't prevent \G from matching.
@@ -1062,6 +1063,14 @@ impl FromStr for Regex {
 }
 
 impl Regex {
+    fn advance_position<S: input::RegexInput + ?Sized>(&self, input: &S, i: usize) -> usize {
+        if self.bytes_mode == BytesMode::UnicodeBytes {
+            input::next_input_pos(input.as_bytes(), i)
+        } else {
+            input.advance_position(i)
+        }
+    }
+
     /// Parse and compile a regex with default options, see `RegexBuilder`.
     ///
     /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
@@ -1117,6 +1126,7 @@ impl Regex {
                     delegated_pattern: re_cooked,
                 },
                 named_groups: Arc::new(tree.named_groups),
+                bytes_mode: options.bytes_mode,
             });
         }
 
@@ -1137,6 +1147,7 @@ impl Regex {
                 pattern,
             },
             named_groups: Arc::new(tree.named_groups),
+            bytes_mode: options.bytes_mode,
         })
     }
 

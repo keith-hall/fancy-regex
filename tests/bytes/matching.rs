@@ -138,6 +138,22 @@ fn bytes_find_iter_non_utf8() {
 }
 
 #[test]
+fn bytes_unicode_bytes_find_iter_empty_matches_advance_by_codepoint() {
+    let re = RegexBuilder::new(r"")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    let matches: Vec<_> = re
+        .find_iter("éa".as_bytes())
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(matches, vec![(0, 0), (2, 2), (3, 3)]);
+}
+
+#[test]
 fn bytes_find_with_str_still_works() {
     let re = RegexBuilder::new(r"\d+")
         .bytes_mode(BytesMode::Ascii)
