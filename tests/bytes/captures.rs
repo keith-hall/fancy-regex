@@ -171,6 +171,23 @@ fn bytes_unicode_bytes_captures_iter() {
 }
 
 #[test]
+fn bytes_unicode_bytes_captures_iter_empty_matches_advance_by_codepoint() {
+    let re = RegexBuilder::new(r"()")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    let ranges: Vec<_> = re
+        .captures_iter("éa".as_bytes())
+        .map(|c| {
+            let c = c.unwrap();
+            let m = c.get(0).unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(ranges, vec![(0, 0), (2, 2), (3, 3)]);
+}
+
+#[test]
 fn bytes_unicode_bytes_captures_from_pos() {
     let re = RegexBuilder::new(r"(\w+)")
         .bytes_mode(BytesMode::UnicodeBytes)
