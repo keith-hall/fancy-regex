@@ -1135,7 +1135,7 @@ impl Regex {
             CompileOptions {
                 anchored: can_compile_as_anchored(&tree.expr),
                 contains_subroutines: tree.contains_subroutines,
-                bytes_mode: options.bytes_mode,
+                ascii: options.bytes_mode == BytesMode::Ascii,
                 seek_filter: options.seek_filter,
                 disallow_empty_match_at_eof_after_newline,
             },

@@ -967,8 +967,10 @@ pub struct CompileOptions {
     pub anchored: bool,
     /// Whether the regex contains subroutine calls, requiring group info to be pre-populated.
     pub contains_subroutines: bool,
-    /// How delegated regex fragments should interpret the input bytes.
-    pub bytes_mode: BytesMode,
+    /// Whether delegated regex fragments should use ASCII-only matching (no Unicode support).
+    /// When `true`, character classes like `\w`, `\d`, `\s` are ASCII-only, and `.` matches
+    /// any single byte. When `false` (the default), full Unicode support is enabled.
+    pub ascii: bool,
     /// Optional filter function for the Seek pre-filter optimization.
     /// When `Some(f)` and a seek pattern can be derived, `f` is called with the pattern string
     /// to decide whether it is useful enough to replace the `SplitUnanchored` preamble with a
@@ -990,7 +992,7 @@ impl core::fmt::Debug for CompileOptions {
         f.debug_struct("CompileOptions")
             .field("anchored", &self.anchored)
             .field("contains_subroutines", &self.contains_subroutines)
-            .field("bytes_mode", &self.bytes_mode)
+            .field("ascii", &self.ascii)
             .field("seek_filter", &seek_filter_desc)
             .field(
                 "disallow_empty_match_at_eof_after_newline",
@@ -1003,7 +1005,11 @@ impl core::fmt::Debug for CompileOptions {
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group());
-    c.options.bytes_mode = options.bytes_mode;
+    c.options.bytes_mode = if options.ascii {
+        BytesMode::Ascii
+    } else {
+        BytesMode::Unicode
+    };
 
     if options.contains_subroutines {
         // Store root info for group 0 subroutine calls
