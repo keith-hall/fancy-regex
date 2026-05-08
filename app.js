@@ -39,6 +39,8 @@ class FancyRegexPlayground {
                 onigurumaMode: document.getElementById('flag-oniguruma-mode'),
                 findNotEmpty: document.getElementById('flag-find-not-empty'),
                 ignoreNumberedGroups: document.getElementById('flag-ignore-numbered-groups'),
+                unicode: document.getElementById('flag-unicode'),
+                ignoreTrailingNewline: document.getElementById('flag-no-match-at-trailing-newline'),
             }
         };
 
@@ -73,10 +75,11 @@ class FancyRegexPlayground {
             multi_line: this.elements.flags.multiLine.checked,
             dot_matches_new_line: this.elements.flags.dotMatchesNewline.checked,
             ignore_whitespace: this.elements.flags.ignoreWhitespace.checked,
-            unicode: true,
+            unicode: this.elements.flags.unicode.checked,
             oniguruma_mode: this.elements.flags.onigurumaMode.checked,
             find_not_empty: this.elements.flags.findNotEmpty.checked,
             ignore_numbered_groups_when_named_groups_exist: this.elements.flags.ignoreNumberedGroups.checked,
+            ignore_trailing_newline: this.elements.flags.ignoreTrailingNewline.checked,
         };
     }
 
