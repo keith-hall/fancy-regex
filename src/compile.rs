@@ -870,7 +870,9 @@ impl<'a> Compiler<'a> {
 
         self.b.add(Insn::BeginAtomic);
         let alternatives = if unicode {
-            &["\r\n", "\n", "\x0B", "\x0C", "\r", "\u{0085}", "\u{2028}", "\u{2029}"][..]
+            &[
+                "\r\n", "\n", "\x0B", "\x0C", "\r", "\u{0085}", "\u{2028}", "\u{2029}",
+            ][..]
         } else {
             &["\r\n", "\n", "\x0B", "\x0C", "\r"][..]
         };
