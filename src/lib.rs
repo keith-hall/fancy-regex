@@ -1311,7 +1311,7 @@ impl Regex {
                     } else {
                         0
                     };
-                let result = vm::run(prog, input, pos, option_flags, options)?;
+                let result = vm::run(prog, input, pos, option_flags, self.bytes_mode, options)?;
                 Ok(result.map(|saves| (saves[0], saves[1])))
             }
         }
@@ -1461,7 +1461,7 @@ impl Regex {
                     } else {
                         0
                     };
-                let result = vm::run(prog, input, pos, option_flags, options)?;
+                let result = vm::run(prog, input, pos, option_flags, self.bytes_mode, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures {

@@ -8,9 +8,16 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+- Add `BytesMode` and the `RegexInput` trait so the matching and capture APIs can operate on `&str`, `&String`, `&[u8]`, and `[u8; N]`, returning `MatchBytes` for byte inputs (#248)
 - Add experimental seek optimization to only invoke the VM at candidate positions where a match could occur (#246)
+- Add `RegexBuilder::disallow_empty_match_at_eof_after_newline` to reject empty matches at the end of the haystack while ignoring trailing newlines (#247)
 ### Changed
+- `Matches`, `CaptureMatches`, `Captures`, and `SubCaptureMatches` are now generic over `RegexInput`, which is a breaking change for code that named these types explicitly (#248)
+- Patterns no longer force Unicode mode during parsing, and inline `(?u)` / `(?-u)` flags are accepted when they agree with the builder configuration
 ### Fixed
+- Fix hard-pattern matching in `BytesMode::Ascii` so VM `.` and lookbehind/backtracking movement operate on raw bytes instead of UTF-8 codepoints
+- Fix `BytesMode::UnicodeBytes` iteration after empty matches so searches advance by codepoint boundaries instead of raw bytes
+- Fix builder-level case-insensitive flags so inline flag groups can still override them in the pattern (#247)
 
 ## [0.18.0] - 2026-04-24
 ### Added
@@ -267,6 +274,7 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
+[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.18.0...HEAD
 [0.16.2]: https://github.com/fancy-regex/fancy-regex/compare/0.16.1...0.16.2
 [0.16.1]: https://github.com/fancy-regex/fancy-regex/compare/0.16.0...0.16.1
 [0.16.0]: https://github.com/fancy-regex/fancy-regex/compare/0.15.0...0.16.0

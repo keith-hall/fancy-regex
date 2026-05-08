@@ -99,7 +99,7 @@ use crate::Assertion;
 use crate::Error;
 use crate::Formatter;
 use crate::Result;
-use crate::{codepoint_len, HardRegexRuntimeOptions};
+use crate::{codepoint_len, BytesMode, HardRegexRuntimeOptions};
 
 /// Enable tracing of VM execution. Only for debugging/investigating.
 const OPTION_TRACE: u32 = 1 << 0;
@@ -570,8 +570,20 @@ impl State {
     }
 }
 
-fn codepoint_len_at<S: RegexInput + ?Sized>(s: &S, ix: usize) -> usize {
-    codepoint_len(s.as_bytes()[ix])
+fn input_step_len<S: RegexInput + ?Sized>(s: &S, ix: usize, bytes_mode: BytesMode) -> usize {
+    if bytes_mode == BytesMode::Ascii {
+        1
+    } else {
+        codepoint_len(s.as_bytes()[ix])
+    }
+}
+
+fn step_back<S: RegexInput + ?Sized>(s: &S, ix: usize, bytes_mode: BytesMode) -> usize {
+    if bytes_mode == BytesMode::Ascii {
+        ix - 1
+    } else {
+        s.prev_codepoint_ix(ix)
+    }
 }
 
 #[inline]
@@ -679,13 +691,21 @@ pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>>
         s,
         pos,
         OPTION_TRACE,
+        BytesMode::Unicode,
         &HardRegexRuntimeOptions::default(),
     )
 }
 
 /// Run the program with default options.
 pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, 0, &HardRegexRuntimeOptions::default())
+    run(
+        prog,
+        s,
+        pos,
+        0,
+        BytesMode::Unicode,
+        &HardRegexRuntimeOptions::default(),
+    )
 }
 
 /// Run the program with options.
@@ -695,6 +715,7 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
     s: &S,
     pos: usize,
     option_flags: u32,
+    bytes_mode: BytesMode,
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<Vec<usize>>> {
     let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
@@ -744,21 +765,21 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                 }
                 Insn::Any => {
                     if ix < s.len() {
-                        ix += codepoint_len_at(s, ix);
+                        ix += input_step_len(s, ix, bytes_mode);
                     } else {
                         break 'fail;
                     }
                 }
                 Insn::AnyNoNL => {
                     if ix < s.len() && s.as_bytes()[ix] != b'\n' {
-                        ix += codepoint_len_at(s, ix);
+                        ix += input_step_len(s, ix, bytes_mode);
                     } else {
                         break 'fail;
                     }
                 }
                 Insn::AnyNoCRLF => {
                     if ix < s.len() && s.as_bytes()[ix] != b'\r' && s.as_bytes()[ix] != b'\n' {
-                        ix += codepoint_len_at(s, ix);
+                        ix += input_step_len(s, ix, bytes_mode);
                     } else {
                         break 'fail;
                     }
@@ -933,7 +954,7 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                         if ix == 0 {
                             break 'fail;
                         }
-                        ix = s.prev_codepoint_ix(ix);
+                        ix = step_back(s, ix, bytes_mode);
                     }
                 }
                 Insn::FailNegativeLookAround => {

@@ -59,6 +59,18 @@ fn bytes_ascii_dot_matches_non_utf8() {
 }
 
 #[test]
+fn bytes_ascii_hard_dot_matches_single_raw_bytes() {
+    let re = RegexBuilder::new(r"(?=..)..")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let mat = re.find(b"\x80\x81").unwrap().unwrap();
+    assert_eq!(mat.start(), 0);
+    assert_eq!(mat.end(), 2);
+    assert_eq!(mat.as_bytes(), b"\x80\x81");
+}
+
+#[test]
 fn bytes_unicode_bytes_dot_does_not_match_raw_bytes() {
     let re = RegexBuilder::new(r".")
         .bytes_mode(BytesMode::UnicodeBytes)
@@ -75,6 +87,19 @@ fn bytes_unicode_bytes_char_classes_still_unicode() {
         .build()
         .unwrap();
     assert!(re.is_match("café".as_bytes()).unwrap());
+}
+
+#[test]
+fn bytes_unicode_bytes_hard_dot_still_uses_codepoints() {
+    let re = RegexBuilder::new(r"(?=..)..")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    let mat = re.find("éa".as_bytes()).unwrap().unwrap();
+    assert_eq!(mat.start(), 0);
+    assert_eq!(mat.end(), 3);
+    assert_eq!(mat.as_bytes(), "éa".as_bytes());
+    assert!(re.find(b"\x80\x81").unwrap().is_none());
 }
 
 #[test]
@@ -212,6 +237,18 @@ fn bytes_backrefs_casei() {
     // Non-UTF-8 bytes: 0xFF is not a valid UTF-8 byte, so (.) captures it as
     // a single raw byte; no ASCII case-insensitive match possible for these bytes.
     assert_no_match_bytes(r"(.)(?i:\1)", b"\xff\xfe\xfd\xfc\xff\xfe\xfd\xfb");
+}
+
+#[test]
+fn bytes_ascii_lookbehind_goes_back_by_bytes() {
+    let re = RegexBuilder::new(r"(?<=\x81)a")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let mat = re.find(b"\x80\x81a").unwrap().unwrap();
+    assert_eq!(mat.start(), 2);
+    assert_eq!(mat.end(), 3);
+    assert_eq!(mat.as_bytes(), b"a");
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
