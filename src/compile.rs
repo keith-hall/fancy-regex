@@ -869,44 +869,17 @@ impl<'a> Compiler<'a> {
         // This prevents \r\n from backtracking to \r
 
         self.b.add(Insn::BeginAtomic);
-
-        // Split: try \r\n first, then single chars
-        let split_pc = self.b.pc();
-        self.b.add(Insn::Split(split_pc + 1, usize::MAX)); // Will fix second target later
-
-        // First alternative: \r\n
-        self.b.add(Insn::Lit("\r\n".to_string()));
-
-        // Jump over other alternatives
-        let jmp_pc = self.b.pc();
-        self.b.add(Insn::Jmp(usize::MAX)); // Will fix target later
-
-        // Second alternative: single newline characters
-        let single_newline_char_pc = self.b.pc();
-        self.b
-            .set_split_target(split_pc, single_newline_char_pc, true);
-
-        // Compile a delegate for matching single newline characters
-        let pattern = if unicode {
-            // Unicode mode: \n, \v, \f, \r, U+0085, U+2028, U+2029
-            "[\n\x0B\x0C\r\u{0085}\u{2028}\u{2029}]"
+        let alternatives = if unicode {
+            &["\r\n", "\n", "\x0B", "\x0C", "\r", "\u{0085}", "\u{2028}", "\u{2029}"][..]
         } else {
-            // Non-Unicode mode: \n, \v, \f, \r
-            "[\n\x0B\x0C\r]"
+            &["\r\n", "\n", "\x0B", "\x0C", "\r"][..]
         };
+        self.compile_alt(alternatives.len(), |compiler, i| {
+            compiler.b.add(Insn::Lit(alternatives[i].to_string()));
+            Ok(())
+        })?;
 
-        let compiled = compile_inner(pattern, &self.options)?;
-        self.b.add(Insn::Delegate(Delegate {
-            inner: compiled,
-            pattern: pattern.to_string(),
-            capture_groups: None,
-        }));
-
-        // Fix the jump target
-        let end_atomic_pc = self.b.pc();
         self.b.add(Insn::EndAtomic);
-
-        self.b.set_jmp_target(jmp_pc, end_atomic_pc);
 
         Ok(())
     }
@@ -992,6 +965,8 @@ pub struct CompileOptions {
     pub anchored: bool,
     /// Whether the regex contains subroutine calls, requiring group info to be pre-populated.
     pub contains_subroutines: bool,
+    /// How delegated regex fragments should interpret the input bytes.
+    pub bytes_mode: BytesMode,
     /// Optional filter function for the Seek pre-filter optimization.
     /// When `Some(f)` and a seek pattern can be derived, `f` is called with the pattern string
     /// to decide whether it is useful enough to replace the `SplitUnanchored` preamble with a
@@ -1013,6 +988,7 @@ impl core::fmt::Debug for CompileOptions {
         f.debug_struct("CompileOptions")
             .field("anchored", &self.anchored)
             .field("contains_subroutines", &self.contains_subroutines)
+            .field("bytes_mode", &self.bytes_mode)
             .field("seek_filter", &seek_filter_desc)
             .field(
                 "disallow_empty_match_at_eof_after_newline",
@@ -1025,6 +1001,7 @@ impl core::fmt::Debug for CompileOptions {
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group());
+    c.options.bytes_mode = options.bytes_mode;
 
     if options.contains_subroutines {
         // Store root info for group 0 subroutine calls

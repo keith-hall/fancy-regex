@@ -241,14 +241,14 @@ fn bytes_backrefs_casei() {
 
 #[test]
 fn bytes_ascii_lookbehind_goes_back_by_bytes() {
-    let re = RegexBuilder::new(r"(?<=\x81)a")
+    let re = RegexBuilder::new(r"(?<=.a)b")
         .bytes_mode(BytesMode::Ascii)
         .build()
         .unwrap();
-    let mat = re.find(b"\x80\x81a").unwrap().unwrap();
-    assert_eq!(mat.start(), 2);
-    assert_eq!(mat.end(), 3);
-    assert_eq!(mat.as_bytes(), b"a");
+    let mat = re.find(b"\x80\x81ab").unwrap().unwrap();
+    assert_eq!(mat.start(), 3);
+    assert_eq!(mat.end(), 4);
+    assert_eq!(mat.as_bytes(), b"b");
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]

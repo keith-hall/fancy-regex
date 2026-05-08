@@ -1110,7 +1110,7 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                     } else if ix < s.len() {
                         // Try advancing one character and checking again
                         state.push(pc + 1, ix)?;
-                        ix += codepoint_len_at(s, ix);
+                        ix += input_step_len(s, ix, bytes_mode);
                         // Stay at same pc to check delegate match at new position
                         continue;
                     } else {
@@ -1149,7 +1149,7 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                             // zero-width matches) so we make progress.
                             let next_seek_start = if m.start() == m.end() {
                                 if m.end() < s.len() {
-                                    m.end() + codepoint_len_at(s, m.end())
+                                    m.end() + input_step_len(s, m.end(), bytes_mode)
                                 } else {
                                     // Zero-width match at end-of-string.  Push a sentinel value
                                     // (s.len() + 1) so that if the main pattern fails and we
@@ -1158,7 +1158,7 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                                     s.len() + 1
                                 }
                             } else {
-                                m.start() + codepoint_len_at(s, m.start())
+                                m.start() + input_step_len(s, m.start(), bytes_mode)
                             };
                             state.push(pc, next_seek_start)?;
                             ix = m.start();
