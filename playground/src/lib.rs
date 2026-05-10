@@ -750,7 +750,7 @@ mod tests {
     #[test]
     fn test_info_to_tree_node_seek_prefilter_not_useful() {
         let node = parse_and_analyze(r"(.*)\1");
-        assert_eq!(node.seek_prefilter.as_deref(), Some("(?:.*)(?:.*)"));
+        assert_eq!(node.seek_prefilter.as_deref(), Some(".*.*"));
         assert_eq!(node.seek_prefilter_useful, Some(false));
     }
 
