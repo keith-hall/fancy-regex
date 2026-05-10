@@ -2647,6 +2647,11 @@ pub mod internal {
         FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
     };
     pub use crate::vm::{run_default, run_trace, Insn, Prog, Seek};
+
+    /// Generate the seek prefilter string for an analyzed node when seek applies.
+    pub fn generated_seek_prefilter(info: &Info<'_>) -> Option<alloc::string::String> {
+        crate::seek::generated_seek_prefilter(info)
+    }
 }
 
 #[cfg(test)]

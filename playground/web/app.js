@@ -284,6 +284,8 @@ class FancyRegexPlayground {
             <div class="analysis-row__node">Node</div>
             <div class="analysis-row__min-size">min_size</div>
             <div class="analysis-row__const-size">const_size</div>
+            <div class="analysis-row__seek-prefilter">seek prefilter</div>
+            <div class="analysis-row__seek-useful">useful</div>
         `;
         this.elements.analysisDisplay.appendChild(header);
 
@@ -354,6 +356,30 @@ class FancyRegexPlayground {
             constSizeCell.textContent = '✗';
         }
         row.appendChild(constSizeCell);
+
+        // Add seek prefilter cell
+        const seekPrefilterCell = document.createElement('div');
+        seekPrefilterCell.className = 'analysis-row__seek-prefilter';
+        if (typeof node.seek_prefilter === 'string') {
+            seekPrefilterCell.textContent = node.seek_prefilter.length === 0 ? '""' : node.seek_prefilter;
+        } else {
+            seekPrefilterCell.textContent = '-';
+        }
+        row.appendChild(seekPrefilterCell);
+
+        // Add useful cell
+        const seekUsefulCell = document.createElement('div');
+        seekUsefulCell.className = 'analysis-row__seek-useful';
+        if (node.seek_prefilter_useful === true) {
+            seekUsefulCell.className += ' const-size-tick';
+            seekUsefulCell.textContent = '✓';
+        } else if (node.seek_prefilter_useful === false) {
+            seekUsefulCell.className += ' const-size-cross';
+            seekUsefulCell.textContent = '✗';
+        } else {
+            seekUsefulCell.textContent = '-';
+        }
+        row.appendChild(seekUsefulCell);
 
         container.appendChild(row);
 

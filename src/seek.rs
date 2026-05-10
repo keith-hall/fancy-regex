@@ -30,7 +30,7 @@ use alloc::collections::BTreeMap as Map;
 use std::collections::HashMap as Map;
 
 use crate::analyze::Info;
-use crate::compile::MAX_SUBROUTINE_RECURSION_DEPTH;
+use crate::compile::{populate_group_info_map, MAX_SUBROUTINE_RECURSION_DEPTH};
 use crate::{write_quantifier, Absent, Assertion, Expr};
 
 /// Returns `true` if the expression tree contains a `StartText` or `EndText` assertion anywhere.
@@ -108,6 +108,20 @@ pub(crate) fn build_seek_pattern<'a>(
     precedence: u8,
 ) {
     build_seek_pattern_impl(info, group_info_map, depth, buf, precedence, false);
+}
+
+/// Build the generated seek prefilter for an analyzed node, if seeking applies.
+pub(crate) fn generated_seek_prefilter(info: &Info<'_>) -> Option<String> {
+    if !info.hard {
+        return None;
+    }
+
+    let mut group_info_map = Map::new();
+    populate_group_info_map(&mut group_info_map, info);
+
+    let mut pattern = String::new();
+    build_seek_pattern(info, &group_info_map, 0, &mut pattern, 0);
+    Some(pattern)
 }
 
 pub(crate) fn build_seek_pattern_impl<'a>(

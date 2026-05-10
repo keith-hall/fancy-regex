@@ -2,7 +2,7 @@ use fancy_regex::internal::{
     FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST, FLAG_IGNORE_SPACE,
     FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
 };
-use fancy_regex::{Absent, Assertion, Expr, LookAround, Regex, RegexBuilder};
+use fancy_regex::{seek_pattern_is_useful, Absent, Assertion, Expr, LookAround, Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -238,6 +238,10 @@ pub struct AnalysisTreeNode {
     pub hard: bool,
     pub min_size: usize,
     pub const_size: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seek_prefilter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seek_prefilter_useful: Option<bool>,
     pub children: Vec<AnalysisTreeNode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<GroupInfo>,
@@ -286,6 +290,9 @@ fn info_to_tree_node<'a>(
     info: &fancy_regex::internal::Info<'a>,
     group_names: &std::collections::HashMap<usize, String>,
 ) -> AnalysisTreeNode {
+    let seek_prefilter = fancy_regex::internal::generated_seek_prefilter(info);
+    let seek_prefilter_useful = seek_prefilter.as_ref().map(|pat| seek_pattern_is_useful(pat));
+
     let (kind, summary, group_info) = match info.expr {
         Expr::Empty => ("Empty".to_string(), None, None),
         Expr::Any { newline, crlf } => {
@@ -459,6 +466,8 @@ fn info_to_tree_node<'a>(
         hard: info.hard,
         min_size: info.min_size,
         const_size: info.const_size,
+        seek_prefilter,
+        seek_prefilter_useful,
         children,
         group: group_info,
     }
@@ -729,6 +738,20 @@ mod tests {
         // Simple literal should be easy
         let node = parse_and_analyze(r"abc");
         assert!(!node.hard, "Simple literal pattern should be easy");
+    }
+
+    #[test]
+    fn test_info_to_tree_node_seek_prefilter_present_and_useful() {
+        let node = parse_and_analyze(r"(abc)\1");
+        assert_eq!(node.seek_prefilter.as_deref(), Some("(?:abc)(?:abc)"));
+        assert_eq!(node.seek_prefilter_useful, Some(true));
+    }
+
+    #[test]
+    fn test_info_to_tree_node_seek_prefilter_not_useful() {
+        let node = parse_and_analyze(r"(.*)\1");
+        assert_eq!(node.seek_prefilter.as_deref(), Some("(?:.*)(?:.*)"));
+        assert_eq!(node.seek_prefilter_useful, Some(false));
     }
 
     #[test]
