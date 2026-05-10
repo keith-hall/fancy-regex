@@ -84,7 +84,7 @@ pub(crate) fn emit_min_size_placeholder(buf: &mut String, min_size: usize, prece
 
 /// Write the seek-pattern approximation for `info` into `buf`.
 ///
-/// Easy (non-hard) subtrees are serialised verbatim via [`Expr::to_str`].
+/// Easy (non-hard) subtrees without capture groups are serialised verbatim via [`Expr::to_str`].
 /// Hard nodes are handled as follows:
 /// - `Backref` / `SubroutineCall`: inline the referenced group's body (up to
 ///   `MAX_SUBROUTINE_RECURSION_DEPTH`). For backrefs, positional anchors (`^`, `$`, `\b`) etc.
@@ -141,7 +141,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
         }
     }
 
-    if !info.hard {
+    let has_capture_groups = info.start_group() != info.end_group();
+    if !info.hard && !has_capture_groups {
         // Easy subtree — use to_str directly when no positional-anchor dropping is needed,
         // or when the subtree contains no positional anchors (so dropping is a no-op).
         if !drop_positional_anchors || !expr_contains_positional_anchor(info.expr) {
@@ -447,8 +448,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
         | Expr::BacktrackingControlVerb(_)
         | Expr::BackrefExistsCondition { .. }
         | Expr::Absent(_) => {}
-        // Easy leaf nodes (Literal, Any, Delegate) are always handled by the `!info.hard`
-        // early return above and never reach here.  Listed explicitly so that adding a new
+        // Easy leaf nodes (Literal, Any, Delegate) are always handled by the no-captures
+        // `!info.hard` early return above and never reach here. Listed explicitly so that adding a new
         // Expr variant produces a compile error until the seek-pattern case is handled.
         Expr::Literal { .. } | Expr::Any { .. } | Expr::Delegate { .. } => {
             info.expr.to_str(buf, precedence)
@@ -540,10 +541,16 @@ mod tests {
 
     #[test]
     fn seek_pattern_easy_expr_preserved() {
-        // An easy (non-hard) expression is serialised verbatim via to_str.
+        // Easy (non-hard) expressions without capture groups are serialised verbatim via to_str.
         assert_eq!(get_seek_pattern(r"abc"), "abc");
         assert_eq!(get_seek_pattern(r"a|b"), "a|b");
         assert_eq!(get_seek_pattern(r"a+b*c?"), "a+b*c?");
+    }
+
+    #[test]
+    fn seek_pattern_easy_expr_with_capture_group_strips_group_wrapper() {
+        // Easy expressions with capture groups are built in seek.rs so the group wrapper is dropped.
+        assert_eq!(get_seek_pattern(r"(abc)"), "abc");
     }
 
     #[test]
