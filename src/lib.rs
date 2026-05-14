@@ -1111,7 +1111,15 @@ impl Regex {
             // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
             let mut re_cooked = String::new();
             tree.expr.to_str(&mut re_cooked, 0);
-            let inner = compile::compile_inner(&re_cooked, options)?;
+            let compile_options = CompileOptions {
+                bytes_mode: options.bytes_mode,
+                unicode: options.syntaxc.get_unicode()
+                    && !matches!(options.bytes_mode, BytesMode::Ascii),
+                delegate_size_limit: options.delegate_size_limit,
+                delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+                ..CompileOptions::default()
+            };
+            let inner = compile::compile_inner(&re_cooked, &compile_options)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,
@@ -1133,6 +1141,8 @@ impl Regex {
                 bytes_mode: options.bytes_mode,
                 unicode: options.syntaxc.get_unicode()
                     && !matches!(options.bytes_mode, BytesMode::Ascii),
+                delegate_size_limit: options.delegate_size_limit,
+                delegate_dfa_size_limit: options.delegate_dfa_size_limit,
             },
         )?;
         Ok(Regex {
