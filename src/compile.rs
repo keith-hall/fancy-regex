@@ -196,6 +196,7 @@ impl<'a> Compiler<'a> {
                 self.b.add(Insn::Backref {
                     slot: group * 2,
                     casei,
+                    // use the pre-computed effective unicode flag (unicode && !Ascii bytes mode)
                     unicode: self.options.unicode,
                 });
             }
@@ -1004,7 +1005,8 @@ pub struct CompileOptions {
     /// How the VM should advance positions: byte-level (Ascii) vs codepoint-level (Unicode/UnicodeBytes).
     pub bytes_mode: BytesMode,
     /// Whether Unicode mode is enabled for the regex. This is the effective value combining
-    /// the unicode flag and bytes_mode (i.e. always `false` in Ascii bytes mode).
+    /// the unicode flag and bytes_mode: `syntaxc.get_unicode() && !matches!(bytes_mode, BytesMode::Ascii)`.
+    /// It is always `false` in Ascii bytes mode, regardless of the unicode flag.
     pub unicode: bool,
     /// Optional size limit in bytes for the NFA of each delegated sub-expression.
     pub delegate_size_limit: Option<usize>,

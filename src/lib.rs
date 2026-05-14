@@ -1117,6 +1117,9 @@ impl Regex {
                     && !matches!(options.bytes_mode, BytesMode::Ascii),
                 delegate_size_limit: options.delegate_size_limit,
                 delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+                // The remaining fields (anchored, contains_subroutines, seek_filter,
+                // disallow_empty_match_at_eof_after_newline) are irrelevant for a plain
+                // delegate compile in the easy path and their defaults are correct.
                 ..CompileOptions::default()
             };
             let inner = compile::compile_inner(&re_cooked, &compile_options)?;
