@@ -1159,7 +1159,10 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                         return Ok(None);
                     }
 
-                    let input = Input::new(s.as_bytes()).span(ix..s.len()).earliest(true);
+                    // Use normal leftmost semantics here. `earliest(true)` can return a later
+                    // start with an earlier end (e.g. for `\n*$`), which may skip valid
+                    // earlier candidate positions and change `find` results.
+                    let input = Input::new(s.as_bytes()).span(ix..s.len());
                     match inner.search(&input) {
                         None => return Ok(None),
                         Some(m) => {
