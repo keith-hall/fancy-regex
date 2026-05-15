@@ -65,11 +65,15 @@ fn capture_spans_bytes(captures: &Captures<'_, [u8]>) -> Vec<Option<(usize, usiz
         .collect()
 }
 
-fn captures_iter_spans_str(captures: &[Captures<'_, str>]) -> Vec<Vec<Option<(usize, usize)>>> {
+fn extract_captures_iter_spans_str(
+    captures: &[Captures<'_, str>],
+) -> Vec<Vec<Option<(usize, usize)>>> {
     captures.iter().map(capture_spans_str).collect()
 }
 
-fn captures_iter_spans_bytes(captures: &[Captures<'_, [u8]>]) -> Vec<Vec<Option<(usize, usize)>>> {
+fn extract_captures_iter_spans_bytes(
+    captures: &[Captures<'_, [u8]>],
+) -> Vec<Vec<Option<(usize, usize)>>> {
     captures.iter().map(capture_spans_bytes).collect()
 }
 
@@ -223,10 +227,10 @@ pub fn assert_captures_iter<'t>(re: &str, text: &'t str) -> Vec<Captures<'t, str
         .map(|c| c.expect("captures_iter succeeded (bytes mode, seek=true)"))
         .collect();
 
-    let str_spans = captures_iter_spans_str(&str_results);
-    let str_seek_spans = captures_iter_spans_str(&str_seek_results);
-    let bytes_spans = captures_iter_spans_bytes(&bytes_results);
-    let bytes_seek_spans = captures_iter_spans_bytes(&bytes_seek_results);
+    let str_spans = extract_captures_iter_spans_str(&str_results);
+    let str_seek_spans = extract_captures_iter_spans_str(&str_seek_results);
+    let bytes_spans = extract_captures_iter_spans_bytes(&bytes_results);
+    let bytes_seek_spans = extract_captures_iter_spans_bytes(&bytes_seek_results);
 
     assert_eq!(
         str_spans, bytes_spans,
