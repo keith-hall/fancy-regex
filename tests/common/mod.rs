@@ -12,6 +12,18 @@ pub fn regex(re: &str) -> Regex {
     parse_result.unwrap()
 }
 
+fn regex_with_seek(re: &str, seek: bool) -> Regex {
+    let parse_result = RegexBuilder::new(re).seek(seek).build();
+    assert!(
+        parse_result.is_ok(),
+        "Expected regex '{}' to be compiled successfully with seek={}, got {:?}",
+        re,
+        seek,
+        parse_result.err()
+    );
+    parse_result.unwrap()
+}
+
 /// Build a regex in ASCII bytes mode.  Useful for bytes-mode tests that need
 /// to configure options beyond what the simple dual-mode helpers provide.
 #[allow(dead_code)]
@@ -26,25 +38,68 @@ pub fn ascii_bytes_regex(re: &str) -> Regex {
     parse_result.unwrap()
 }
 
+fn ascii_bytes_regex_with_seek(re: &str, seek: bool) -> Regex {
+    let parse_result = RegexBuilder::new(re)
+        .bytes_mode(BytesMode::Ascii)
+        .seek(seek)
+        .build();
+    assert!(
+        parse_result.is_ok(),
+        "Expected bytes regex '{}' to be compiled successfully with seek={}, got {:?}",
+        re,
+        seek,
+        parse_result.err()
+    );
+    parse_result.unwrap()
+}
+
+fn capture_spans<T: ?Sized>(captures: &Captures<'_, T>) -> Vec<Option<(usize, usize)>> {
+    (0..captures.len())
+        .map(|i| captures.get(i).map(|m| (m.start(), m.end())))
+        .collect()
+}
+
+fn captures_iter_spans<T: ?Sized>(captures: &[Captures<'_, T>]) -> Vec<Vec<Option<(usize, usize)>>> {
+    captures.iter().map(capture_spans).collect()
+}
+
 /// Assert that `re` matches `text` in **both** str mode and ASCII bytes mode.
 #[cfg_attr(feature = "track_caller", track_caller)]
 #[allow(dead_code)]
 pub fn assert_is_match(re: &str, text: &str) {
-    let str_result = regex(re).is_match(text);
+    let str_result = regex(re).is_match(text).unwrap();
+    let str_seek_result = regex_with_seek(re, true).is_match(text).unwrap();
+    let bytes_result = ascii_bytes_regex(re).is_match(text.as_bytes()).unwrap();
+    let bytes_seek_result = ascii_bytes_regex_with_seek(re, true)
+        .is_match(text.as_bytes())
+        .unwrap();
+
     assert_eq!(
-        str_result.unwrap(),
-        true,
+        str_result, true,
         "Expected regex '{}' to match '{}' (str mode)",
         re,
         text
     );
-    let bytes_result = ascii_bytes_regex(re).is_match(text.as_bytes());
     assert_eq!(
-        bytes_result.unwrap(),
-        true,
+        bytes_result, true,
         "Expected regex '{}' to match {:?} (bytes mode)",
         re,
         text.as_bytes()
+    );
+    assert_eq!(
+        str_result, str_seek_result,
+        "Expected regex '{}' to have same str-mode is_match result with/without seek on '{}'",
+        re, text
+    );
+    assert_eq!(
+        bytes_result, bytes_seek_result,
+        "Expected regex '{}' to have same bytes-mode is_match result with/without seek on {:?}",
+        re, text.as_bytes()
+    );
+    assert_eq!(
+        str_seek_result, bytes_seek_result,
+        "Expected regex '{}' seek=true is_match results to agree between str and bytes mode for '{}'",
+        re, text
     );
 }
 
@@ -53,21 +108,39 @@ pub fn assert_is_match(re: &str, text: &str) {
 #[cfg_attr(feature = "track_caller", track_caller)]
 #[allow(dead_code)]
 pub fn assert_no_match(re: &str, text: &str) {
-    let str_result = regex(re).is_match(text);
+    let str_result = regex(re).is_match(text).unwrap();
+    let str_seek_result = regex_with_seek(re, true).is_match(text).unwrap();
+    let bytes_result = ascii_bytes_regex(re).is_match(text.as_bytes()).unwrap();
+    let bytes_seek_result = ascii_bytes_regex_with_seek(re, true)
+        .is_match(text.as_bytes())
+        .unwrap();
+
     assert_eq!(
-        str_result.unwrap(),
-        false,
+        str_result, false,
         "Expected regex '{}' to not match '{}' (str mode)",
         re,
         text
     );
-    let bytes_result = ascii_bytes_regex(re).is_match(text.as_bytes());
     assert_eq!(
-        bytes_result.unwrap(),
-        false,
+        bytes_result, false,
         "Expected regex '{}' to not match {:?} (bytes mode)",
         re,
         text.as_bytes()
+    );
+    assert_eq!(
+        str_result, str_seek_result,
+        "Expected regex '{}' to have same str-mode is_match result with/without seek on '{}'",
+        re, text
+    );
+    assert_eq!(
+        bytes_result, bytes_seek_result,
+        "Expected regex '{}' to have same bytes-mode is_match result with/without seek on {:?}",
+        re, text.as_bytes()
+    );
+    assert_eq!(
+        str_seek_result, bytes_seek_result,
+        "Expected regex '{}' seek=true is_match results to agree between str and bytes mode for '{}'",
+        re, text
     );
 }
 
@@ -77,13 +150,36 @@ pub fn assert_no_match(re: &str, text: &str) {
 #[allow(dead_code)]
 pub fn assert_find(re: &str, text: &str) -> Option<(usize, usize)> {
     let str_result = regex(re).find(text).unwrap().map(|m| (m.start(), m.end()));
+    let str_seek_result = regex_with_seek(re, true)
+        .find(text)
+        .unwrap()
+        .map(|m| (m.start(), m.end()));
     let bytes_result = ascii_bytes_regex(re)
+        .find(text.as_bytes())
+        .unwrap()
+        .map(|m| (m.start(), m.end()));
+    let bytes_seek_result = ascii_bytes_regex_with_seek(re, true)
         .find(text.as_bytes())
         .unwrap()
         .map(|m| (m.start(), m.end()));
     assert_eq!(
         str_result, bytes_result,
         "Expected regex '{}' find results to agree between str and bytes mode for text '{}'",
+        re, text
+    );
+    assert_eq!(
+        str_result, str_seek_result,
+        "Expected regex '{}' find results to agree in str mode with/without seek for text '{}'",
+        re, text
+    );
+    assert_eq!(
+        bytes_result, bytes_seek_result,
+        "Expected regex '{}' find results to agree in bytes mode with/without seek for text {:?}",
+        re, text.as_bytes()
+    );
+    assert_eq!(
+        str_seek_result, bytes_seek_result,
+        "Expected regex '{}' seek=true find results to agree between str and bytes mode for text '{}'",
         re, text
     );
     str_result
@@ -98,40 +194,44 @@ pub fn assert_captures_iter<'t>(re: &str, text: &'t str) -> Vec<Captures<'t, str
         .captures_iter(text)
         .map(|c| c.expect("captures_iter succeeded (str mode)"))
         .collect();
+    let str_seek_results: Vec<_> = regex_with_seek(re, true)
+        .captures_iter(text)
+        .map(|c| c.expect("captures_iter succeeded (str mode, seek=true)"))
+        .collect();
     let bytes_results: Vec<_> = ascii_bytes_regex(re)
         .captures_iter(text.as_bytes())
         .map(|c| c.expect("captures_iter succeeded (bytes mode)"))
         .collect();
+    let bytes_seek_results: Vec<_> = ascii_bytes_regex_with_seek(re, true)
+        .captures_iter(text.as_bytes())
+        .map(|c| c.expect("captures_iter succeeded (bytes mode, seek=true)"))
+        .collect();
+
+    let str_spans = captures_iter_spans(&str_results);
+    let str_seek_spans = captures_iter_spans(&str_seek_results);
+    let bytes_spans = captures_iter_spans(&bytes_results);
+    let bytes_seek_spans = captures_iter_spans(&bytes_seek_results);
+
     assert_eq!(
-        str_results.len(),
-        bytes_results.len(),
-        "Expected same number of captures_iter results for regex '{}' on '{}' between str and bytes modes",
-        re,
-        text
+        str_spans, bytes_spans,
+        "Expected regex '{}' captures_iter spans to agree between str and bytes modes for '{}'",
+        re, text
     );
-    for (i, (s, b)) in str_results.iter().zip(bytes_results.iter()).enumerate() {
-        assert_eq!(
-            s.len(),
-            b.len(),
-            "Expected capture group count to agree for regex '{}' on '{}' at match {}",
-            re,
-            text,
-            i
-        );
-        for j in 0..s.len() {
-            let str_span = s.get(j).map(|m| (m.start(), m.end()));
-            let bytes_span = b.get(j).map(|m| (m.start(), m.end()));
-            assert_eq!(
-                str_span,
-                bytes_span,
-                "Expected capture group {} to agree between str and bytes modes for regex '{}' on '{}' at match {}",
-                j,
-                re,
-                text,
-                i
-            );
-        }
-    }
+    assert_eq!(
+        str_spans, str_seek_spans,
+        "Expected regex '{}' captures_iter spans to agree in str mode with/without seek for '{}'",
+        re, text
+    );
+    assert_eq!(
+        bytes_spans, bytes_seek_spans,
+        "Expected regex '{}' captures_iter spans to agree in bytes mode with/without seek for {:?}",
+        re, text.as_bytes()
+    );
+    assert_eq!(
+        str_seek_spans, bytes_seek_spans,
+        "Expected regex '{}' seek=true captures_iter spans to agree between str and bytes mode for '{}'",
+        re, text
+    );
     str_results
 }
 
@@ -147,40 +247,41 @@ pub fn assert_captures_from_pos<'t>(
     let str_result = regex(re)
         .captures_from_pos(text, pos)
         .expect("expected captures_from_pos to succeed (str mode)");
+    let str_seek_result = regex_with_seek(re, true)
+        .captures_from_pos(text, pos)
+        .expect("expected captures_from_pos to succeed (str mode, seek=true)");
     let bytes_result = ascii_bytes_regex(re)
         .captures_from_pos(text.as_bytes(), pos)
         .expect("expected captures_from_pos to succeed (bytes mode)");
+    let bytes_seek_result = ascii_bytes_regex_with_seek(re, true)
+        .captures_from_pos(text.as_bytes(), pos)
+        .expect("expected captures_from_pos to succeed (bytes mode, seek=true)");
+
+    let str_spans = str_result.as_ref().map(capture_spans);
+    let str_seek_spans = str_seek_result.as_ref().map(capture_spans);
+    let bytes_spans = bytes_result.as_ref().map(capture_spans);
+    let bytes_seek_spans = bytes_seek_result.as_ref().map(capture_spans);
+
     assert_eq!(
-        str_result.is_some(),
-        bytes_result.is_some(),
-        "Expected regex '{}' captures_from_pos({}) to agree between str and bytes modes for '{}'",
-        re,
-        pos,
-        text
+        str_spans, bytes_spans,
+        "Expected regex '{}' captures_from_pos({}) spans to agree between str and bytes modes for '{}'",
+        re, pos, text
     );
-    if let (Some(ref s), Some(ref b)) = (&str_result, &bytes_result) {
-        assert_eq!(
-            s.len(),
-            b.len(),
-            "Expected capture group count to agree for regex '{}' on '{}' at pos {}",
-            re,
-            text,
-            pos
-        );
-        for i in 0..s.len() {
-            let str_span = s.get(i).map(|m| (m.start(), m.end()));
-            let bytes_span = b.get(i).map(|m| (m.start(), m.end()));
-            assert_eq!(
-                str_span,
-                bytes_span,
-                "Expected capture group {} to agree between str and bytes modes for regex '{}' on '{}' at pos {}",
-                i,
-                re,
-                text,
-                pos
-            );
-        }
-    }
+    assert_eq!(
+        str_spans, str_seek_spans,
+        "Expected regex '{}' captures_from_pos({}) spans to agree in str mode with/without seek for '{}'",
+        re, pos, text
+    );
+    assert_eq!(
+        bytes_spans, bytes_seek_spans,
+        "Expected regex '{}' captures_from_pos({}) spans to agree in bytes mode with/without seek for {:?}",
+        re, pos, text.as_bytes()
+    );
+    assert_eq!(
+        str_seek_spans, bytes_seek_spans,
+        "Expected regex '{}' seek=true captures_from_pos({}) spans to agree between str and bytes mode for '{}'",
+        re, pos, text
+    );
     str_result
 }
 
@@ -193,37 +294,41 @@ pub fn assert_captures<'t>(re: &str, text: &'t str) -> Option<Captures<'t, str>>
     let str_result = regex(re)
         .captures(text)
         .expect("expected captures to succeed (str mode)");
+    let str_seek_result = regex_with_seek(re, true)
+        .captures(text)
+        .expect("expected captures to succeed (str mode, seek=true)");
     let bytes_result = ascii_bytes_regex(re)
         .captures(text.as_bytes())
         .expect("expected captures to succeed (bytes mode)");
+    let bytes_seek_result = ascii_bytes_regex_with_seek(re, true)
+        .captures(text.as_bytes())
+        .expect("expected captures to succeed (bytes mode, seek=true)");
+
+    let str_spans = str_result.as_ref().map(capture_spans);
+    let str_seek_spans = str_seek_result.as_ref().map(capture_spans);
+    let bytes_spans = bytes_result.as_ref().map(capture_spans);
+    let bytes_seek_spans = bytes_seek_result.as_ref().map(capture_spans);
+
     assert_eq!(
-        str_result.is_some(),
-        bytes_result.is_some(),
-        "Expected regex '{}' captures to agree between str and bytes mode for '{}'",
-        re,
-        text
+        str_spans, bytes_spans,
+        "Expected regex '{}' captures spans to agree between str and bytes mode for '{}'",
+        re, text
     );
-    if let (Some(ref s), Some(ref b)) = (&str_result, &bytes_result) {
-        assert_eq!(
-            s.len(),
-            b.len(),
-            "Expected capture group count to agree for regex '{}' on '{}'",
-            re,
-            text
-        );
-        for i in 0..s.len() {
-            let str_span = s.get(i).map(|m| (m.start(), m.end()));
-            let bytes_span = b.get(i).map(|m| (m.start(), m.end()));
-            assert_eq!(
-                str_span,
-                bytes_span,
-                "Expected capture group {} to agree between str and bytes mode for regex '{}' on '{}'",
-                i,
-                re,
-                text
-            );
-        }
-    }
+    assert_eq!(
+        str_spans, str_seek_spans,
+        "Expected regex '{}' captures spans to agree in str mode with/without seek for '{}'",
+        re, text
+    );
+    assert_eq!(
+        bytes_spans, bytes_seek_spans,
+        "Expected regex '{}' captures spans to agree in bytes mode with/without seek for {:?}",
+        re, text.as_bytes()
+    );
+    assert_eq!(
+        str_seek_spans, bytes_seek_spans,
+        "Expected regex '{}' seek=true captures spans to agree between str and bytes mode for '{}'",
+        re, text
+    );
     str_result
 }
 
