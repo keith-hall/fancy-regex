@@ -1194,7 +1194,6 @@ mod tests {
     use crate::parse::ExprTree;
     use crate::vm::Insn::*;
     use alloc::vec;
-    use bit_set::BitSet;
     use matches::assert_matches;
 
     #[cfg_attr(feature = "track_caller", track_caller)]
@@ -1213,38 +1212,7 @@ mod tests {
 
     #[test]
     fn jumps_for_alternation() {
-        let tree = ExprTree {
-            expr: Expr::Alt(vec![
-                Expr::Literal {
-                    val: "a".into(),
-                    casei: false,
-                },
-                Expr::Literal {
-                    val: "b".into(),
-                    casei: false,
-                },
-                Expr::Literal {
-                    val: "c".into(),
-                    casei: false,
-                },
-            ]),
-            backrefs: BitSet::new(),
-            named_groups: Default::default(),
-            numeric_capture_group_references: false,
-            contains_subroutines: false,
-            self_recursive: false,
-            total_groups: 0,
-            out_of_range_backref: None,
-            numbered_groups_ignored: false,
-        };
-        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
-
-        let mut c = Compiler::new(0);
-        // Force "hard" so that compiler doesn't just delegate
-        c.visit(&info, true).unwrap();
-        c.b.add(Insn::End);
-
-        let prog = c.b.prog;
+        let prog = compile_prog_forced_root_hard("a|b|c");
 
         assert_eq!(prog.len(), 8, "prog: {:?}", prog);
         assert_matches!(prog[0], Split(1, 3));
@@ -1847,40 +1815,59 @@ mod tests {
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {
-        let tree = Expr::parse_tree(re).unwrap();
-        let info = analyze(
-            &tree,
+        compile_prog_with(
+            re,
             AnalyzeContext {
                 explicit_capture_group_0: true,
                 ..Default::default()
             },
-        )
-        .unwrap();
-        let prog = compile(
-            &info,
-            CompileOptions {
-                anchored: true,
-                contains_subroutines: tree.contains_subroutines,
-                ..CompileOptions::default()
+            |info, tree| {
+                compile(
+                    info,
+                    CompileOptions {
+                        anchored: true,
+                        contains_subroutines: tree.contains_subroutines,
+                        ..CompileOptions::default()
+                    },
+                )
+                .unwrap()
+                .body
             },
         )
-        .unwrap();
-        prog.body
     }
 
     fn compile_prog_no_explicit_group0(re: &str) -> Vec<Insn> {
+        compile_prog_with(re, AnalyzeContext::default(), |info, tree| {
+            compile(
+                info,
+                CompileOptions {
+                    anchored: false,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            )
+            .unwrap()
+            .body
+        })
+    }
+
+    fn compile_prog_forced_root_hard(re: &str) -> Vec<Insn> {
+        compile_prog_with(re, AnalyzeContext::default(), |info, _| {
+            let mut c = Compiler::new(info.end_group());
+            // Force "hard" so that compiler doesn't just delegate.
+            c.visit(info, true).unwrap();
+            c.b.add(Insn::End);
+            c.b.prog
+        })
+    }
+
+    fn compile_prog_with<F>(re: &str, analyze_context: AnalyzeContext, compile_fn: F) -> Vec<Insn>
+    where
+        F: FnOnce(&Info<'_>, &ExprTree) -> Vec<Insn>,
+    {
         let tree = Expr::parse_tree(re).unwrap();
-        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
-        let prog = compile(
-            &info,
-            CompileOptions {
-                anchored: false,
-                contains_subroutines: tree.contains_subroutines,
-                ..CompileOptions::default()
-            },
-        )
-        .unwrap();
-        prog.body
+        let info = analyze(&tree, analyze_context).unwrap();
+        compile_fn(&info, &tree)
     }
 
     fn assert_delegate_insn(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
