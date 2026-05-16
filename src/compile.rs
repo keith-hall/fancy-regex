@@ -124,18 +124,6 @@ struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    #[cfg(test)]
-    fn new(max_group: usize) -> Compiler<'a> {
-        Compiler {
-            b: VMBuilder::new(max_group),
-            options: Default::default(),
-            inside_alternation: false,
-            group_info_map: Map::new(),
-            subroutine_recursion_stack: Vec::new(),
-            root_info: None,
-        }
-    }
-
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         if !hard && !info.hard {
             // easy case, delegate entire subexpr
@@ -1191,10 +1179,7 @@ impl DelegateBuilder {
 mod tests {
     use super::*;
     use crate::analyze::{analyze, AnalyzeContext};
-    use crate::parse::ExprTree;
     use crate::vm::Insn::*;
-    use alloc::vec;
-    use bit_set::BitSet;
     use matches::assert_matches;
 
     #[cfg_attr(feature = "track_caller", track_caller)]
@@ -1213,33 +1198,17 @@ mod tests {
 
     #[test]
     fn jumps_for_alternation() {
-        let tree = ExprTree {
-            expr: Expr::Alt(vec![
-                Expr::Literal {
-                    val: "a".into(),
-                    casei: false,
-                },
-                Expr::Literal {
-                    val: "b".into(),
-                    casei: false,
-                },
-                Expr::Literal {
-                    val: "c".into(),
-                    casei: false,
-                },
-            ]),
-            backrefs: BitSet::new(),
-            named_groups: Default::default(),
-            numeric_capture_group_references: false,
-            contains_subroutines: false,
-            self_recursive: false,
-            total_groups: 0,
-            out_of_range_backref: None,
-            numbered_groups_ignored: false,
-        };
+        let tree = Expr::parse_tree("a|b|c").unwrap();
         let info = analyze(&tree, AnalyzeContext::default()).unwrap();
 
-        let mut c = Compiler::new(0);
+        let mut c = Compiler {
+            b: VMBuilder::new(0),
+            options: Default::default(),
+            inside_alternation: false,
+            group_info_map: Map::new(),
+            subroutine_recursion_stack: Vec::new(),
+            root_info: None,
+        };
         // Force "hard" so that compiler doesn't just delegate
         c.visit(&info, true).unwrap();
         c.b.add(Insn::End);
