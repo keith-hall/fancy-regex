@@ -198,7 +198,6 @@ fn compile_hard_prog_for_debug(
 
 #[derive(Serialize, Deserialize)]
 pub struct VmProgramInfo {
-    pub hard: bool,
     pub engine_mode: String,
     pub entry_strategy: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -626,7 +625,6 @@ pub fn compile_vm_program(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
     };
 
     let vm_info = VmProgramInfo {
-        hard: engine_mode == "fancy_vm",
         engine_mode,
         entry_strategy,
         seek_pattern,
