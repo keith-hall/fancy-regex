@@ -62,6 +62,10 @@
                             <input type="checkbox" id="flag-no-match-at-trailing-newline" />
                             <label for="flag-no-match-at-trailing-newline">Ignore trailing newline in multi-line mode</label>
                         </div>
+                        <div class="flag-group">
+                            <input type="checkbox" id="flag-seek" />
+                            <label for="flag-seek">Seek pre-filter</label>
+                        </div>
                     </div>
                 </div>
 
@@ -74,6 +78,7 @@
                     <button id="update-url" class="toggle-btn">Update share URL</button>
                     <button id="show-parse-tree" class="toggle-btn">Show parse tree</button>
                     <button id="show-analysis" class="toggle-btn">Show analysis</button>
+                    <button id="show-vm-program" class="toggle-btn">Show VM program</button>
                 </div>
             </div>
         </div>
@@ -108,6 +113,16 @@
                         <div class="output-header">Analysis</div>
                         <div id="analysis-content" class="output-content">
                             <div class="parse-tree" id="analysis-display"></div>
+                        </div>
+                    </div>
+
+                    <div id="vm-program-section" class="output-section hidden">
+                        <div class="output-header">VM program</div>
+                        <div id="vm-program-content" class="output-content">
+                            <div id="vm-summary" class="vm-summary"></div>
+                            <div class="parse-tree vm-program" id="vm-program-display"></div>
+                            <div class="vm-dot-header">DOT graph</div>
+                            <div class="parse-tree vm-dot" id="vm-dot-display"></div>
                         </div>
                     </div>
                 </div>

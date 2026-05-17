@@ -419,3 +419,53 @@ footer a {
 .analysis-children--collapsed {
     display: none;
 }
+
+/* VM panel styles */
+.vm-summary {
+    background: #34495e;
+    color: #ecf0f1;
+    border-radius: 4px;
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+    font-family: var(--monospace);
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.vm-summary code {
+    color: #8fd3ff;
+}
+
+.vm-program {
+    margin-bottom: 0.75rem;
+}
+
+.vm-line {
+    white-space: pre;
+}
+
+.vm-line--split-unanchored {
+    background: rgba(230, 126, 34, 0.2);
+    border-left: 3px solid #e67e22;
+    padding-left: 0.4rem;
+}
+
+.vm-badge {
+    display: inline-block;
+    text-transform: uppercase;
+    font-size: 0.65rem;
+    letter-spacing: 0.03em;
+    font-weight: 700;
+    color: #fff;
+    background: #e67e22;
+    border-radius: 3px;
+    padding: 0.1rem 0.3rem;
+    margin-right: 0.45rem;
+    vertical-align: baseline;
+}
+
+.vm-dot-header {
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+    color: #34495e;
+}

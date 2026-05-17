@@ -21,11 +21,12 @@
 //! A simple test app for exercising and debugging the regex engine.
 
 use fancy_regex::internal::{
-    analyze, can_compile_as_anchored, compile, optimize, run_trace, AnalyzeContext, CompileOptions,
-    Insn, Prog,
+    analyze, can_compile_as_anchored, compile, optimize, run_trace, write_dot_graph,
+    AnalyzeContext, CompileOptions, Prog,
 };
 use fancy_regex::*;
 use std::env;
+use std::fmt::Write as _;
 use std::fmt::{Display, Formatter, Result};
 use std::io;
 use std::io::Write;
@@ -112,27 +113,10 @@ fn main() {
 
 fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
     let prog = prog(re);
-    write!(writer, "digraph G {{\n")?;
-    for (i, insn) in prog.body.iter().enumerate() {
-        let label = format!("{:?}", insn)
-            .replace(r#"\"#, r#"\\"#)
-            .replace(r#"""#, r#"\""#);
-        write!(writer, r#"{:3} [label="{}: {}"];{}"#, i, i, label, "\n")?;
-        match *insn {
-            Insn::Split(a, b) | Insn::SplitUnanchored(a, b) => {
-                write!(writer, "{:3} -> {};\n", i, a)?;
-                write!(writer, "{:3} -> {};\n", i, b)?;
-            }
-            Insn::Jmp(target) => {
-                write!(writer, "{:3} -> {};\n", i, target)?;
-            }
-            Insn::End => {}
-            _ => {
-                write!(writer, "{:3} -> {};\n", i, i + 1)?;
-            }
-        }
-    }
-    write!(writer, "}}\n")?;
+    let mut dot = String::new();
+    write_dot_graph(&prog, &mut dot)
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to build graph"))?;
+    writer.write_all(dot.as_bytes())?;
     Ok(())
 }
 

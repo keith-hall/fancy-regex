@@ -51,6 +51,7 @@ pub struct RegexFlags {
     pub find_not_empty: bool,
     pub ignore_numbered_groups_when_named_groups_exist: bool,
     pub ignore_trailing_newline: bool,
+    pub seek: bool,
 }
 
 impl Default for RegexFlags {
@@ -65,6 +66,7 @@ impl Default for RegexFlags {
             find_not_empty: false,
             ignore_numbered_groups_when_named_groups_exist: false,
             ignore_trailing_newline: false,
+            seek: false,
         }
     }
 }
@@ -93,10 +95,117 @@ fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, String> {
         flags.ignore_numbered_groups_when_named_groups_exist,
     );
     builder.disallow_empty_match_at_eof_after_newline(flags.ignore_trailing_newline);
+    builder.seek(flags.seek);
 
     builder
         .build()
         .map_err(|e| format!("Regex compilation error: {}", e))
+}
+
+fn debug_print_regex(regex: &Regex) -> Result<String, String> {
+    struct DebugPrintWrapper<'a>(&'a Regex);
+    impl<'a> core::fmt::Display for DebugPrintWrapper<'a> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            self.0.debug_print(f)
+        }
+    }
+    Ok(format!("{}", DebugPrintWrapper(regex)))
+}
+
+fn extract_seek_pattern(insn: &str) -> Option<String> {
+    let marker = "pattern: \"";
+    let start = insn.find(marker)?;
+    let value_start = start + marker.len();
+    let rest = &insn[value_start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+fn parse_vm_debug_output(debug_output: &str) -> (String, String, Option<String>) {
+    if debug_output.starts_with("wrapped Regex") {
+        return ("wrapped".to_string(), "delegated".to_string(), None);
+    }
+
+    let first_insn = debug_output
+        .lines()
+        .find_map(|line| line.split_once(": ").map(|(_, rhs)| rhs))
+        .unwrap_or_default();
+
+    if first_insn.starts_with("Seek(") {
+        (
+            "fancy_vm".to_string(),
+            "seek".to_string(),
+            extract_seek_pattern(first_insn),
+        )
+    } else if first_insn.starts_with("SplitUnanchored(") {
+        (
+            "fancy_vm".to_string(),
+            "split_unanchored".to_string(),
+            None,
+        )
+    } else {
+        ("fancy_vm".to_string(), "anchored".to_string(), None)
+    }
+}
+
+fn compile_hard_prog_for_debug(
+    pattern: &str,
+    flags: &RegexFlags,
+) -> Result<Option<fancy_regex::internal::Prog>, String> {
+    use fancy_regex::internal::{
+        analyze, can_compile_as_anchored, compile, optimize, AnalyzeContext, CompileOptions,
+    };
+
+    let regex_flags = compute_regex_flags(flags);
+    let mut tree = fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags)
+        .map_err(|e| format!("Parse error: {}", e))?;
+    let requires_capture_group_fixup = optimize(&mut tree);
+    let info = analyze(
+        &tree,
+        AnalyzeContext {
+            explicit_capture_group_0: requires_capture_group_fixup,
+            find_not_empty: flags.find_not_empty,
+            disallow_empty_match_at_eof_after_newline: flags.ignore_trailing_newline,
+        },
+    )
+    .map_err(|e| format!("Analysis error: {}", e))?;
+
+    if !info.hard {
+        return Ok(None);
+    }
+
+    let seek_filter = if flags.seek {
+        Some(fancy_regex::seek_pattern_is_useful as fn(&str) -> bool)
+    } else {
+        None
+    };
+
+    let prog = compile(
+        &info,
+        CompileOptions {
+            anchored: can_compile_as_anchored(&tree.expr),
+            contains_subroutines: tree.contains_subroutines,
+            seek_filter,
+            disallow_empty_match_at_eof_after_newline: flags.ignore_trailing_newline,
+            unicode: flags.unicode,
+            ..CompileOptions::default()
+        },
+    )
+    .map_err(|e| format!("Compilation error: {}", e))?;
+
+    Ok(Some(prog))
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct VmProgramInfo {
+    pub hard: bool,
+    pub engine_mode: String,
+    pub entry_strategy: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seek_pattern: Option<String>,
+    pub program: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dot_graph: Option<String>,
 }
 
 // Helper function to compute regex flags for parse_tree_with_flags
@@ -495,6 +604,37 @@ pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
         }
         Err(e) => Err(format!("Parse error: {}", e)),
     }
+}
+
+#[wasm_bindgen]
+pub fn compile_vm_program(pattern: &str, flags: JsValue) -> Result<JsValue, String> {
+    let flags = get_flags(flags)?;
+    let regex = build_regex(pattern, &flags)?;
+    let program = debug_print_regex(&regex)?;
+    let (engine_mode, entry_strategy, seek_pattern) = parse_vm_debug_output(&program);
+    let dot_graph = if engine_mode == "fancy_vm" {
+        if let Some(prog) = compile_hard_prog_for_debug(pattern, &flags)? {
+            let mut dot = String::new();
+            fancy_regex::internal::write_dot_graph(&prog, &mut dot)
+                .map_err(|_| "DOT graph generation error".to_string())?;
+            Some(dot)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let vm_info = VmProgramInfo {
+        hard: engine_mode == "fancy_vm",
+        engine_mode,
+        entry_strategy,
+        seek_pattern,
+        program,
+        dot_graph,
+    };
+
+    serde_wasm_bindgen::to_value(&vm_info).map_err(|e| format!("Serialization error: {}", e))
 }
 
 // Initialize the module
@@ -988,5 +1128,52 @@ mod tests {
             re.is_match("world\nhello\nfoo").unwrap(),
             "^ should match start of line with multi_line"
         );
+    }
+
+    #[test]
+    fn smoke_seek_flag_changes_vm_entry_strategy() {
+        let pattern = r"a+(?<b>b*)(?=c)\k<b>";
+
+        let no_seek = RegexFlags {
+            seek: false,
+            ..Default::default()
+        };
+        let debug_no_seek = debug_print_regex(&build_regex(pattern, &no_seek).unwrap()).unwrap();
+        assert!(
+            debug_no_seek.contains("SplitUnanchored("),
+            "seek=false should use SplitUnanchored preamble"
+        );
+
+        let with_seek = RegexFlags {
+            seek: true,
+            ..Default::default()
+        };
+        let debug_with_seek = debug_print_regex(&build_regex(pattern, &with_seek).unwrap()).unwrap();
+        assert!(
+            debug_with_seek.contains("Seek(Seek"),
+            "seek=true should use Seek preamble when useful"
+        );
+    }
+
+    #[test]
+    fn test_parse_vm_debug_output() {
+        let (engine, entry, seek_pattern) = parse_vm_debug_output(
+            "  0: Seek(Seek { pattern: \"a+b*b*\" })\n  1: Save(0)\n",
+        );
+        assert_eq!(engine, "fancy_vm");
+        assert_eq!(entry, "seek");
+        assert_eq!(seek_pattern.as_deref(), Some("a+b*b*"));
+
+        let (engine, entry, seek_pattern) =
+            parse_vm_debug_output("  0: SplitUnanchored(3, 1)\n  1: Any\n");
+        assert_eq!(engine, "fancy_vm");
+        assert_eq!(entry, "split_unanchored");
+        assert_eq!(seek_pattern, None);
+
+        let (engine, entry, seek_pattern) =
+            parse_vm_debug_output("wrapped Regex \"a+bc?\", explicit_capture_group_0: false");
+        assert_eq!(engine, "wrapped");
+        assert_eq!(entry, "delegated");
+        assert_eq!(seek_pattern, None);
     }
 }

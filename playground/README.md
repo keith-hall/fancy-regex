@@ -11,9 +11,10 @@ A browser-based interactive playground for testing and exploring the [fancy-rege
   - Lookahead and lookbehind assertions
   - All other fancy-regex features
 - **Real-time Highlighting**: Visual highlighting of matches in the test text
-- **Regex Flags**: Support for case-insensitive, multi-line, dot-matches-newline, and ignore-whitespace flags
+- **Regex Flags**: Support for case-insensitive, multi-line, dot-matches-newline, ignore-whitespace, and seek pre-filter flags
 - **Parse Tree Visualization**: View the internal parse tree structure of your regex
 - **Analysis Output**: See detailed analysis information about your regex pattern
+- **VM Program View**: Inspect the compiled VM instructions, entry strategy, seek pattern, and DOT graph output
 - **Error Handling**: Clear error messages for invalid patterns or runtime errors
 - **Debounced Updates**: Smooth real-time updates with debouncing to prevent excessive computation
 - **Sharable URLs**: Load/save pattern, haystack, and flag settings via query parameters
@@ -83,6 +84,7 @@ Supported parameters:
   - `N`: find not empty
   - `G`: ignore numbered groups when named groups exist
   - `T`: ignore trailing newline
+  - `k`: seek pre-filter
 
 ## 🏗️ Architecture
 
@@ -98,6 +100,7 @@ The playground consists of:
 - `find_captures(pattern, text, flags)`: Find matches with capture groups  
 - `parse_regex(pattern, flags)`: Parse regex and return AST with flag consideration
 - `analyze_regex(pattern, flags)`: Analyze regex and return detailed information with flag consideration
+- `compile_vm_program(pattern, flags)`: Compile and return VM program summary/debug output (plus DOT for fancy VM)
 - `is_match(pattern, text, flags)`: Test if pattern matches text
 
 ## 🛠️ Development

@@ -393,6 +393,32 @@ impl Prog {
     }
 }
 
+#[doc(hidden)]
+pub fn write_dot_graph(prog: &Prog, writer: &mut dyn core::fmt::Write) -> core::fmt::Result {
+    write!(writer, "digraph G {{\n")?;
+    for (i, insn) in prog.body.iter().enumerate() {
+        let label = format!("{:?}", insn)
+            .replace(r#"\"#, r#"\\"#)
+            .replace(r#"""#, r#"\""#);
+        write!(writer, r#"{:3} [label="{}: {}"];{}"#, i, i, label, "\n")?;
+        match *insn {
+            Insn::Split(a, b) | Insn::SplitUnanchored(a, b) => {
+                write!(writer, "{:3} -> {};\n", i, a)?;
+                write!(writer, "{:3} -> {};\n", i, b)?;
+            }
+            Insn::Jmp(target) => {
+                write!(writer, "{:3} -> {};\n", i, target)?;
+            }
+            Insn::End => {}
+            _ => {
+                write!(writer, "{:3} -> {};\n", i, i + 1)?;
+            }
+        }
+    }
+    write!(writer, "}}\n")?;
+    Ok(())
+}
+
 #[derive(Debug)]
 struct Branch {
     pc: usize,

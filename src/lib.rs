@@ -2659,7 +2659,7 @@ pub mod internal {
         FLAG_CASEI, FLAG_CRLF, FLAG_DOTNL, FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
         FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
     };
-    pub use crate::vm::{run_default, run_trace, Insn, Prog, Seek};
+    pub use crate::vm::{run_default, run_trace, write_dot_graph, Insn, Prog, Seek};
 }
 
 #[cfg(test)]

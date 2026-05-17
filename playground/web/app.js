@@ -1,8 +1,8 @@
 import init, {
     find_captures,
     parse_regex,
-    analyze_regex,
     analyze_regex_tree,
+    compile_vm_program,
     is_match
 } from './pkg/fancy_regex_playground.js';
 
@@ -31,9 +31,14 @@ class FancyRegexPlayground {
             parseTreeDisplay: document.getElementById('parse-tree-display'),
             analysisSection: document.getElementById('analysis-section'),
             analysisDisplay: document.getElementById('analysis-display'),
+            vmProgramSection: document.getElementById('vm-program-section'),
+            vmSummary: document.getElementById('vm-summary'),
+            vmProgramDisplay: document.getElementById('vm-program-display'),
+            vmDotDisplay: document.getElementById('vm-dot-display'),
             updateUrlBtn: document.getElementById('update-url'),
             showParseTreeBtn: document.getElementById('show-parse-tree'),
             showAnalysisBtn: document.getElementById('show-analysis'),
+            showVmProgramBtn: document.getElementById('show-vm-program'),
             flags: {
                 caseInsensitive: document.getElementById('flag-case-insensitive'),
                 multiLine: document.getElementById('flag-multi-line'),
@@ -44,6 +49,7 @@ class FancyRegexPlayground {
                 ignoreNumberedGroups: document.getElementById('flag-ignore-numbered-groups'),
                 unicode: document.getElementById('flag-unicode'),
                 ignoreTrailingNewline: document.getElementById('flag-no-match-at-trailing-newline'),
+                seek: document.getElementById('flag-seek'),
             }
         };
 
@@ -70,6 +76,7 @@ class FancyRegexPlayground {
         this.elements.updateUrlBtn.addEventListener('click', () => this.updateUrlWithCurrentState());
         this.elements.showParseTreeBtn.addEventListener('click', () => this.toggleParseTree());
         this.elements.showAnalysisBtn.addEventListener('click', () => this.toggleAnalysis());
+        this.elements.showVmProgramBtn.addEventListener('click', () => this.toggleVmProgram());
     }
 
     debounceUpdate() {
@@ -89,6 +96,7 @@ class FancyRegexPlayground {
             find_not_empty: this.elements.flags.findNotEmpty.checked,
             ignore_numbered_groups_when_named_groups_exist: this.elements.flags.ignoreNumberedGroups.checked,
             ignore_trailing_newline: this.elements.flags.ignoreTrailingNewline.checked,
+            seek: this.elements.flags.seek.checked,
         };
     }
 
@@ -103,6 +111,7 @@ class FancyRegexPlayground {
             { param: 'N', key: 'find_not_empty', element: this.elements.flags.findNotEmpty },
             { param: 'G', key: 'ignore_numbered_groups_when_named_groups_exist', element: this.elements.flags.ignoreNumberedGroups },
             { param: 'T', key: 'ignore_trailing_newline', element: this.elements.flags.ignoreTrailingNewline },
+            { param: 'k', key: 'seek', element: this.elements.flags.seek },
         ];
     }
 
@@ -207,6 +216,7 @@ class FancyRegexPlayground {
 
             this.updateParseTreeIfVisible(pattern, flags);
             this.updateAnalysisIfVisible(pattern, flags);
+            this.updateVmProgramIfVisible(pattern, flags);
 
             // Test if pattern is valid
             const isValid = await this.testRegexValidity(pattern, flags);
@@ -336,6 +346,21 @@ class FancyRegexPlayground {
         }
     }
 
+    toggleVmProgram() {
+        const isVisible = !this.elements.vmProgramSection.classList.contains('hidden');
+
+        if (isVisible) {
+            this.elements.vmProgramSection.classList.add('hidden');
+            this.elements.showVmProgramBtn.classList.remove('active');
+            this.elements.showVmProgramBtn.textContent = 'Show VM program';
+        } else {
+            this.elements.vmProgramSection.classList.remove('hidden');
+            this.elements.showVmProgramBtn.classList.add('active');
+            this.elements.showVmProgramBtn.textContent = 'Hide VM program';
+            this.updateVmProgram();
+        }
+    }
+
     updateParseTreeIfVisible(pattern, flags) {
         if (!this.elements.parseTreeSection.classList.contains('hidden')) {
             this.updateParseTree(pattern, flags);
@@ -345,6 +370,12 @@ class FancyRegexPlayground {
     updateAnalysisIfVisible(pattern, flags) {
         if (!this.elements.analysisSection.classList.contains('hidden')) {
             this.updateAnalysis(pattern, flags);
+        }
+    }
+
+    updateVmProgramIfVisible(pattern, flags) {
+        if (!this.elements.vmProgramSection.classList.contains('hidden')) {
+            this.updateVmProgram(pattern, flags);
         }
     }
 
@@ -377,6 +408,59 @@ class FancyRegexPlayground {
             this.renderAnalysisTree(analysisTree);
         } catch (error) {
             this.elements.analysisDisplay.innerHTML = `<div class="error">${this.escapeHtml(error.toString())}</div>`;
+        }
+    }
+
+    updateVmProgram(pattern = null, flags = null) {
+        if (pattern === null) {
+            pattern = this.elements.regexInput.value.trim();
+        }
+        if (flags === null) {
+            flags = this.getFlags();
+        }
+
+        try {
+            const vmInfo = compile_vm_program(pattern, flags);
+            this.renderVmProgram(vmInfo);
+        } catch (error) {
+            const message = this.escapeHtml(error.toString());
+            this.elements.vmSummary.innerHTML = `<div class="error">${message}</div>`;
+            this.elements.vmProgramDisplay.innerHTML = '';
+            this.elements.vmDotDisplay.innerHTML = '';
+        }
+    }
+
+    renderVmProgram(vmInfo) {
+        const entryLabel = vmInfo.entry_strategy === 'seek'
+            ? 'Seek'
+            : vmInfo.entry_strategy === 'split_unanchored'
+                ? 'SplitUnanchored fallback'
+                : vmInfo.entry_strategy === 'anchored'
+                    ? 'Anchored start'
+                    : 'Delegated engine';
+        const seekSummary = vmInfo.seek_pattern
+            ? `<div><strong>Seek pattern:</strong> <code>${this.escapeHtml(vmInfo.seek_pattern)}</code></div>`
+            : '';
+
+        this.elements.vmSummary.innerHTML = `
+            <div><strong>Engine mode:</strong> ${vmInfo.engine_mode === 'fancy_vm' ? 'Fancy VM' : 'Wrapped delegate'}</div>
+            <div><strong>Entry strategy:</strong> ${entryLabel}</div>
+            ${seekSummary}
+        `;
+
+        const programLines = vmInfo.program.split('\n').filter(line => line.length > 0);
+        this.elements.vmProgramDisplay.innerHTML = programLines.map(line => {
+            const escaped = this.escapeHtml(line);
+            if (line.includes('SplitUnanchored(')) {
+                return `<div class="vm-line vm-line--split-unanchored"><span class="vm-badge">fallback</span>${escaped}</div>`;
+            }
+            return `<div class="vm-line">${escaped}</div>`;
+        }).join('');
+
+        if (vmInfo.dot_graph) {
+            this.elements.vmDotDisplay.textContent = vmInfo.dot_graph;
+        } else {
+            this.elements.vmDotDisplay.innerHTML = '<div class="info">No DOT graph (delegated/wrapped execution)</div>';
         }
     }
 
