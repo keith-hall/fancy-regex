@@ -6,7 +6,7 @@ familiar with it, make sure you read its documentation and maybe you don't even 
 
 If your regex or parts of it does not use any special features, the matching is delegated to the
 regex crate. That means it has linear runtime. But if you use "fancy" features such as
-backreferences or look-around, an engine with backtracking needs to be used. In that case, the regex
+backreferences or lookaround, an engine with backtracking needs to be used. In that case, the regex
 can be slow and take exponential time to run because of what is called "catastrophic backtracking".
 This depends on the regex and the input.
 
@@ -81,7 +81,7 @@ assert!(re
 ```
 
 Using [`RegexInput`] preserves the original haystack for anchors, word
-boundaries, and look-around while still constraining the reported match to a
+boundaries, and lookaround while still constraining the reported match to a
 specific byte range.
 
 ## Example: Splitting text

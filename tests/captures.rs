@@ -474,8 +474,9 @@ fn captures_input_wrap_range_keeps_anchor_context() {
 
 #[test]
 fn captures_input_fancy_range_allows_lookaround_outside_range() {
-    let captures = common::assert_captures_input(r"foo(?=bar)", "foobar", 0, 0..3).unwrap();
+    let captures = common::assert_captures_input(r"(?=(foo))\1(?=bar)", "foobar", 0, 0..3).unwrap();
     assert_match(captures.get(0), "foo", 0, 3);
+    assert_match(captures.get(1), "foo", 0, 3);
 
     let captures = common::assert_captures_input(r"(?<=foo)(bar)", "foobar", 3, 3..6).unwrap();
     assert_match(captures.get(0), "bar", 3, 6);

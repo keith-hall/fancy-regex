@@ -116,7 +116,7 @@ fn is_match_input_respects_range_without_slicing() {
         .is_match_input(RegexInput::new("batter").range(1..3))
         .unwrap());
 
-    let re = RegexBuilder::new(r"foo(?=bar)").build().unwrap();
+    let re = RegexBuilder::new(r"(?=(foo))\1(?=bar)").build().unwrap();
     assert!(re
         .is_match_input(RegexInput::new("foobar").range(0..3))
         .unwrap());

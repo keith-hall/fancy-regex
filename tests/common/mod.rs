@@ -105,7 +105,11 @@ pub fn assert_find_input(
         .unwrap()
         .map(|m| (m.start(), m.end()));
     let bytes_result = ascii_bytes_regex(re)
-        .find_input(RegexInput::new(text.as_bytes()).from_pos(start).range(range))
+        .find_input(
+            RegexInput::new(text.as_bytes())
+                .from_pos(start)
+                .range(range),
+        )
         .unwrap()
         .map(|m| (m.start(), m.end()));
     assert_eq!(
@@ -225,7 +229,11 @@ pub fn assert_captures_input<'t>(
         .captures_input(RegexInput::new(text).from_pos(start).range(range.clone()))
         .expect("expected captures_input to succeed (str mode)");
     let bytes_result = ascii_bytes_regex(re)
-        .captures_input(RegexInput::new(text.as_bytes()).from_pos(start).range(range))
+        .captures_input(
+            RegexInput::new(text.as_bytes())
+                .from_pos(start)
+                .range(range),
+        )
         .expect("expected captures_input to succeed (bytes mode)");
     assert_eq!(
         str_result.is_some(),

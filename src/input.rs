@@ -19,7 +19,7 @@ pub(crate) fn next_input_pos(text: &[u8], i: usize) -> usize {
 ///
 /// This keeps the original haystack together with a starting search position
 /// and a range that constrains where the overall match may occur. Unlike
-/// slicing a haystack, anchors and look-around can still inspect the full
+/// slicing a haystack, anchors and lookaround can still inspect the full
 /// original input, and reported offsets remain absolute.
 #[derive(Clone, Debug)]
 pub struct RegexInput<'h, S: Input + ?Sized> {

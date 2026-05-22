@@ -1085,8 +1085,14 @@ fn find_from_pos_at_end_still_runs() {
 
 #[test]
 fn find_input_wrap_range_keeps_word_boundary_context() {
-    assert_eq!(common::assert_find_input(r"\bat\b", "batter", 0, 1..3), None);
-    assert_eq!(common::assert_find_input(r"\bat\b", "batter at", 0, 7..9), Some((7, 9)));
+    assert_eq!(
+        common::assert_find_input(r"\bat\b", "batter", 0, 1..3),
+        None
+    );
+    assert_eq!(
+        common::assert_find_input(r"\bat\b", "batter at", 0, 7..9),
+        Some((7, 9))
+    );
 }
 
 #[test]
@@ -1096,13 +1102,16 @@ fn find_input_wrap_range_handles_multiline_anchor_and_end_anchor() {
         Some((3, 6))
     );
     assert_eq!(common::assert_find_input(r"$", "ab", 0, 2..2), Some((2, 2)));
-    assert_eq!(common::assert_find_input(r"\z", "ab", 0, 2..2), Some((2, 2)));
+    assert_eq!(
+        common::assert_find_input(r"\z", "ab", 0, 2..2),
+        Some((2, 2))
+    );
 }
 
 #[test]
 fn find_input_fancy_range_allows_lookaround_outside_range() {
     assert_eq!(
-        common::assert_find_input(r"foo(?=bar)", "foobar", 0, 0..3),
+        common::assert_find_input(r"(?=(foo))\1(?=bar)", "foobar", 0, 0..3),
         Some((0, 3))
     );
     assert_eq!(

@@ -1274,10 +1274,7 @@ impl Regex {
     /// let re = Regex::new(r"\w+(?=!)").unwrap();
     /// assert_eq!(re.find("so fancy!").unwrap().unwrap().as_str(), "fancy");
     /// ```
-    pub fn find<'t, S: input::Input + ?Sized>(
-        &self,
-        input: &'t S,
-    ) -> Result<Option<S::Match<'t>>> {
+    pub fn find<'t, S: input::Input + ?Sized>(&self, input: &'t S) -> Result<Option<S::Match<'t>>> {
         self.find_input(RegexInput::new(input))
     }
 
