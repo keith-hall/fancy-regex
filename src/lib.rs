@@ -1308,7 +1308,9 @@ impl Regex {
     /// ```
     ///
     /// Note that in some cases this is not the same as using the `find`
-    /// method and passing a slice of the string, see [Regex::captures_from_pos()] for details.
+    /// method and passing a slice of the string, see [Regex::captures_from_pos()]
+    /// for details. To constrain matching to a byte range without slicing, use
+    /// [Regex::find_input()] with [`RegexInput`].
     pub fn find_from_pos<'t, S: input::Input + ?Sized>(
         &self,
         input: &'t S,
@@ -1466,6 +1468,9 @@ impl Regex {
     /// This matched the number "123" because it's at the beginning of the text
     /// of the string slice.
     ///
+    /// To constrain matching to a byte range without slicing, use
+    /// [Regex::captures_input()] with [`RegexInput`].
+    ///
     pub fn captures_from_pos<'t, S: input::Input + ?Sized>(
         &self,
         text: &'t S,
@@ -1484,7 +1489,6 @@ impl Regex {
         }
         let named_groups = self.named_groups.clone();
         let haystack = input.haystack();
-        let bytes = haystack.as_bytes();
         match &self.inner {
             RegexImpl::Wrap {
                 inner,
@@ -1812,7 +1816,7 @@ impl Regex {
     }
 }
 
-fn ra_input<S: input::Input + ?Sized>(input: &RegexInput<'_, S>) -> RaInput<'_> {
+fn ra_input<'a, S: input::Input + ?Sized>(input: &'a RegexInput<'a, S>) -> RaInput<'a> {
     let mut ra_input = RaInput::new(input.haystack().as_bytes()).range(input.get_range());
     ra_input.set_start(input.effective_start());
     ra_input
