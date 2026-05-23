@@ -1202,9 +1202,7 @@ fn find_iter_input_continue_from_previous_match_end_override() {
         .collect();
     assert_eq!(forced_false_spans, vec![]);
     let forced_false_spans_bytes: Vec<_> = re_bytes
-        .find_iter_input(
-            RegexInput::new(text.as_bytes()).continue_from_previous_match_end(false),
-        )
+        .find_iter_input(RegexInput::new(text.as_bytes()).continue_from_previous_match_end(false))
         .map(|m| {
             let m = m.unwrap();
             (m.start(), m.end())
