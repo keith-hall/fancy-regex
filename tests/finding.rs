@@ -1134,6 +1134,102 @@ fn find_iter_input_respects_range_for_empty_matches() {
     assert_eq!(spans, vec![(2, 2), (4, 4)]);
 }
 
+#[test]
+fn find_input_text_boundary_overrides() {
+    let re = common::regex(r"\Afoo\z");
+    assert_eq!(
+        re.find_input(RegexInput::new("foo").start_text(false).end_text(false))
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        None
+    );
+    assert_eq!(
+        re.find_input(
+            RegexInput::new("foo".as_bytes())
+                .start_text(false)
+                .end_text(false)
+        )
+        .unwrap()
+        .map(|m| (m.start(), m.end())),
+        None
+    );
+    assert_eq!(
+        re.find_input(RegexInput::new("foo").start_text(true).end_text(true))
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((0, 3))
+    );
+    assert_eq!(
+        re.find_input(
+            RegexInput::new("foo".as_bytes())
+                .start_text(true)
+                .end_text(true)
+        )
+        .unwrap()
+        .map(|m| (m.start(), m.end())),
+        Some((0, 3))
+    );
+}
+
+#[test]
+fn find_iter_input_continue_from_previous_match_end_override() {
+    let re = common::regex(r"\G");
+    let re_bytes = common::ascii_bytes_regex(r"\G");
+    let text = "ab";
+    let default_spans: Vec<_> = re
+        .find_iter_input(RegexInput::new(text))
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(default_spans, vec![(0, 0)]);
+    let default_spans_bytes: Vec<_> = re_bytes
+        .find_iter_input(RegexInput::new(text.as_bytes()))
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(default_spans_bytes, default_spans);
+
+    let forced_false_spans: Vec<_> = re
+        .find_iter_input(RegexInput::new(text).continue_from_previous_match_end(false))
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(forced_false_spans, vec![]);
+    let forced_false_spans_bytes: Vec<_> = re_bytes
+        .find_iter_input(
+            RegexInput::new(text.as_bytes()).continue_from_previous_match_end(false),
+        )
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(forced_false_spans_bytes, forced_false_spans);
+
+    let forced_true_spans: Vec<_> = re
+        .find_iter_input(RegexInput::new(text).continue_from_previous_match_end(true))
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(forced_true_spans, vec![(0, 0), (1, 1), (2, 2)]);
+    let forced_true_spans_bytes: Vec<_> = re_bytes
+        .find_iter_input(RegexInput::new(text.as_bytes()).continue_from_previous_match_end(true))
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(forced_true_spans_bytes, forced_true_spans);
+}
+
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     common::assert_find(re, text)
 }

@@ -2358,7 +2358,9 @@ impl Assertion {
         matches!(
             self,
             // these will make regex-automata use PikeVM
-            LeftWordBoundary
+            StartText
+                | EndText
+                | LeftWordBoundary
                 | LeftWordHalfBoundary
                 | RightWordBoundary
                 | RightWordHalfBoundary

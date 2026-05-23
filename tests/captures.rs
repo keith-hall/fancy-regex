@@ -484,6 +484,41 @@ fn captures_input_fancy_range_allows_lookaround_outside_range() {
 }
 
 #[test]
+fn captures_input_text_boundary_overrides() {
+    let re = common::regex(r"\A(foo)\z");
+    let caps = re
+        .captures_input(RegexInput::new("foo").start_text(false).end_text(false))
+        .unwrap();
+    assert!(caps.is_none());
+    let caps = re
+        .captures_input(
+            RegexInput::new("foo".as_bytes())
+                .start_text(false)
+                .end_text(false),
+        )
+        .unwrap();
+    assert!(caps.is_none());
+
+    let caps = re
+        .captures_input(RegexInput::new("foo").start_text(true).end_text(true))
+        .unwrap()
+        .unwrap();
+    assert_match(caps.get(0), "foo", 0, 3);
+    assert_match(caps.get(1), "foo", 0, 3);
+
+    let caps = re
+        .captures_input(
+            RegexInput::new("foo".as_bytes())
+                .start_text(true)
+                .end_text(true),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(caps.get(0).map(|m| (m.start(), m.end())), Some((0, 3)));
+    assert_eq!(caps.get(1).map(|m| (m.start(), m.end())), Some((0, 3)));
+}
+
+#[test]
 fn captures_iter_input_respects_range_for_empty_matches() {
     let regex = common::regex(r"(?m)(^)");
     let text = "a\nb\n";

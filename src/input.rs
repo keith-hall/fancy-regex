@@ -26,6 +26,9 @@ pub struct RegexInput<'h, S: Input + ?Sized> {
     haystack: &'h S,
     start: usize,
     range: Range<usize>,
+    start_text: Option<bool>,
+    end_text: Option<bool>,
+    continue_from_previous_match_end: Option<bool>,
 }
 
 impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
@@ -35,6 +38,9 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
             haystack,
             start: 0,
             range: 0..haystack.len(),
+            start_text: None,
+            end_text: None,
+            continue_from_previous_match_end: None,
         }
     }
 
@@ -75,6 +81,36 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
         self
     }
 
+    /// Return a copy of this input with an override for whether `^`/`\A`
+    /// should match.
+    ///
+    /// When set, this value is used directly instead of checking the haystack
+    /// position at runtime.
+    pub fn start_text(mut self, yes: bool) -> Self {
+        self.start_text = Some(yes);
+        self
+    }
+
+    /// Return a copy of this input with an override for whether `$`/`\z`
+    /// should match.
+    ///
+    /// When set, this value is used directly instead of checking the haystack
+    /// position at runtime.
+    pub fn end_text(mut self, yes: bool) -> Self {
+        self.end_text = Some(yes);
+        self
+    }
+
+    /// Return a copy of this input with an override for whether `\G` should
+    /// match.
+    ///
+    /// When set, this value is used directly instead of relying on the
+    /// previous-match and skipped-empty-match runtime state.
+    pub fn continue_from_previous_match_end(mut self, yes: bool) -> Self {
+        self.continue_from_previous_match_end = Some(yes);
+        self
+    }
+
     pub(crate) fn effective_start(&self) -> usize {
         self.start.max(self.range.start)
     }
@@ -85,6 +121,18 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
 
     pub(crate) fn set_start(&mut self, start: usize) {
         self.start = start;
+    }
+
+    pub(crate) fn start_text_override(&self) -> Option<bool> {
+        self.start_text
+    }
+
+    pub(crate) fn end_text_override(&self) -> Option<bool> {
+        self.end_text
+    }
+
+    pub(crate) fn continue_from_previous_match_end_override(&self) -> Option<bool> {
+        self.continue_from_previous_match_end
     }
 }
 
