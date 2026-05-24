@@ -84,30 +84,30 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
     /// Return a copy of this input with an override for whether `^`/`\A`
     /// should match.
     ///
-    /// When set, this value is used directly instead of checking the haystack
-    /// position at runtime.
+    /// This override is suppression-only: `false` suppresses the assertion, while
+    /// `true` clears the override and preserves default behavior.
     pub fn start_text(mut self, yes: bool) -> Self {
-        self.start_text = Some(yes);
+        self.start_text = if yes { None } else { Some(false) };
         self
     }
 
     /// Return a copy of this input with an override for whether `$`/`\z`
     /// should match.
     ///
-    /// When set, this value is used directly instead of checking the haystack
-    /// position at runtime.
+    /// This override is suppression-only: `false` suppresses the assertion, while
+    /// `true` clears the override and preserves default behavior.
     pub fn end_text(mut self, yes: bool) -> Self {
-        self.end_text = Some(yes);
+        self.end_text = if yes { None } else { Some(false) };
         self
     }
 
     /// Return a copy of this input with an override for whether `\G` should
     /// match.
     ///
-    /// When set, this value is used directly instead of relying on the
-    /// previous-match and skipped-empty-match runtime state.
+    /// This override is suppression-only: `false` suppresses the assertion, while
+    /// `true` clears the override and preserves default behavior.
     pub fn continue_from_previous_match_end(mut self, yes: bool) -> Self {
-        self.continue_from_previous_match_end = Some(yes);
+        self.continue_from_previous_match_end = if yes { None } else { Some(false) };
         self
     }
 

@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::{Match, RegexBuilder, RegexInput};
+use fancy_regex::{BytesMode, Match, RegexBuilder, RegexInput};
 use matches::assert_matches;
 use std::ops::Range;
 
@@ -1136,7 +1136,15 @@ fn find_iter_input_respects_range_for_empty_matches() {
 
 #[test]
 fn find_input_text_boundary_overrides() {
-    let re = common::regex(r"\Afoo\z");
+    let re = RegexBuilder::new(r"\Afoo\z")
+        .allow_input_assertion_overrides(true)
+        .build()
+        .unwrap();
+    let re_bytes = RegexBuilder::new(r"\Afoo\z")
+        .bytes_mode(BytesMode::Ascii)
+        .allow_input_assertion_overrides(true)
+        .build()
+        .unwrap();
     assert_eq!(
         re.find_input(RegexInput::new("foo").start_text(false).end_text(false))
             .unwrap()
@@ -1144,13 +1152,14 @@ fn find_input_text_boundary_overrides() {
         None
     );
     assert_eq!(
-        re.find_input(
+        re_bytes
+            .find_input(
             RegexInput::new("foo".as_bytes())
                 .start_text(false)
                 .end_text(false)
-        )
-        .unwrap()
-        .map(|m| (m.start(), m.end())),
+            )
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
         None
     );
     assert_eq!(
@@ -1160,21 +1169,29 @@ fn find_input_text_boundary_overrides() {
         Some((0, 3))
     );
     assert_eq!(
-        re.find_input(
+        re_bytes
+            .find_input(
             RegexInput::new("foo".as_bytes())
                 .start_text(true)
                 .end_text(true)
-        )
-        .unwrap()
-        .map(|m| (m.start(), m.end())),
+            )
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
         Some((0, 3))
     );
 }
 
 #[test]
 fn find_iter_input_continue_from_previous_match_end_override() {
-    let re = common::regex(r"\G");
-    let re_bytes = common::ascii_bytes_regex(r"\G");
+    let re = RegexBuilder::new(r"\G")
+        .allow_input_assertion_overrides(true)
+        .build()
+        .unwrap();
+    let re_bytes = RegexBuilder::new(r"\G")
+        .bytes_mode(BytesMode::Ascii)
+        .allow_input_assertion_overrides(true)
+        .build()
+        .unwrap();
     let text = "ab";
     let default_spans: Vec<_> = re
         .find_iter_input(RegexInput::new(text))
@@ -1217,7 +1234,7 @@ fn find_iter_input_continue_from_previous_match_end_override() {
             (m.start(), m.end())
         })
         .collect();
-    assert_eq!(forced_true_spans, vec![(0, 0), (1, 1), (2, 2)]);
+    assert_eq!(forced_true_spans, default_spans);
     let forced_true_spans_bytes: Vec<_> = re_bytes
         .find_iter_input(RegexInput::new(text.as_bytes()).continue_from_previous_match_end(true))
         .map(|m| {
