@@ -951,6 +951,23 @@ pub(crate) fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, in
                 populate_group_info_map(map, child);
             }
         }
+
+        pub(crate) fn derive_seek_pattern(info: &Info<'_>, contains_subroutines: bool) -> String {
+            let mut local_group_info_map: Map<usize, &Info<'_>>;
+            let mut subroutine_group_info_map = Map::new();
+            let group_info_map: &Map<usize, &Info<'_>> = if contains_subroutines {
+                populate_group_info_map(&mut subroutine_group_info_map, info);
+                &subroutine_group_info_map
+            } else {
+                local_group_info_map = Map::new();
+                populate_group_info_map(&mut local_group_info_map, info);
+                &local_group_info_map
+            };
+
+            let mut seek_pat = String::new();
+            build_seek_pattern(info, group_info_map, 0, &mut seek_pat, 0);
+            seek_pat
+        }
         _ => {
             // Recurse into all children
             for child in &info.children {
@@ -1052,18 +1069,13 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         let mut used_seek = false;
         if let Some(filter) = c.options.seek_filter {
             if info.hard {
-                // Build the group_info_map if not already populated (needed for backref inlining).
-                let mut local_group_info_map: Map<usize, &Info<'_>>;
-                let group_info_map: &Map<usize, &Info<'_>> = if c.options.contains_subroutines {
-                    &c.group_info_map
+                let seek_pat = if c.options.contains_subroutines {
+                    let mut seek_pat = String::new();
+                    build_seek_pattern(info, &c.group_info_map, 0, &mut seek_pat, 0);
+                    seek_pat
                 } else {
-                    local_group_info_map = Map::new();
-                    populate_group_info_map(&mut local_group_info_map, info);
-                    &local_group_info_map
+                    derive_seek_pattern(info, false)
                 };
-
-                let mut seek_pat = String::new();
-                build_seek_pattern(info, group_info_map, 0, &mut seek_pat, 0);
 
                 if filter(&seek_pat) {
                     if let Ok(inner) = compile_inner(&seek_pat, &c.options) {

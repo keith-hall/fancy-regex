@@ -21,12 +21,12 @@
 #[macro_use]
 extern crate criterion;
 
-use criterion::Criterion;
+use criterion::{black_box, Criterion};
 use std::time::Duration;
 
 use fancy_regex::internal::{analyze, compile, run_default, AnalyzeContext, CompileOptions};
 use fancy_regex::seek_pattern_is_useful;
-use fancy_regex::Expr;
+use fancy_regex::{Expr, Regex as FancyRegex, RegexSet};
 use regex::Regex;
 
 fn parse_lifetime_re(c: &mut Criterion) {
@@ -373,6 +373,72 @@ criterion_group!(
     no_seek_digit_backref_worst_case_no_match,
 );
 
+fn regex_set_fancy_candidates_with_cache(c: &mut Criterion) {
+    let mut set = RegexSet::new(vec![FancyRegex::new(r"(foo)\1").unwrap()]).unwrap();
+    let haystack = "fooX".repeat(2_000);
+    c.bench_function("regex_set_fancy_candidates_with_cache", |b| {
+        b.iter(|| assert!(set.find(black_box(&haystack)).unwrap().is_none()))
+    });
+}
+
+fn regex_set_fancy_candidates_without_cache(c: &mut Criterion) {
+    let haystack = "fooX".repeat(2_000);
+    c.bench_function("regex_set_fancy_candidates_without_cache", |b| {
+        b.iter(|| {
+            let mut set = RegexSet::new(vec![FancyRegex::new(r"(foo)\1").unwrap()]).unwrap();
+            assert!(set.find(black_box(&haystack)).unwrap().is_none());
+        })
+    });
+}
+
+fn regex_set_tokenizer_style_filtering(c: &mut Criterion) {
+    let mut set = RegexSet::new(vec![
+        FancyRegex::new(r"//[^\n]*").unwrap(),
+        FancyRegex::new(r"\b\d+\b").unwrap(),
+        FancyRegex::new(r#"""#).unwrap(),
+        FancyRegex::new(r"\{[a-zA-Z_][a-zA-Z0-9_]*\}").unwrap(),
+    ])
+    .unwrap();
+    let input = r#"let n = 42; // comment
+let s = "value {name} with 100";"#;
+    c.bench_function("regex_set_tokenizer_style_filtering", |b| {
+        b.iter(|| {
+            let mut in_string = false;
+            let mut pos = 0;
+            let mut token_count = 0usize;
+            while let Some(m) = set.find_from_pos(black_box(input), pos).unwrap() {
+                let active: &[usize] = if in_string { &[2, 3] } else { &[0, 1, 2] };
+                let selected = m
+                    .regex_indices()
+                    .iter()
+                    .copied()
+                    .find(|idx| active.contains(idx));
+                let Some(selected) = selected else {
+                    pos = m.start() + 1;
+                    continue;
+                };
+                token_count += 1;
+                if selected == 2 {
+                    in_string = !in_string;
+                }
+                pos = m.start() + 1;
+                if pos >= input.len() {
+                    break;
+                }
+            }
+            black_box(token_count);
+        })
+    });
+}
+
+criterion_group!(
+    name = regex_set_benches;
+    config = Criterion::default();
+    targets = regex_set_fancy_candidates_with_cache,
+    regex_set_fancy_candidates_without_cache,
+    regex_set_tokenizer_style_filtering,
+);
+
 #[cfg(feature = "variable-lookbehinds")]
 criterion_main!(
     benches,
@@ -380,7 +446,8 @@ criterion_main!(
     lookbehind_benches,
     continue_from_end_of_prev_match_benches,
     seek_benches,
-    seek_worst_case_benches
+    seek_worst_case_benches,
+    regex_set_benches
 );
 
 #[cfg(not(feature = "variable-lookbehinds"))]
@@ -389,5 +456,6 @@ criterion_main!(
     slow_benches,
     continue_from_end_of_prev_match_benches,
     seek_benches,
-    seek_worst_case_benches
+    seek_worst_case_benches,
+    regex_set_benches
 );
