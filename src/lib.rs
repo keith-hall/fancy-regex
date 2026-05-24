@@ -2755,7 +2755,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_group, make_literal};
-    use crate::{Absent, Expr, Regex, RegexImpl};
+    use crate::{Absent, Expr, Regex, RegexBuilder, RegexImpl};
 
     //use detect_possible_backref;
 

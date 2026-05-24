@@ -1154,9 +1154,9 @@ fn find_input_text_boundary_overrides() {
     assert_eq!(
         re_bytes
             .find_input(
-            RegexInput::new("foo".as_bytes())
-                .start_text(false)
-                .end_text(false)
+                RegexInput::new("foo".as_bytes())
+                    .start_text(false)
+                    .end_text(false)
             )
             .unwrap()
             .map(|m| (m.start(), m.end())),
@@ -1171,9 +1171,9 @@ fn find_input_text_boundary_overrides() {
     assert_eq!(
         re_bytes
             .find_input(
-            RegexInput::new("foo".as_bytes())
-                .start_text(true)
-                .end_text(true)
+                RegexInput::new("foo".as_bytes())
+                    .start_text(true)
+                    .end_text(true)
             )
             .unwrap()
             .map(|m| (m.start(), m.end())),

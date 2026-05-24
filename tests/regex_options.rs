@@ -622,7 +622,7 @@ fn disallow_empty_match_at_eof_after_newline_still_allows_slash_z() {
 
 #[test]
 fn input_assertion_overrides_are_ignored_by_default() {
-    let re = build_regex(RegexBuilder::new(r"\Afoo\z"));
+    let re = build_regex(&RegexBuilder::new(r"\Afoo\z"));
     assert_eq!(
         re.find_input(RegexInput::new("foo").start_text(false).end_text(false))
             .unwrap()

@@ -827,12 +827,16 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     if !match assertion {
                         Assertion::StartText => input
                             .start_text_override()
-                            .filter(|_| options.allow_input_assertion_overrides)
+                            .and_then(|value| {
+                                options.allow_input_assertion_overrides.then_some(value)
+                            })
                             .unwrap_or_else(|| look_matcher.is_start(s.as_bytes(), ix)),
                         Assertion::EndText => {
                             let matched = input
                                 .end_text_override()
-                                .filter(|_| options.allow_input_assertion_overrides)
+                                .and_then(|value| {
+                                    options.allow_input_assertion_overrides.then_some(value)
+                                })
                                 .unwrap_or_else(|| look_matcher.is_end(s.as_bytes(), ix));
                             slash_z_matched |= matched;
                             matched
@@ -1166,7 +1170,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                 Insn::ContinueFromPreviousMatchEnd { at_start } => {
                     let g_matched = input
                         .continue_from_previous_match_end_override()
-                        .filter(|_| options.allow_input_assertion_overrides)
+                        .and_then(|value| options.allow_input_assertion_overrides.then_some(value))
                         .unwrap_or(ix <= pos && option_flags & OPTION_SKIPPED_EMPTY_MATCH == 0);
                     if !g_matched {
                         // If \G is at the start of the pattern, we can fail early
