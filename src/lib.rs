@@ -34,7 +34,6 @@ extern crate alloc;
 
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec;
@@ -71,7 +70,7 @@ use crate::compile::{compile, derive_seek_pattern, options_to_rabuilder, Compile
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
-use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
+use crate::vm::{Prog, OPTION_ANCHORED, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -186,30 +185,11 @@ enum RegexImpl {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
-enum RegexSetPatternKind {
-    Wrap,
-    Fancy,
-}
-
-#[derive(Clone, Debug)]
-struct RegexSetPatternMeta {
-    kind: RegexSetPatternKind,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FancyRegexSetCacheEntry {
-    NoMatch,
-    MatchAt(usize),
-}
-
 /// A set of precompiled regexes that can be searched together.
 #[derive(Clone, Debug)]
 pub struct RegexSet {
     regexes: Vec<Regex>,
     finder: RaRegex,
-    pattern_meta: Vec<RegexSetPatternMeta>,
-    fancy_cache: Vec<BTreeMap<usize, FancyRegexSetCacheEntry>>,
 }
 
 /// Result of a [`RegexSet`] search.
@@ -1244,14 +1224,12 @@ impl Regex {
         }
     }
 
-    fn regex_set_pattern(&self) -> (&str, RegexSetPatternKind) {
+    fn regex_set_pattern_str(&self) -> &str {
         match &self.inner {
             RegexImpl::Wrap {
                 delegated_pattern, ..
-            } => (delegated_pattern.as_str(), RegexSetPatternKind::Wrap),
-            RegexImpl::Fancy { seek_pattern, .. } => {
-                (seek_pattern.as_str(), RegexSetPatternKind::Fancy)
-            }
+            } => delegated_pattern.as_str(),
+            RegexImpl::Fancy { seek_pattern, .. } => seek_pattern.as_str(),
         }
     }
 
@@ -1287,7 +1265,20 @@ impl Regex {
         }
     }
 
-    fn verify_fancy_from<S: input::Input + ?Sized>(
+    /// Verify whether this regex matches anchored at exactly `start`.
+    /// Used by [`RegexSet`] after the many-DFA identifies a candidate position.
+    fn verify_at<S: input::Input + ?Sized>(
+        &self,
+        input: &RegexInput<'_, S>,
+        start: usize,
+    ) -> Result<Option<(usize, usize)>> {
+        match &self.inner {
+            RegexImpl::Wrap { .. } => self.verify_wrap_at(input, start),
+            RegexImpl::Fancy { .. } => self.verify_fancy_at(input, start),
+        }
+    }
+
+    fn verify_fancy_at<S: input::Input + ?Sized>(
         &self,
         input: &RegexInput<'_, S>,
         start: usize,
@@ -1306,11 +1297,12 @@ impl Regex {
                 if input.continue_from_previous_match_end_override() == Some(false) {
                     verify_input = verify_input.continue_from_previous_match_end(false);
                 }
-                let option_flags = if options.find_not_empty {
-                    OPTION_FIND_NOT_EMPTY
-                } else {
-                    0
-                };
+                let option_flags = OPTION_ANCHORED
+                    | if options.find_not_empty {
+                        OPTION_FIND_NOT_EMPTY
+                    } else {
+                        0
+                    };
                 let result = vm::run(prog, &verify_input, option_flags, options)?;
                 Ok(result.map(|saves| (saves[0], saves[1])))
             }
@@ -1971,17 +1963,9 @@ impl RegexSetMatch {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FancyRegexSetCacheLookup {
-    Unknown,
-    NoMatch,
-    MatchAt(usize),
-}
-
 impl RegexSet {
     /// Build a regex set from precompiled regexes.
     pub fn new(regexes: Vec<Regex>) -> Result<Self> {
-        let mut pattern_meta = Vec::with_capacity(regexes.len());
         let mut patterns = Vec::with_capacity(regexes.len());
 
         let (bytes_mode, unicode) = regexes
@@ -1998,9 +1982,7 @@ impl RegexSet {
                 .into());
             }
 
-            let (pattern, kind) = regex.regex_set_pattern();
-            patterns.push(pattern.to_string());
-            pattern_meta.push(RegexSetPatternMeta { kind });
+            patterns.push(regex.regex_set_pattern_str().to_string());
         }
 
         let mut builder = options_to_rabuilder(&CompileOptions {
@@ -2014,17 +1996,7 @@ impl RegexSet {
             .map_err(CompileError::InnerError)
             .map_err(|e| Error::CompileError(Box::new(e)))?;
 
-        let mut fancy_cache = Vec::with_capacity(pattern_meta.len());
-        for _ in 0..pattern_meta.len() {
-            fancy_cache.push(BTreeMap::new());
-        }
-
-        Ok(Self {
-            regexes,
-            finder,
-            pattern_meta,
-            fancy_cache,
-        })
+        Ok(Self { regexes, finder })
     }
 
     /// Returns the number of regexes in this set.
@@ -2038,8 +2010,9 @@ impl RegexSet {
     }
 
     /// Find the earliest set match in `input`.
+    /// Find the earliest set match in `input`.
     pub fn find<'t, S: input::Input + ?Sized>(
-        &mut self,
+        &self,
         input: &'t S,
     ) -> Result<Option<RegexSetMatch>> {
         self.find_input(RegexInput::new(input))
@@ -2047,7 +2020,7 @@ impl RegexSet {
 
     /// Find the earliest set match in `input`, starting from `pos`.
     pub fn find_from_pos<'t, S: input::Input + ?Sized>(
-        &mut self,
+        &self,
         input: &'t S,
         pos: usize,
     ) -> Result<Option<RegexSetMatch>> {
@@ -2056,7 +2029,7 @@ impl RegexSet {
 
     /// Find the earliest set match in the given search input.
     pub fn find_input<S: input::Input + ?Sized>(
-        &mut self,
+        &self,
         input: RegexInput<'_, S>,
     ) -> Result<Option<RegexSetMatch>> {
         if input.is_done() {
@@ -2084,40 +2057,11 @@ impl RegexSet {
             let mut matched_indices = Vec::new();
             for pid in patset.iter() {
                 let regex_index = pid.as_usize();
-                match self.pattern_meta[regex_index].kind {
-                    RegexSetPatternKind::Wrap => {
-                        if self.regexes[regex_index]
-                            .verify_wrap_at(&input, candidate_start)?
-                            .is_some()
-                        {
-                            matched_indices.push(regex_index);
-                        }
-                    }
-                    RegexSetPatternKind::Fancy => {
-                        match self.lookup_fancy_cache(regex_index, candidate_start) {
-                            FancyRegexSetCacheLookup::NoMatch => {}
-                            FancyRegexSetCacheLookup::MatchAt(real_start)
-                                if real_start == candidate_start =>
-                            {
-                                matched_indices.push(regex_index);
-                            }
-                            FancyRegexSetCacheLookup::MatchAt(_) => {}
-                            FancyRegexSetCacheLookup::Unknown => {
-                                let real_match = self.regexes[regex_index]
-                                    .verify_fancy_from(&input, candidate_start)?;
-                                let cache_entry = match real_match {
-                                    Some((real_start, _)) => {
-                                        if real_start == candidate_start {
-                                            matched_indices.push(regex_index);
-                                        }
-                                        FancyRegexSetCacheEntry::MatchAt(real_start)
-                                    }
-                                    None => FancyRegexSetCacheEntry::NoMatch,
-                                };
-                                self.fancy_cache[regex_index].insert(candidate_start, cache_entry);
-                            }
-                        }
-                    }
+                if self.regexes[regex_index]
+                    .verify_at(&input, candidate_start)?
+                    .is_some()
+                {
+                    matched_indices.push(regex_index);
                 }
             }
 
@@ -2137,29 +2081,6 @@ impl RegexSet {
             search_start = next_start;
         }
         Ok(None)
-    }
-
-    fn lookup_fancy_cache(
-        &self,
-        regex_index: usize,
-        candidate_start: usize,
-    ) -> FancyRegexSetCacheLookup {
-        // We use the latest cache entry at or before candidate_start:
-        // - NoMatch means any later start also has no match.
-        // - MatchAt(x) means starts up to x share that earliest real match.
-        let Some((_, entry)) = self.fancy_cache[regex_index]
-            .range(..=candidate_start)
-            .next_back()
-        else {
-            return FancyRegexSetCacheLookup::Unknown;
-        };
-        match *entry {
-            FancyRegexSetCacheEntry::NoMatch => FancyRegexSetCacheLookup::NoMatch,
-            FancyRegexSetCacheEntry::MatchAt(real_start) if candidate_start <= real_start => {
-                FancyRegexSetCacheLookup::MatchAt(real_start)
-            }
-            FancyRegexSetCacheEntry::MatchAt(_) => FancyRegexSetCacheLookup::Unknown,
-        }
     }
 }
 
@@ -3078,7 +2999,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_group, make_literal};
-    use crate::{Absent, Expr, FancyRegexSetCacheEntry, Regex, RegexBuilder, RegexImpl, RegexSet};
+    use crate::{Absent, Expr, Regex, RegexBuilder, RegexImpl, RegexSet};
 
     //use detect_possible_backref;
 
@@ -3220,7 +3141,7 @@ mod tests {
 
     #[test]
     fn regex_set_fancy_false_positive_and_true_positive() {
-        let mut set = RegexSet::new(vec![Regex::new(r"(?<=x)foo").unwrap()]).unwrap();
+        let set = RegexSet::new(vec![Regex::new(r"(?<=x)foo").unwrap()]).unwrap();
         let m = set.find("foo xfoo").unwrap().unwrap();
         assert_eq!(m.start(), 5);
         assert_eq!(m.regex_indices(), &[0]);
@@ -3228,7 +3149,7 @@ mod tests {
 
     #[test]
     fn regex_set_multiple_hard_patterns_same_start() {
-        let mut set = RegexSet::new(vec![
+        let set = RegexSet::new(vec![
             Regex::new(r"(foo)\1").unwrap(),
             Regex::new(r"foo(?=foo)").unwrap(),
         ])
@@ -3239,31 +3160,44 @@ mod tests {
     }
 
     #[test]
-    fn regex_set_uses_fancy_cache_for_real_match_position() {
-        let mut set = RegexSet::new(vec![Regex::new(r"(?<=x)foo").unwrap()]).unwrap();
-        let first = set.find("foo xfoo").unwrap().unwrap();
-        assert_eq!(first.start(), 5);
-        assert!(set.fancy_cache[0]
-            .values()
-            .any(|entry| *entry == FancyRegexSetCacheEntry::MatchAt(5)));
-        let cache_len = set.fancy_cache[0].len();
-
-        let second = set.find("foo xfoo").unwrap().unwrap();
-        assert_eq!(second.start(), 5);
-        assert_eq!(set.fancy_cache[0].len(), cache_len);
+    fn regex_set_fancy_repeated_search_gives_same_result() {
+        // Verify that repeating the same search yields the same result now that
+        // there is no mutable cache involved.
+        let set = RegexSet::new(vec![Regex::new(r"(?<=x)foo").unwrap()]).unwrap();
+        for _ in 0..3 {
+            let m = set.find("foo xfoo").unwrap().unwrap();
+            assert_eq!(m.start(), 5);
+            assert_eq!(m.regex_indices(), &[0]);
+        }
     }
 
     #[test]
-    fn regex_set_uses_fancy_cache_for_no_match() {
-        let mut set = RegexSet::new(vec![Regex::new(r"(?<=x)foo").unwrap()]).unwrap();
-        assert!(set.find("foo foo").unwrap().is_none());
-        assert!(set.fancy_cache[0]
-            .values()
-            .any(|entry| *entry == FancyRegexSetCacheEntry::NoMatch));
-        let cache_len = set.fancy_cache[0].len();
+    fn regex_set_fancy_no_match_repeated() {
+        // Verify that a no-match result is consistent across repeated calls.
+        let set = RegexSet::new(vec![Regex::new(r"(?<=x)foo").unwrap()]).unwrap();
+        for _ in 0..3 {
+            assert!(set.find("foo foo").unwrap().is_none());
+        }
+    }
 
-        assert!(set.find("foo foo").unwrap().is_none());
-        assert_eq!(set.fancy_cache[0].len(), cache_len);
+    #[test]
+    fn regex_set_find_from_pos_fancy() {
+        // find_from_pos should skip positions before `pos`.
+        let set = RegexSet::new(vec![Regex::new(r"(?<=x)foo").unwrap()]).unwrap();
+        // Match exists at 5; skipping past it should yield None.
+        assert!(set.find_from_pos("foo xfoo", 6).unwrap().is_none());
+        // Searching from 0 should still find it.
+        let m = set.find_from_pos("foo xfoo", 0).unwrap().unwrap();
+        assert_eq!(m.start(), 5);
+    }
+
+    #[test]
+    fn regex_set_immutable_find() {
+        // find/find_from_pos/find_input should work on a shared reference.
+        let set = RegexSet::new(vec![Regex::new(r"(?<=x)foo").unwrap()]).unwrap();
+        let set_ref: &RegexSet = &set;
+        let m = set_ref.find("xfoo").unwrap().unwrap();
+        assert_eq!(m.start(), 1);
     }
 
     #[test]

@@ -115,6 +115,13 @@ pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 /// \K is ignored as part of this check - so empty matches can still be reported if the engine
 /// consumed characters and then \K was used afterwards.
 pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
+/// When this option is set, the VM will only attempt to match at the start position given by the
+/// input (`effective_start`), without scanning forward.  `SplitUnanchored` and `Seek` preamble
+/// instructions are treated as no-ops that simply advance to the real pattern body; no backtrack
+/// branch is pushed for retrying at later positions.  This is used by [`RegexSet`] verification,
+/// where the many-DFA has already identified candidate start positions and the VM only needs to
+/// confirm (or deny) a match anchored at that exact position.
+pub(crate) const OPTION_ANCHORED: u32 = 1 << 3;
 
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
@@ -899,6 +906,14 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     continue;
                 }
                 Insn::SplitUnanchored(x, y) => {
+                    if option_flags & OPTION_ANCHORED != 0 {
+                        // Anchored mode: only try at the current position; do not push a
+                        // backtrack branch for advancing to the next position.
+                        match_attempt_start = ix;
+                        slash_z_matched = false;
+                        pc = x;
+                        continue;
+                    }
                     if ix > match_range.end {
                         return Ok(None);
                     }
@@ -1189,6 +1204,24 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     }
                 }
                 Insn::Seek(Seek { ref inner, .. }) => {
+                    if option_flags & OPTION_ANCHORED != 0 {
+                        // Anchored mode: verify the seek pattern matches at the current position
+                        // only (no forward scan, no backtrack entry).  Since the many-DFA has
+                        // already confirmed a candidate here, this check is mostly a safety guard.
+                        let seek_input = Input::new(haystack.as_bytes())
+                            .span(ix..match_range.end)
+                            .anchored(Anchored::Yes);
+                        match inner.search(&seek_input) {
+                            Some(_) => {
+                                match_attempt_start = ix;
+                                slash_z_matched = false;
+                                pc += 1;
+                                continue;
+                            }
+                            None => break 'fail,
+                        }
+                    }
+
                     // A sentinel value greater than haystack.len() is pushed onto the backtrack stack
                     // when the seek found a zero-width match at end-of-string.  On re-entry with
                     // that sentinel, there are no more positions to try.
