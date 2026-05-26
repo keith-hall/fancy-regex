@@ -2010,7 +2010,6 @@ impl RegexSet {
     }
 
     /// Find the earliest set match in `input`.
-    /// Find the earliest set match in `input`.
     pub fn find<'t, S: input::Input + ?Sized>(
         &self,
         input: &'t S,

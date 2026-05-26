@@ -374,7 +374,7 @@ criterion_group!(
 );
 
 fn regex_set_fancy_candidates_with_cache(c: &mut Criterion) {
-    let mut set = RegexSet::new(vec![FancyRegex::new(r"(foo)\1").unwrap()]).unwrap();
+    let set = RegexSet::new(vec![FancyRegex::new(r"(foo)\1").unwrap()]).unwrap();
     let haystack = "fooX".repeat(2_000);
     c.bench_function("regex_set_fancy_candidates_with_cache", |b| {
         b.iter(|| assert!(set.find(black_box(&haystack)).unwrap().is_none()))
@@ -385,14 +385,14 @@ fn regex_set_fancy_candidates_without_cache(c: &mut Criterion) {
     let haystack = "fooX".repeat(2_000);
     c.bench_function("regex_set_fancy_candidates_without_cache", |b| {
         b.iter(|| {
-            let mut set = RegexSet::new(vec![FancyRegex::new(r"(foo)\1").unwrap()]).unwrap();
+            let set = RegexSet::new(vec![FancyRegex::new(r"(foo)\1").unwrap()]).unwrap();
             assert!(set.find(black_box(&haystack)).unwrap().is_none());
         })
     });
 }
 
 fn regex_set_tokenizer_style_filtering(c: &mut Criterion) {
-    let mut set = RegexSet::new(vec![
+    let set = RegexSet::new(vec![
         FancyRegex::new(r"//[^\n]*").unwrap(),
         FancyRegex::new(r"\b\d+\b").unwrap(),
         FancyRegex::new(r#"""#).unwrap(),
