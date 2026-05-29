@@ -47,6 +47,7 @@ use core::str::FromStr;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::captures::Captures as RaCaptures;
 use regex_automata::util::syntax::Config as SyntaxConfig;
+use regex_automata::Anchored as RaAnchored;
 use regex_automata::Input as RaInput;
 
 mod analyze;
@@ -58,6 +59,7 @@ mod input;
 mod optimize;
 mod parse;
 mod parse_flags;
+mod regexset;
 mod replacer;
 mod seek;
 mod vm;
@@ -68,12 +70,13 @@ use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
-use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
+use crate::vm::{Prog, OPTION_ANCHORED, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::input::{Input, RegexInput};
+pub use crate::regexset::{RegexSet, RegexSetConfig, RegexSetMatch};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 pub use crate::seek::seek_pattern_is_useful;
 
@@ -1502,7 +1505,7 @@ impl Regex {
         self.captures_input(RegexInput::new(text).from_pos(pos))
     }
 
-    fn captures_input_with_option_flags<'t, S: input::Input + ?Sized>(
+    pub(crate) fn captures_input_with_option_flags<'t, S: input::Input + ?Sized>(
         &self,
         input: &RegexInput<'t, S>,
         option_flags: u32,
@@ -1522,7 +1525,11 @@ impl Regex {
                 // always false here.
                 let explicit = *explicit_capture_group_0;
                 let mut locations = inner.create_captures();
-                inner.captures(ra_input(input), &mut locations);
+                let mut delegated_input = ra_input(input);
+                if option_flags & OPTION_ANCHORED != 0 {
+                    delegated_input = delegated_input.anchored(RaAnchored::Yes);
+                }
+                inner.captures(delegated_input, &mut locations);
                 Ok(locations.is_match().then_some(Captures {
                     inner: CapturesImpl::Wrap {
                         locations,
@@ -1554,6 +1561,15 @@ impl Regex {
                     }
                 }))
             }
+        }
+    }
+
+    pub(crate) fn seek_pattern(&self) -> &str {
+        match &self.inner {
+            RegexImpl::Wrap {
+                delegated_pattern, ..
+            } => delegated_pattern,
+            RegexImpl::Fancy { prog, .. } => &prog.seek_pattern,
         }
     }
 
