@@ -239,17 +239,20 @@ impl RegexSet {
 
     /// Returns an iterator over matches at the earliest match position - if any.
     /// Iterator yields matches in pattern index order
-    pub fn find_input<'t, S: Input + ?Sized>(&self, input: RegexInput<'t, S>) -> Result<Option<RegexSetMatchesAt<'t, 't, S>>> {
+    pub fn find_input<'t, S: Input + ?Sized>(
+        &self,
+        input: RegexInput<'t, S>,
+    ) -> Result<Option<RegexSetMatchesAt<'t, 't, S>>> {
         let haystack = input.haystack();
         let pos = input.effective_start();
         let match_range = input.get_range();
         let ra_input = RaInput::new(haystack.as_bytes())
-                        .anchored(Anchored::Yes)
-                        .range(pos..match_range.end);
+            .anchored(Anchored::Yes)
+            .range(pos..match_range.end);
         // TODO: use the candidate position finder multi dfa
-        // `search(&RaInput)` - returns PatternSet of matching patterns  
+        // `search(&RaInput)` - returns PatternSet of matching patterns
         // `find_overlapping_matches(&RaInput)` - iterator over (pattern_index, start, end) tuples
-        
+
         // the idea is to find the earliest start position where any regex in the set could match
         // (Fancy RegexImpl's just have their "seek" pattern in the multi DFA, so a match isn't guaranteed at the identified positions)
         // collect all pattern indices that match at that earliest position
@@ -282,6 +285,6 @@ pub struct RegexSetMatchesAt<'r, 't, S: Input + ?Sized> {
     haystack: &'t S,
     match_start: usize,
     //match_end: usize,
-    pattern_indices: Vec<usize>,  // deduplicated, in index order
+    pattern_indices: Vec<usize>, // deduplicated, in index order
     current_index: usize,
 }
