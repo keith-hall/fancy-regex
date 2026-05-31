@@ -115,6 +115,46 @@ pub struct RegexSetConfig {
 }
 
 impl RegexSet {
+    fn build_candidate_input<'t, S: Input + ?Sized>(
+        input: &RegexInput<'t, S>,
+        match_start: usize,
+    ) -> RegexInput<'t, S> {
+        let mut candidate_input = RegexInput::new(input.haystack())
+            .range(input.get_range())
+            .from_pos(match_start);
+        if input.start_text_override() == Some(false) {
+            candidate_input = candidate_input.start_text(false);
+        }
+        if input.end_text_override() == Some(false) {
+            candidate_input = candidate_input.end_text(false);
+        }
+        if input.continue_from_previous_match_end_override() == Some(false) {
+            candidate_input = candidate_input.continue_from_previous_match_end(false);
+        }
+        candidate_input
+    }
+
+    fn match_pattern_at_input_position<'t, S: Input + ?Sized>(
+        &self,
+        pattern_index: usize,
+        input: &RegexInput<'t, S>,
+        match_start: usize,
+    ) -> Result<Option<RegexSetMatch<'t, S>>> {
+        let candidate_input = Self::build_candidate_input(input, match_start);
+        Ok(
+            if let Some(captures) = self.regexes[pattern_index]
+                .captures_input_with_option_flags(&candidate_input, OPTION_ANCHORED)?
+            {
+                Some(RegexSetMatch {
+                    pattern_index,
+                    captures,
+                })
+            } else {
+                None
+            },
+        )
+    }
+
     /// Create a new RegexSet from an iterator of patterns using default options.
     ///
     /// All patterns will use the same default configuration:
@@ -265,37 +305,26 @@ impl RegexSet {
                 &mut candidate_patterns,
             );
 
-            let mut matches = Vec::new();
-            for pattern_id in candidate_patterns.iter() {
-                let pattern_index = pattern_id.as_usize();
-                let mut candidate_input = RegexInput::new(haystack)
-                    .range(match_range.clone())
-                    .from_pos(match_start);
-                if input.start_text_override() == Some(false) {
-                    candidate_input = candidate_input.start_text(false);
-                }
-                if input.end_text_override() == Some(false) {
-                    candidate_input = candidate_input.end_text(false);
-                }
-                if input.continue_from_previous_match_end_override() == Some(false) {
-                    candidate_input = candidate_input.continue_from_previous_match_end(false);
-                }
-                if let Some(captures) = self.regexes[pattern_index]
-                    .captures_input_with_option_flags(&candidate_input, OPTION_ANCHORED)?
+            let mut pending_pattern_indices =
+                candidate_patterns.iter().map(|p| p.as_usize()).collect::<Vec<_>>().into_iter();
+            let mut first_match = None;
+            while let Some(pattern_index) = pending_pattern_indices.next() {
+                if let Some(candidate_match) =
+                    self.match_pattern_at_input_position(pattern_index, &input, match_start)?
                 {
-                    matches.push(RegexSetMatch {
-                        pattern_index,
-                        captures,
-                    });
+                    first_match = Some(candidate_match);
+                    break;
                 }
             }
 
-            if !matches.is_empty() {
+            if let Some(first_match) = first_match {
                 return Ok(Some(RegexSetMatchesAt {
                     regex_set: self,
+                    input,
                     haystack,
                     match_start,
-                    matches: matches.into_iter(),
+                    first_match: Some(first_match),
+                    pending_pattern_indices,
                 }));
             }
 
@@ -367,9 +396,11 @@ impl<'t> RegexSetMatch<'t, str> {
 #[derive(Debug)]
 pub struct RegexSetMatchesAt<'r, 't, S: Input + ?Sized> {
     regex_set: &'r RegexSet,
+    input: RegexInput<'t, S>,
     haystack: &'t S,
     match_start: usize,
-    matches: alloc::vec::IntoIter<RegexSetMatch<'t, S>>,
+    first_match: Option<RegexSetMatch<'t, S>>,
+    pending_pattern_indices: alloc::vec::IntoIter<usize>,
 }
 
 impl<'r, 't, S: Input + ?Sized> RegexSetMatchesAt<'r, 't, S> {
@@ -393,14 +424,30 @@ impl<'r, 't, S: Input + ?Sized> Iterator for RegexSetMatchesAt<'r, 't, S> {
     type Item = Result<RegexSetMatch<'t, S>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.matches.next().map(Ok)
+        if let Some(first_match) = self.first_match.take() {
+            return Some(Ok(first_match));
+        }
+
+        while let Some(pattern_index) = self.pending_pattern_indices.next() {
+            match self.regex_set.match_pattern_at_input_position(
+                pattern_index,
+                &self.input,
+                self.match_start,
+            ) {
+                Ok(Some(regex_set_match)) => return Some(Ok(regex_set_match)),
+                Ok(None) => continue,
+                Err(err) => return Some(Err(err)),
+            }
+        }
+
+        None
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::RegexSet;
-    use crate::RegexInput;
+    use crate::{Error, RegexInput, RegexOptionsBuilder, RuntimeError};
 
     #[test]
     fn find_input_returns_all_matches_at_earliest_position_in_pattern_order() {
@@ -452,5 +499,26 @@ mod tests {
             .find_input(RegexInput::new("a").from_pos(2))
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn find_input_defers_later_pattern_evaluation_until_iteration() {
+        let mut options_builder = RegexOptionsBuilder::new();
+        options_builder.backtrack_limit(0);
+        let set = RegexSet::new_with_options(&[r"a", r"(?=(a|aa)+$)a"], &options_builder).unwrap();
+
+        let mut matches = set.find_input(RegexInput::new("aaaa!")).unwrap().unwrap();
+
+        let first = matches.next().unwrap().unwrap();
+        assert_eq!(0, first.pattern());
+        assert_eq!(0, first.start());
+        assert_eq!(1, first.end());
+        assert_eq!("a", first.as_str());
+
+        let second = matches.next().unwrap();
+        assert!(matches!(
+            second,
+            Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded))
+        ));
     }
 }
