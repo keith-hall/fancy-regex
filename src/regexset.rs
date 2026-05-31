@@ -102,7 +102,8 @@ use crate::{BytesMode, Captures, Regex, Result};
 /// RegexSet API for matching multiple patterns against the same input.
 pub struct RegexSet {
     regexes: Vec<Arc<Regex>>,
-    candidate_position_finder: RaRegex,
+    earliest_match_finder: RaRegex,
+    overlapping_match_finder: RaRegex,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -246,22 +247,32 @@ impl RegexSet {
             patterns.push(regex.seek_pattern());
         }
 
-        let mut builder = options_to_rabuilder(&CompileOptions {
+        let compile_options = CompileOptions {
             bytes_mode: config.bytes_mode,
             unicode: config.syntaxc.get_unicode() && !matches!(config.bytes_mode, BytesMode::Ascii),
             delegate_size_limit: config.delegate_size_limit,
             delegate_dfa_size_limit: config.delegate_dfa_size_limit,
             ..CompileOptions::default()
-        });
-        builder.configure(RaConfig::new().match_kind(MatchKind::LeftmostFirst));
-        let finder = builder
+        };
+
+        let mut earliest_builder = options_to_rabuilder(&compile_options);
+        earliest_builder.configure(RaConfig::new().match_kind(MatchKind::LeftmostFirst));
+        let earliest_match_finder = earliest_builder
+            .build_many(&patterns)
+            .map_err(CompileError::InnerError)
+            .map_err(|e| Error::CompileError(Box::new(e)))?;
+
+        let mut overlapping_builder = options_to_rabuilder(&compile_options);
+        overlapping_builder.configure(RaConfig::new().match_kind(MatchKind::All));
+        let overlapping_match_finder = overlapping_builder
             .build_many(&patterns)
             .map_err(CompileError::InnerError)
             .map_err(|e| Error::CompileError(Box::new(e)))?;
 
         Ok(Self {
             regexes: regexes_vec,
-            candidate_position_finder: finder,
+            earliest_match_finder,
+            overlapping_match_finder,
         })
     }
 
@@ -291,14 +302,14 @@ impl RegexSet {
 
         while search_start <= match_range.end {
             let Some(candidate) = self
-                .candidate_position_finder
+                .earliest_match_finder
                 .search(&RaInput::new(haystack.as_bytes()).range(search_start..match_range.end))
             else {
                 return Ok(None);
             };
             let match_start = candidate.start();
             let mut candidate_patterns = PatternSet::new(self.regexes.len());
-            self.candidate_position_finder.which_overlapping_matches(
+            self.overlapping_match_finder.which_overlapping_matches(
                 &RaInput::new(haystack.as_bytes())
                     .anchored(Anchored::Yes)
                     .range(match_start..match_range.end),
@@ -541,7 +552,9 @@ mod tests {
         .unwrap();
 
         let mut matches = set
-            .find_input(RegexInput::new("let x = 42; // a comment\nlet s = \"hello world\";"))
+            .find_input(RegexInput::new(
+                "let x = 42; // a comment\nlet s = \"hello world\";",
+            ))
             .unwrap()
             .unwrap();
 
