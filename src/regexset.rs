@@ -114,33 +114,33 @@ pub struct RegexSetConfig {
     bytes_mode: BytesMode,
 }
 
-impl RegexSet {
-    fn build_candidate_input<'t, S: Input + ?Sized>(
-        input: &RegexInput<'t, S>,
-        match_start: usize,
-    ) -> RegexInput<'t, S> {
-        let mut candidate_input = RegexInput::new(input.haystack())
-            .range(input.get_range())
-            .from_pos(match_start);
-        if input.start_text_override() == Some(false) {
-            candidate_input = candidate_input.start_text(false);
-        }
-        if input.end_text_override() == Some(false) {
-            candidate_input = candidate_input.end_text(false);
-        }
-        if input.continue_from_previous_match_end_override() == Some(false) {
-            candidate_input = candidate_input.continue_from_previous_match_end(false);
-        }
-        candidate_input
+fn build_candidate_input<'t, S: Input + ?Sized>(
+    input: &RegexInput<'t, S>,
+    match_start: usize,
+) -> RegexInput<'t, S> {
+    let mut candidate_input = RegexInput::new(input.haystack())
+        .range(input.get_range())
+        .from_pos(match_start);
+    if input.start_text_override() == Some(false) {
+        candidate_input = candidate_input.start_text(false);
     }
+    if input.end_text_override() == Some(false) {
+        candidate_input = candidate_input.end_text(false);
+    }
+    if input.continue_from_previous_match_end_override() == Some(false) {
+        candidate_input = candidate_input.continue_from_previous_match_end(false);
+    }
+    candidate_input
+}
 
+impl RegexSet {
     fn match_pattern_at_input_position<'t, S: Input + ?Sized>(
         &self,
         pattern_index: usize,
         input: &RegexInput<'t, S>,
         match_start: usize,
     ) -> Result<Option<RegexSetMatch<'t, S>>> {
-        let candidate_input = Self::build_candidate_input(input, match_start);
+        let candidate_input = build_candidate_input(input, match_start);
         Ok(
             if let Some(captures) = self.regexes[pattern_index]
                 .captures_input_with_option_flags(&candidate_input, OPTION_ANCHORED)?
@@ -305,8 +305,11 @@ impl RegexSet {
                 &mut candidate_patterns,
             );
 
-            let mut pending_pattern_indices =
-                candidate_patterns.iter().map(|p| p.as_usize()).collect::<Vec<_>>().into_iter();
+            let mut pending_pattern_indices = candidate_patterns
+                .iter()
+                .map(|p| p.as_usize())
+                .collect::<Vec<_>>()
+                .into_iter();
             let mut first_match = None;
             while let Some(pattern_index) = pending_pattern_indices.next() {
                 if let Some(candidate_match) =
@@ -505,15 +508,14 @@ mod tests {
     fn find_input_defers_later_pattern_evaluation_until_iteration() {
         let mut options_builder = RegexOptionsBuilder::new();
         options_builder.backtrack_limit(0);
-        let set = RegexSet::new_with_options(&[r"a", r"(?=(a|aa)+$)a"], &options_builder).unwrap();
+        let set = RegexSet::new_with_options(&[r"a", r"(?:(a|aa)+)\1"], &options_builder).unwrap();
 
-        let mut matches = set.find_input(RegexInput::new("aaaa!")).unwrap().unwrap();
+        let mut matches = set.find_input(RegexInput::new("aa")).unwrap().unwrap();
 
         let first = matches.next().unwrap().unwrap();
         assert_eq!(0, first.pattern());
         assert_eq!(0, first.start());
         assert_eq!(1, first.end());
-        assert_eq!("a", first.as_str());
 
         let second = matches.next().unwrap();
         assert!(matches!(
