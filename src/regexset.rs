@@ -253,7 +253,7 @@ impl RegexSet {
             delegate_dfa_size_limit: config.delegate_dfa_size_limit,
             ..CompileOptions::default()
         });
-        builder.configure(RaConfig::new().match_kind(MatchKind::All));
+        builder.configure(RaConfig::new().match_kind(MatchKind::LeftmostFirst));
         let finder = builder
             .build_many(&patterns)
             .map_err(CompileError::InnerError)
@@ -522,5 +522,33 @@ mod tests {
             second,
             Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded))
         ));
+    }
+
+    #[test]
+    fn find_input_picks_earliest_start_position_before_iterating_pattern_order() {
+        let mut options_builder = RegexOptionsBuilder::new();
+        options_builder.multi_line(true);
+        let set = RegexSet::new_with_options(
+            &[
+                r"//.*$",
+                r#""(?:[^"\\]|\\.)*""#,
+                r"\b(fn|let|mut|if|else)\b",
+                r"\b[0-9]+\b",
+                r"[a-zA-Z_][a-zA-Z0-9_]*",
+            ],
+            &options_builder,
+        )
+        .unwrap();
+
+        let mut matches = set
+            .find_input(RegexInput::new("let x = 42; // a comment\nlet s = \"hello world\";"))
+            .unwrap()
+            .unwrap();
+
+        let first = matches.next().unwrap().unwrap();
+        assert_eq!(2, first.pattern());
+        assert_eq!(0, first.start());
+        assert_eq!(3, first.end());
+        assert_eq!("let", first.as_str());
     }
 }
