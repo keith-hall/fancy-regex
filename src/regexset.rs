@@ -77,18 +77,15 @@
 use alloc::boxed::Box;
 use alloc::string::ToString;
 use alloc::sync::Arc;
-use alloc::vec;
 use alloc::vec::Vec;
-use core::ops::Range;
 
-use crate::CaptureMatches;
 use crate::CompileOptions;
 use crate::Input;
 use crate::RegexInput;
 use crate::RegexOptionsBuilder;
 
 use regex_automata::meta::Regex as RaRegex;
-use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
+use regex_automata::meta::Config as RaConfig;
 use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Anchored;
 use regex_automata::Input as RaInput;
@@ -98,7 +95,8 @@ use regex_automata::PatternSet;
 use crate::compile::options_to_rabuilder;
 use crate::CompileError;
 use crate::Error;
-use crate::{BytesMode, Captures, Regex, RegexOptions, Result};
+use crate::vm::OPTION_ANCHORED;
+use crate::{BytesMode, Captures, Regex, Result};
 
 #[derive(Clone, Debug)]
 /// RegexSet API for matching multiple patterns against the same input.
@@ -243,25 +241,56 @@ impl RegexSet {
         &self,
         input: RegexInput<'t, S>,
     ) -> Result<Option<RegexSetMatchesAt<'t, 't, S>>> {
+        if input.is_done() {
+            return Ok(None);
+        }
+
         let haystack = input.haystack();
-        let pos = input.effective_start();
         let match_range = input.get_range();
-        let ra_input = RaInput::new(haystack.as_bytes())
-            .anchored(Anchored::Yes)
-            .range(pos..match_range.end);
-        // TODO: use the candidate position finder multi dfa
-        // `search(&RaInput)` - returns PatternSet of matching patterns
-        // `find_overlapping_matches(&RaInput)` - iterator over (pattern_index, start, end) tuples
+        let mut search_start = input.effective_start();
 
-        // the idea is to find the earliest start position where any regex in the set could match
-        // (Fancy RegexImpl's just have their "seek" pattern in the multi DFA, so a match isn't guaranteed at the identified positions)
-        // collect all pattern indices that match at that earliest position
-        // For each pattern index, verify with anchored captures at that exact position using captures_input_with_option_flags, with OPTION_ANCHORED, to do a full match at this candidate position
+        while search_start <= match_range.end {
+            let Some(candidate) = self
+                .candidate_position_finder
+                .search(&RaInput::new(haystack.as_bytes()).range(search_start..match_range.end))
+            else {
+                return Ok(None);
+            };
+            let match_start = candidate.start();
+            let mut candidate_patterns = PatternSet::new(self.regexes.len());
+            self.candidate_position_finder.which_overlapping_matches(
+                &RaInput::new(haystack.as_bytes())
+                    .anchored(Anchored::Yes)
+                    .range(match_start..match_range.end),
+                &mut candidate_patterns,
+            );
 
-        // the caller then processes this how they want - deciding which pattern "wins" if there are multiple matches
-        // - inspecting the match lengths etc to decide according to their own logic
-        // the caller would then call find_input again with a new search start position, and new continue_from_previous_match_end value if they skipped an empty match etc.
-        // this is why there is no iterator over horizontal matches in the RegexSet, just vertical matches
+            let mut matches = Vec::new();
+            for pattern_id in candidate_patterns.iter() {
+                let pattern_index = pattern_id.as_usize();
+                let candidate_input = input.clone().from_pos(match_start);
+                if let Some(captures) = self.regexes[pattern_index]
+                    .captures_input_with_option_flags(&candidate_input, OPTION_ANCHORED)?
+                {
+                    matches.push(RegexSetMatch {
+                        pattern_index,
+                        captures,
+                    });
+                }
+            }
+
+            if !matches.is_empty() {
+                return Ok(Some(RegexSetMatchesAt {
+                    regex_set: self,
+                    haystack,
+                    match_start,
+                    matches: matches.into_iter(),
+                }));
+            }
+
+            search_start = haystack.advance_position(match_start);
+        }
+
         Ok(None)
     }
 }
@@ -279,12 +308,125 @@ pub struct RegexSetMatch<'t, S: Input + ?Sized> {
     captures: Captures<'t, S>,
 }
 
+impl<'t, S: Input + ?Sized> RegexSetMatch<'t, S> {
+    /// Returns the pattern index that matched.
+    pub fn pattern(&self) -> usize {
+        self.pattern_index
+    }
+
+    /// Returns the full set of capture groups for this match.
+    pub fn captures(&self) -> &Captures<'t, S> {
+        &self.captures
+    }
+
+    /// Returns the full match.
+    pub fn get(&self) -> S::Match<'t> {
+        self.captures
+            .get(0)
+            .expect("`RegexSetMatch` must always contain the overall match")
+    }
+
+    /// Returns the start offset of the full match.
+    pub fn start(&self) -> usize {
+        self.captures
+            .get_span(0)
+            .expect("`RegexSetMatch` must always contain the overall match")
+            .0
+    }
+
+    /// Returns the end offset of the full match.
+    pub fn end(&self) -> usize {
+        self.captures
+            .get_span(0)
+            .expect("`RegexSetMatch` must always contain the overall match")
+            .1
+    }
+}
+
+impl<'t> RegexSetMatch<'t, str> {
+    /// Returns the matched text.
+    pub fn as_str(&self) -> &'t str {
+        self.captures
+            .get(0)
+            .expect("`RegexSetMatch` must always contain the overall match")
+            .as_str()
+    }
+}
+
 #[derive(Debug)]
 pub struct RegexSetMatchesAt<'r, 't, S: Input + ?Sized> {
     regex_set: &'r RegexSet,
     haystack: &'t S,
     match_start: usize,
-    //match_end: usize,
-    pattern_indices: Vec<usize>, // deduplicated, in index order
-    current_index: usize,
+    matches: alloc::vec::IntoIter<RegexSetMatch<'t, S>>,
+}
+
+impl<'r, 't, S: Input + ?Sized> RegexSetMatchesAt<'r, 't, S> {
+    /// Returns the originating regex set.
+    pub fn regex_set(&self) -> &'r RegexSet {
+        self.regex_set
+    }
+
+    /// Returns the searched haystack.
+    pub fn haystack(&self) -> &'t S {
+        self.haystack
+    }
+
+    /// Returns the earliest start position shared by these matches.
+    pub fn start(&self) -> usize {
+        self.match_start
+    }
+}
+
+impl<'r, 't, S: Input + ?Sized> Iterator for RegexSetMatchesAt<'r, 't, S> {
+    type Item = Result<RegexSetMatch<'t, S>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.matches.next().map(Ok)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RegexSet;
+    use crate::RegexInput;
+
+    #[test]
+    fn find_input_returns_all_matches_at_earliest_position_in_pattern_order() {
+        let set = RegexSet::new(&[r"\d+", r"\w+", r"(?<=\$)\d+\.\d+"]).unwrap();
+        let mut matches = set.find_input(RegexInput::new("$29.99")).unwrap().unwrap();
+
+        let first = matches.next().unwrap().unwrap();
+        assert_eq!(0, first.pattern());
+        assert_eq!(1, first.start());
+        assert_eq!(3, first.end());
+        assert_eq!("29", first.as_str());
+
+        let second = matches.next().unwrap().unwrap();
+        assert_eq!(1, second.pattern());
+        assert_eq!(1, second.start());
+        assert_eq!(3, second.end());
+        assert_eq!("29", second.as_str());
+
+        let third = matches.next().unwrap().unwrap();
+        assert_eq!(2, third.pattern());
+        assert_eq!(1, third.start());
+        assert_eq!(6, third.end());
+        assert_eq!("29.99", third.as_str());
+
+        assert!(matches.next().is_none());
+    }
+
+    #[test]
+    fn find_input_skips_false_positive_candidate_positions() {
+        let set = RegexSet::new(&[r"(?<=foo)bar"]).unwrap();
+        let mut matches = set.find_input(RegexInput::new("barfoobar")).unwrap().unwrap();
+
+        let only = matches.next().unwrap().unwrap();
+        assert_eq!(0, only.pattern());
+        assert_eq!(6, only.start());
+        assert_eq!(9, only.end());
+        assert_eq!("bar", only.as_str());
+        assert!(matches.next().is_none());
+    }
 }

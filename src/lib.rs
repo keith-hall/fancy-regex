@@ -1924,6 +1924,10 @@ impl<'t> From<Match<'t>> for Range<usize> {
 
 #[allow(clippy::len_without_is_empty)] // follow regex's API
 impl<'t, S: input::Input + ?Sized> Captures<'t, S> {
+    pub(crate) fn get_span(&self, i: usize) -> Option<(usize, usize)> {
+        self.inner.get_span(i)
+    }
+
     /// Get the capture group by its index in the regex.
     ///
     /// If there is no match for that group or the index does not correspond to a group, `None` is
