@@ -443,4 +443,14 @@ mod tests {
         assert_eq!("bar", only.as_str());
         assert!(matches.next().is_none());
     }
+
+    #[test]
+    fn find_input_returns_none_when_input_is_done() {
+        let set = RegexSet::new(&[r"."]).unwrap();
+
+        assert!(set
+            .find_input(RegexInput::new("a").from_pos(2))
+            .unwrap()
+            .is_none());
+    }
 }
