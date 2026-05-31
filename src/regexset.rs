@@ -237,10 +237,10 @@ impl RegexSet {
 
     /// Returns an iterator over matches at the earliest match position - if any.
     /// Iterator yields matches in pattern index order
-    pub fn find_input<'t, S: Input + ?Sized>(
-        &self,
+    pub fn find_input<'r, 't, S: Input + ?Sized>(
+        &'r self,
         input: RegexInput<'t, S>,
-    ) -> Result<Option<RegexSetMatchesAt<'t, 't, S>>> {
+    ) -> Result<Option<RegexSetMatchesAt<'r, 't, S>>> {
         if input.is_done() {
             return Ok(None);
         }

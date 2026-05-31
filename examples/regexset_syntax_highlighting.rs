@@ -27,7 +27,7 @@ let s = "hello world";"#;
     let mut input = RegexInput::new(code);
 
     while input.start() < input.haystack().len() {
-        if let Ok(Some(matching_patterns)) = set.find_input(input) {
+        if let Ok(Some(matching_patterns)) = set.find_input(input.clone()) {
             for match_result in matching_patterns {
                 let m = match_result?;
                 let token_type = match m.pattern() {
