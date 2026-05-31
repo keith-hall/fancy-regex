@@ -1,7 +1,7 @@
 // Example demonstrating RegexSet usage for syntax highlighting
 
-use fancy_regex::{RegexOptionsBuilder, RegexSet, Result};
 use fancy_regex::RegexInput;
+use fancy_regex::{RegexOptionsBuilder, RegexSet, Result};
 
 fn main() -> Result<()> {
     // Create a regex set for basic syntax highlighting

@@ -84,8 +84,8 @@ use crate::Input;
 use crate::RegexInput;
 use crate::RegexOptionsBuilder;
 
-use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::Config as RaConfig;
+use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Anchored;
 use regex_automata::Input as RaInput;
@@ -93,9 +93,9 @@ use regex_automata::MatchKind;
 use regex_automata::PatternSet;
 
 use crate::compile::options_to_rabuilder;
+use crate::vm::OPTION_ANCHORED;
 use crate::CompileError;
 use crate::Error;
-use crate::vm::OPTION_ANCHORED;
 use crate::{BytesMode, Captures, Regex, Result};
 
 #[derive(Clone, Debug)]
@@ -268,7 +268,18 @@ impl RegexSet {
             let mut matches = Vec::new();
             for pattern_id in candidate_patterns.iter() {
                 let pattern_index = pattern_id.as_usize();
-                let candidate_input = input.clone().from_pos(match_start);
+                let mut candidate_input = RegexInput::new(haystack)
+                    .range(match_range.clone())
+                    .from_pos(match_start);
+                if input.start_text_override() == Some(false) {
+                    candidate_input = candidate_input.start_text(false);
+                }
+                if input.end_text_override() == Some(false) {
+                    candidate_input = candidate_input.end_text(false);
+                }
+                if input.continue_from_previous_match_end_override() == Some(false) {
+                    candidate_input = candidate_input.continue_from_previous_match_end(false);
+                }
                 if let Some(captures) = self.regexes[pattern_index]
                     .captures_input_with_option_flags(&candidate_input, OPTION_ANCHORED)?
                 {
@@ -420,7 +431,10 @@ mod tests {
     #[test]
     fn find_input_skips_false_positive_candidate_positions() {
         let set = RegexSet::new(&[r"(?<=foo)bar"]).unwrap();
-        let mut matches = set.find_input(RegexInput::new("barfoobar")).unwrap().unwrap();
+        let mut matches = set
+            .find_input(RegexInput::new("barfoobar"))
+            .unwrap()
+            .unwrap();
 
         let only = matches.next().unwrap().unwrap();
         assert_eq!(0, only.pattern());
