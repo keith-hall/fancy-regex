@@ -345,21 +345,30 @@ impl RegexSet {
                 .anchored(Anchored::Yes)
                 .range(match_start..match_range.end);
             let mut state = OverlappingState::start();
-            let mut cache_guard = self.overlapping_cache_pool.get();
             let mut candidate_pattern_indices: Vec<usize> = Vec::new();
-            loop {
-                if self
-                    .overlapping_dfa
-                    .try_search_overlapping_fwd(&mut cache_guard, &overlapping_input, &mut state)
-                    .is_err()
-                {
-                    break;
+            {
+                let mut cache_guard = self.overlapping_cache_pool.get();
+                loop {
+                    // Errors from try_search_overlapping_fwd cannot occur with
+                    // our DFA configuration (no cache capacity limit, no quit
+                    // bytes, Anchored::Yes is always supported).
+                    if self
+                        .overlapping_dfa
+                        .try_search_overlapping_fwd(
+                            &mut cache_guard,
+                            &overlapping_input,
+                            &mut state,
+                        )
+                        .is_err()
+                    {
+                        break;
+                    }
+                    let Some(half_match) = state.get_match() else {
+                        break;
+                    };
+                    candidate_pattern_indices.push(half_match.pattern().as_usize());
                 }
-                let Some(half_match) = state.get_match() else {
-                    break;
-                };
-                candidate_pattern_indices.push(half_match.pattern().as_usize());
-            }
+            } // release cache_guard back to pool before doing per-pattern matching
             candidate_pattern_indices.sort_unstable();
             candidate_pattern_indices.dedup();
 
