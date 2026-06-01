@@ -84,13 +84,16 @@ use crate::Input;
 use crate::RegexInput;
 use crate::RegexOptionsBuilder;
 
+use regex_automata::hybrid::dfa;
+use regex_automata::hybrid::dfa::OverlappingState;
 use regex_automata::meta::Config as RaConfig;
 use regex_automata::meta::Regex as RaRegex;
+use regex_automata::nfa::thompson;
+use regex_automata::util::pool::Pool;
 use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Anchored;
 use regex_automata::Input as RaInput;
 use regex_automata::MatchKind;
-use regex_automata::PatternSet;
 
 use crate::compile::options_to_rabuilder;
 use crate::vm::OPTION_ANCHORED;
@@ -98,12 +101,17 @@ use crate::CompileError;
 use crate::Error;
 use crate::{BytesMode, Captures, Regex, Result};
 
+type CachePoolFn = alloc::boxed::Box<
+    dyn Fn() -> dfa::Cache + Send + Sync + core::panic::UnwindSafe + core::panic::RefUnwindSafe,
+>;
+
 #[derive(Clone, Debug)]
 /// RegexSet API for matching multiple patterns against the same input.
 pub struct RegexSet {
     regexes: Vec<Arc<Regex>>,
     earliest_match_finder: RaRegex,
-    overlapping_match_finder: RaRegex,
+    overlapping_dfa: Arc<dfa::DFA>,
+    overlapping_cache_pool: Arc<Pool<dfa::Cache, CachePoolFn>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -255,6 +263,8 @@ impl RegexSet {
             ..CompileOptions::default()
         };
 
+        let utf8 = matches!(compile_options.bytes_mode, BytesMode::Unicode);
+
         let mut earliest_builder = options_to_rabuilder(&compile_options);
         earliest_builder.configure(RaConfig::new().match_kind(MatchKind::LeftmostFirst));
         let earliest_match_finder = earliest_builder
@@ -262,17 +272,40 @@ impl RegexSet {
             .map_err(CompileError::InnerError)
             .map_err(|e| Error::CompileError(Box::new(e)))?;
 
-        let mut overlapping_builder = options_to_rabuilder(&compile_options);
-        overlapping_builder.configure(RaConfig::new().match_kind(MatchKind::All));
-        let overlapping_match_finder = overlapping_builder
-            .build_many(&patterns)
-            .map_err(CompileError::InnerError)
-            .map_err(|e| Error::CompileError(Box::new(e)))?;
+        let mut overlapping_dfa_builder = dfa::DFA::builder();
+        overlapping_dfa_builder
+            .configure(
+                dfa::Config::new()
+                    .match_kind(MatchKind::All)
+                    .unicode_word_boundary(compile_options.unicode),
+            )
+            .syntax(
+                SyntaxConfig::new()
+                    .utf8(utf8)
+                    .unicode(compile_options.unicode),
+            )
+            .thompson({
+                let mut config = thompson::Config::new();
+                if let Some(limit) = compile_options.delegate_size_limit {
+                    config = config.nfa_size_limit(Some(limit));
+                }
+                config
+            });
+        let overlapping_dfa =
+            Arc::new(overlapping_dfa_builder.build_many(&patterns).map_err(|e| {
+                Error::CompileError(Box::new(CompileError::DfaBuildError(e.to_string())))
+            })?);
+        let create: CachePoolFn = alloc::boxed::Box::new({
+            let dfa = Arc::clone(&overlapping_dfa);
+            move || dfa.create_cache()
+        });
+        let overlapping_cache_pool = Arc::new(Pool::new(create));
 
         Ok(Self {
             regexes: regexes_vec,
             earliest_match_finder,
-            overlapping_match_finder,
+            overlapping_dfa,
+            overlapping_cache_pool,
         })
     }
 
@@ -308,19 +341,29 @@ impl RegexSet {
                 return Ok(None);
             };
             let match_start = candidate.start();
-            let mut candidate_patterns = PatternSet::new(self.regexes.len());
-            self.overlapping_match_finder.which_overlapping_matches(
-                &RaInput::new(haystack.as_bytes())
-                    .anchored(Anchored::Yes)
-                    .range(match_start..match_range.end),
-                &mut candidate_patterns,
-            );
+            let overlapping_input = RaInput::new(haystack.as_bytes())
+                .anchored(Anchored::Yes)
+                .range(match_start..match_range.end);
+            let mut state = OverlappingState::start();
+            let mut cache_guard = self.overlapping_cache_pool.get();
+            let mut candidate_pattern_indices: Vec<usize> = Vec::new();
+            loop {
+                if self
+                    .overlapping_dfa
+                    .try_search_overlapping_fwd(&mut cache_guard, &overlapping_input, &mut state)
+                    .is_err()
+                {
+                    break;
+                }
+                let Some(half_match) = state.get_match() else {
+                    break;
+                };
+                candidate_pattern_indices.push(half_match.pattern().as_usize());
+            }
+            candidate_pattern_indices.sort_unstable();
+            candidate_pattern_indices.dedup();
 
-            let mut pending_pattern_indices = candidate_patterns
-                .iter()
-                .map(|p| p.as_usize())
-                .collect::<Vec<_>>()
-                .into_iter();
+            let mut pending_pattern_indices = candidate_pattern_indices.into_iter();
             let mut first_match = None;
             while let Some(pattern_index) = pending_pattern_indices.next() {
                 if let Some(candidate_match) =
