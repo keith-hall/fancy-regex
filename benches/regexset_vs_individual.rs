@@ -20,7 +20,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use fancy_regex::{RegexBuilder, RegexInput, RegexSet};
+use fancy_regex::{Input, RegexBuilder, RegexInput, RegexSet};
 
 fn scan_with_regexset(regex_set: &RegexSet, haystack: &str) -> usize {
     let mut count = 0usize;
@@ -28,8 +28,10 @@ fn scan_with_regexset(regex_set: &RegexSet, haystack: &str) -> usize {
     let base_input = RegexInput::new(haystack);
 
     while pos < haystack.len() {
+        let input = base_input.clone().from_pos(pos);
+        let next_pos_if_empty_match = input.haystack().advance_position(pos);
         let Some(mut matches) = regex_set
-            .find_input(base_input.clone().from_pos(pos))
+            .find_input(input)
             .unwrap()
         else {
             break;
@@ -39,7 +41,7 @@ fn scan_with_regexset(regex_set: &RegexSet, haystack: &str) -> usize {
         pos = if first_match.end() > pos {
             first_match.end()
         } else {
-            pos + 1
+            next_pos_if_empty_match
         };
     }
 
