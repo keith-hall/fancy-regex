@@ -664,7 +664,7 @@ mod tests {
     }
 
     #[test]
-    fn find_input_no_capture_pattern_still_returns_capture_group_0_only() {
+    fn test_no_captures_returns_group_0() {
         let set = RegexSet::new(&[r"\w+"]).unwrap();
         let mut matches = set.find_input(RegexInput::new("abc")).unwrap().unwrap();
 

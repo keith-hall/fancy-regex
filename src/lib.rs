@@ -1393,6 +1393,9 @@ impl Regex {
     ///
     /// This is used by `RegexSet` as a fast path for patterns without capture
     /// groups, where we only need to preserve the overall match range.
+    ///
+    /// The caller must pass a valid `start..end` match span for `input`.
+    /// Behavior is otherwise undefined for APIs reading the resulting captures.
     pub(crate) fn captures_for_span<'t, S: input::Input + ?Sized>(
         &self,
         input: &'t S,
