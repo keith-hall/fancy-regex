@@ -409,18 +409,21 @@ impl RegexSet {
         match_start: usize,
     ) -> Result<Option<RegexSetMatch<'t, S>>> {
         let candidate_input = input.clone().from_pos(match_start);
-        Ok(
-            if let Some(captures) = self.regexes[pattern_index]
-                .captures_input_with_option_flags(&candidate_input, OPTION_ANCHORED)?
-            {
-                Some(RegexSetMatch {
+        let regex = &self.regexes[pattern_index];
+        if regex.captures_len() == 1 {
+            return Ok(regex
+                .find_input_raw(&candidate_input, OPTION_ANCHORED)?
+                .map(|(start, end)| RegexSetMatch {
                     pattern_index,
-                    captures,
-                })
-            } else {
-                None
-            },
-        )
+                    captures: regex.captures_for_span(input.haystack(), start, end),
+                }));
+        }
+        Ok(regex
+            .captures_input_with_option_flags(&candidate_input, OPTION_ANCHORED)?
+            .map(|captures| RegexSetMatch {
+                pattern_index,
+                captures,
+            }))
     }
 }
 
@@ -658,5 +661,16 @@ mod tests {
         assert_eq!("a", second.as_str());
 
         assert!(matches.next().is_none());
+    }
+
+    #[test]
+    fn find_input_no_capture_pattern_still_returns_capture_group_0_only() {
+        let set = RegexSet::new(&[r"\w+"]).unwrap();
+        let mut matches = set.find_input(RegexInput::new("abc")).unwrap().unwrap();
+
+        let only = matches.next().unwrap().unwrap();
+        assert_eq!(0, only.pattern());
+        assert_eq!(1, only.captures().len());
+        assert_eq!("abc", only.as_str());
     }
 }

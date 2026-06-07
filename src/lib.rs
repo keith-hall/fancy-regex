@@ -1345,7 +1345,7 @@ impl Regex {
         self.find_input(RegexInput::new(input).from_pos(pos))
     }
 
-    fn find_input_raw<S: input::Input + ?Sized>(
+    pub(crate) fn find_input_raw<S: input::Input + ?Sized>(
         &self,
         input: &RegexInput<'_, S>,
         option_flags: u32,
@@ -1359,11 +1359,15 @@ impl Regex {
                 explicit_capture_group_0,
                 ..
             } => {
+                let mut delegated_input = ra_input(input);
+                if option_flags & OPTION_ANCHORED != 0 {
+                    delegated_input = delegated_input.anchored(RaAnchored::Yes);
+                }
                 let result = if !*explicit_capture_group_0 {
-                    inner.search(&ra_input(input)).map(|m| (m.start(), m.end()))
+                    inner.search(delegated_input).map(|m| (m.start(), m.end()))
                 } else {
                     let mut locations = inner.create_captures();
-                    inner.captures(ra_input(input), &mut locations);
+                    inner.captures(delegated_input, &mut locations);
                     locations
                         .get_group(1)
                         .map(|group1| (group1.start, group1.end))
@@ -1380,6 +1384,21 @@ impl Regex {
                 let result = vm::run(prog, input, option_flags, options)?;
                 Ok(result.map(|saves| (saves[0], saves[1])))
             }
+        }
+    }
+
+    pub(crate) fn captures_for_span<'t, S: input::Input + ?Sized>(
+        &self,
+        input: &'t S,
+        start: usize,
+        end: usize,
+    ) -> Captures<'t, S> {
+        Captures {
+            inner: CapturesImpl::Fancy {
+                saves: vec![start, end],
+            },
+            named_groups: self.named_groups.clone(),
+            input,
         }
     }
 
