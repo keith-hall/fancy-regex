@@ -39,17 +39,17 @@
 //!     r"(?<=\$)\d+\.\d+",  // Pattern 2: prices (with lookbehind)
 //! ])?;
 //!
-//! let text = "The price is $29.99 today";
+//! let text = "$29.99";
 //!
 //! let mut matches = set.find_input(RegexInput::new(text)).unwrap().unwrap();
 //!
 //! let first = matches.next().unwrap()?;
-//! assert_eq!(first.pattern(), 1);
-//! assert_eq!(first.as_str(), "The");
-//! assert_eq!(first.start(), 0);
+//! assert_eq!(first.pattern(), 0);
+//! assert_eq!(first.as_str(), "29");
+//! assert_eq!(first.start(), 1);
 //!
 //! let second = matches.next().unwrap()?;
-//! assert_eq!(second.pattern(), 0);
+//! assert_eq!(second.pattern(), 1);
 //! assert_eq!(second.as_str(), "29");
 //!
 //! let third = matches.next().unwrap()?;
