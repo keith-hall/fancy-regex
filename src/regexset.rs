@@ -626,4 +626,24 @@ mod tests {
         assert_eq!(3, first.end());
         assert_eq!("let", first.as_str());
     }
+
+    #[test]
+    fn find_input_yields_each_pattern_at_match_start_once() {
+        let set = RegexSet::new(&[r"a+", r"a"]).unwrap();
+        let mut matches = set.find_input(RegexInput::new("aaa")).unwrap().unwrap();
+
+        let first = matches.next().unwrap().unwrap();
+        assert_eq!(0, first.pattern());
+        assert_eq!(0, first.start());
+        assert_eq!(3, first.end());
+        assert_eq!("aaa", first.as_str());
+
+        let second = matches.next().unwrap().unwrap();
+        assert_eq!(1, second.pattern());
+        assert_eq!(0, second.start());
+        assert_eq!(1, second.end());
+        assert_eq!("a", second.as_str());
+
+        assert!(matches.next().is_none());
+    }
 }
