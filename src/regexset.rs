@@ -131,6 +131,7 @@ use crate::vm::OPTION_ANCHORED;
 use crate::CompileError;
 use crate::Error;
 use crate::{BytesMode, Captures, Regex, Result};
+use crate::RegexOptions;
 
 type DfaCachePoolFactory = alloc::boxed::Box<
     dyn Fn() -> dfa::Cache + Send + Sync + core::panic::UnwindSafe + core::panic::RefUnwindSafe,
@@ -145,13 +146,25 @@ pub struct RegexSet {
     overlapping_cache_pool: Arc<Pool<dfa::Cache, DfaCachePoolFactory>>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 /// Configuration for a RegexSet
 pub struct RegexSetConfig {
-    syntaxc: SyntaxConfig, // TODO: maybe rather than derive Default, make it explicit or base it on RegexOptions' default, for unicode etc
+    syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
     bytes_mode: BytesMode,
+}
+
+impl Default for RegexSetConfig {
+    fn default() -> Self {
+        let default_options = RegexOptions::default();
+        RegexSetConfig {
+            syntaxc: default_options.syntaxc,
+            delegate_size_limit: default_options.delegate_size_limit,
+            delegate_dfa_size_limit: default_options.delegate_dfa_size_limit,
+            bytes_mode: default_options.bytes_mode,
+        }
+    }
 }
 
 impl RegexSet {
