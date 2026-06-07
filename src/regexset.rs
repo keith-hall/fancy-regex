@@ -41,18 +41,20 @@
 //!
 //! let text = "$29.99";
 //!
-//! let mut matches = set.find_input(RegexInput::new(text)).unwrap().unwrap();
+//! let mut matches = set
+//!     .find_input(RegexInput::new(text))?
+//!     .expect("expected at least one match");
 //!
-//! let first = matches.next().unwrap()?;
+//! let first = matches.next().expect("expected first match")?;
 //! assert_eq!(first.pattern(), 0);
 //! assert_eq!(first.as_str(), "29");
 //! assert_eq!(first.start(), 1);
 //!
-//! let second = matches.next().unwrap()?;
+//! let second = matches.next().expect("expected second match")?;
 //! assert_eq!(second.pattern(), 1);
 //! assert_eq!(second.as_str(), "29");
 //!
-//! let third = matches.next().unwrap()?;
+//! let third = matches.next().expect("expected third match")?;
 //! assert_eq!(third.pattern(), 2);
 //! assert_eq!(third.as_str(), "29.99");
 //! assert!(matches.next().is_none());
