@@ -520,7 +520,7 @@ impl fmt::Debug for RegexOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let seek_filter_desc = match self.seek_filter {
             None => "None",
-            Some(f_ptr) if f_ptr as usize == seek_pattern_is_useful as usize => {
+            Some(f_ptr) if (f_ptr as *const ()) == (seek_pattern_is_useful as *const ()) => {
                 "Some(seek_pattern_is_useful)"
             }
             Some(_) => "Some(<custom>)",
@@ -1924,6 +1924,10 @@ impl<'t> From<Match<'t>> for Range<usize> {
 
 #[allow(clippy::len_without_is_empty)] // follow regex's API
 impl<'t, S: input::Input + ?Sized> Captures<'t, S> {
+    pub(crate) fn get_span(&self, i: usize) -> Option<(usize, usize)> {
+        self.inner.get_span(i)
+    }
+
     /// Get the capture group by its index in the regex.
     ///
     /// If there is no match for that group or the index does not correspond to a group, `None` is
