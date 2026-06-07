@@ -76,7 +76,7 @@ pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::input::{Input, RegexInput};
-pub use crate::regexset::{RegexSet, RegexSetConfig, RegexSetMatch};
+pub use crate::regexset::{RegexSet, RegexSetOptions, RegexSetMatch};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 pub use crate::seek::seek_pattern_is_useful;
 

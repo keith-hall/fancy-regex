@@ -148,17 +148,17 @@ pub struct RegexSet {
 
 #[derive(Clone, Debug)]
 /// Configuration for a RegexSet
-pub struct RegexSetConfig {
+pub struct RegexSetOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
     bytes_mode: BytesMode,
 }
 
-impl Default for RegexSetConfig {
+impl Default for RegexSetOptions {
     fn default() -> Self {
         let default_options = RegexOptions::default();
-        RegexSetConfig {
+        RegexSetOptions {
             syntaxc: default_options.syntaxc,
             delegate_size_limit: default_options.delegate_size_limit,
             delegate_dfa_size_limit: default_options.delegate_dfa_size_limit,
@@ -210,7 +210,7 @@ impl RegexSet {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let config = RegexSetConfig {
+        let config = RegexSetOptions {
             syntaxc: options_builder.options.syntaxc,
             delegate_size_limit: options_builder.options.delegate_size_limit,
             delegate_dfa_size_limit: options_builder.options.delegate_dfa_size_limit,
@@ -224,7 +224,7 @@ impl RegexSet {
     /// # Examples
     ///
     /// ```rust
-    /// use fancy_regex::{Regex, RegexBuilder, RegexSet, RegexSetConfig};
+    /// use fancy_regex::{Regex, RegexBuilder, RegexSet, RegexSetOptions};
     /// use std::sync::Arc;
     ///
     /// # fn main() -> Result<(), fancy_regex::Error> {
@@ -247,7 +247,7 @@ impl RegexSet {
     /// # Errors
     ///
     /// Returns an error if the multi-pattern DFA construction fails.
-    pub fn from_regexes<I>(regexes: I, config: RegexSetConfig) -> Result<Self>
+    pub fn from_regexes<I>(regexes: I, config: RegexSetOptions) -> Result<Self>
     where
         I: IntoIterator<Item = Arc<Regex>>,
     {
