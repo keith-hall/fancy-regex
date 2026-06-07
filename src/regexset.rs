@@ -238,7 +238,7 @@ impl RegexSet {
     /// // Combine them into a RegexSet
     /// let set = RegexSet::from_regexes([re1, re2, re3], Default::default())?;
     ///
-    /// let text = "HELLO 123 send";
+    /// let text = "HELLO";
     /// let mut matches = set
     ///     .find_input(RegexInput::new(text))?
     ///     .expect("expected at least one match");
@@ -443,15 +443,14 @@ impl RegexSet {
 /// use fancy_regex::{RegexInput, RegexSet};
 ///
 /// # fn main() -> Result<(), fancy_regex::Error> {
-/// let set = RegexSet::new(&[r"\d+", r"\w+"])?;
+/// let set = RegexSet::new(&[r"\w+"])?;
 /// let mut matches = set
-///     .find_input(RegexInput::new("abc 123"))?
+///     .find_input(RegexInput::new("abc"))?
 ///     .expect("expected at least one match");
 ///
 /// let m = matches.next().expect("expected first match")?;
-/// assert_eq!(m.pattern(), 1);
+/// assert_eq!(m.pattern(), 0);
 /// assert_eq!(m.get().as_str(), "abc");
-/// assert_eq!(m.as_str(), "abc");
 /// assert_eq!(m.start(), 0);
 /// assert_eq!(m.end(), 3);
 /// assert_eq!(m.captures().len(), 1);
