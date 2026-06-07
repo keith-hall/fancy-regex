@@ -154,47 +154,7 @@ pub struct RegexSetConfig {
     bytes_mode: BytesMode,
 }
 
-fn build_candidate_input<'t, S: Input + ?Sized>(
-    input: &RegexInput<'t, S>,
-    match_start: usize,
-) -> RegexInput<'t, S> {
-    let mut candidate_input = RegexInput::new(input.haystack())
-        .range(input.get_range())
-        .from_pos(match_start);
-    if input.start_text_override() == Some(false) {
-        candidate_input = candidate_input.start_text(false);
-    }
-    if input.end_text_override() == Some(false) {
-        candidate_input = candidate_input.end_text(false);
-    }
-    if input.continue_from_previous_match_end_override() == Some(false) {
-        candidate_input = candidate_input.continue_from_previous_match_end(false);
-    }
-    candidate_input
-}
-
 impl RegexSet {
-    fn match_pattern_at_input_position<'t, S: Input + ?Sized>(
-        &self,
-        pattern_index: usize,
-        input: &RegexInput<'t, S>,
-        match_start: usize,
-    ) -> Result<Option<RegexSetMatch<'t, S>>> {
-        let candidate_input = build_candidate_input(input, match_start);
-        Ok(
-            if let Some(captures) = self.regexes[pattern_index]
-                .captures_input_with_option_flags(&candidate_input, OPTION_ANCHORED)?
-            {
-                Some(RegexSetMatch {
-                    pattern_index,
-                    captures,
-                })
-            } else {
-                None
-            },
-        )
-    }
-
     /// Create a new RegexSet from an iterator of patterns using default options.
     ///
     /// All patterns will use the same default configuration:
@@ -427,6 +387,27 @@ impl RegexSet {
         }
 
         Ok(None)
+    }
+
+    fn match_pattern_at_input_position<'t, S: Input + ?Sized>(
+        &self,
+        pattern_index: usize,
+        input: &RegexInput<'t, S>,
+        match_start: usize,
+    ) -> Result<Option<RegexSetMatch<'t, S>>> {
+        let candidate_input = input.clone().from_pos(match_start);
+        Ok(
+            if let Some(captures) = self.regexes[pattern_index]
+                .captures_input_with_option_flags(&candidate_input, OPTION_ANCHORED)?
+            {
+                Some(RegexSetMatch {
+                    pattern_index,
+                    captures,
+                })
+            } else {
+                None
+            },
+        )
     }
 }
 
