@@ -224,7 +224,7 @@ impl RegexSet {
     /// # Examples
     ///
     /// ```rust
-    /// use fancy_regex::{Regex, RegexBuilder, RegexSet, RegexSetOptions};
+    /// use fancy_regex::{Regex, RegexBuilder, RegexInput, RegexSet, RegexSetOptions};
     /// use std::sync::Arc;
     ///
     /// # fn main() -> Result<(), fancy_regex::Error> {
@@ -239,7 +239,14 @@ impl RegexSet {
     /// let set = RegexSet::from_regexes([re1, re2, re3], Default::default())?;
     ///
     /// let text = "HELLO 123 send";
-    /// // TODO: show matches
+    /// let mut matches = set
+    ///     .find_input(RegexInput::new(text))?
+    ///     .expect("expected at least one match");
+    ///
+    /// let m = matches.next().expect("expected first match")?;
+    /// assert_eq!(m.pattern(), 0);
+    /// assert_eq!(m.as_str(), "HELLO");
+    /// assert!(matches.next().is_none());
     /// # Ok(())
     /// # }
     /// ```
@@ -430,7 +437,27 @@ impl RegexSet {
 /// information about which pattern matched, the location of the match, and
 /// access to any capture groups.
 ///
-/// TODO: add Examples
+/// # Examples
+///
+/// ```rust
+/// use fancy_regex::{RegexInput, RegexSet};
+///
+/// # fn main() -> Result<(), fancy_regex::Error> {
+/// let set = RegexSet::new(&[r"\d+", r"\w+"])?;
+/// let mut matches = set
+///     .find_input(RegexInput::new("abc 123"))?
+///     .expect("expected at least one match");
+///
+/// let m = matches.next().expect("expected first match")?;
+/// assert_eq!(m.pattern(), 1);
+/// assert_eq!(m.get().as_str(), "abc");
+/// assert_eq!(m.as_str(), "abc");
+/// assert_eq!(m.start(), 0);
+/// assert_eq!(m.end(), 3);
+/// assert_eq!(m.captures().len(), 1);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct RegexSetMatch<'t, S: Input + ?Sized> {
     pattern_index: usize,
