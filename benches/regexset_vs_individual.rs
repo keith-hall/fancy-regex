@@ -136,8 +136,7 @@ fn bench_regexset_mixed(c: &mut Criterion) {
         r"\b([A-Za-z]{2,8})-\1\b",
         r"(?<=ID:)[A-Z]{2}[0-9]{4}",
     ];
-    let line =
-        r#"let test = ID:AB1234; if foofoo == 1212 { return "$29.95"; } // note test-test "#;
+    let line = r#"let test = ID:AB1234; if foofoo == 1212 { return "$29.95"; } // note test-test "#;
     let haystack = line.repeat(300);
     run_scenario_bench(c, "regexset_vs_individual_mixed", &patterns, &haystack);
 }
