@@ -20,7 +20,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use fancy_regex::{Regex, RegexInput, RegexSet};
+use fancy_regex::{RegexBuilder, RegexInput, RegexSet};
 
 fn scan_with_regexset(regex_set: &RegexSet, haystack: &str) -> usize {
     let mut count = 0usize;
@@ -46,7 +46,10 @@ fn scan_with_regexset(regex_set: &RegexSet, haystack: &str) -> usize {
     count
 }
 
-fn scan_with_individual_regexes(regexes: &[Regex], haystack: &str) -> usize {
+fn scan_with_individual_regexes(
+    regexes: &[fancy_regex::Regex],
+    haystack: &str,
+) -> usize {
     let mut count = 0usize;
     let mut pos = 0usize;
 
@@ -67,6 +70,11 @@ fn scan_with_individual_regexes(regexes: &[Regex], haystack: &str) -> usize {
             {
                 best = Some(candidate);
             }
+            // No later pattern can start earlier than pos, and a higher pattern index
+            // can't beat the current best at the same position, so stop searching.
+            if best.as_ref().map_or(false, |&(best_start, _, _)| best_start == pos) {
+                break;
+            }
         }
 
         let Some((_, _, best_end)) = best else {
@@ -82,9 +90,9 @@ fn scan_with_individual_regexes(regexes: &[Regex], haystack: &str) -> usize {
 
 fn run_scenario_bench(c: &mut Criterion, scenario_name: &str, patterns: &[&str], haystack: &str) {
     let regex_set = RegexSet::new(patterns.iter().copied()).unwrap();
-    let regexes: Vec<Regex> = patterns
+    let regexes: Vec<fancy_regex::Regex> = patterns
         .iter()
-        .map(|pattern| Regex::new(pattern).unwrap())
+        .map(|pattern| RegexBuilder::new(pattern).seek(true).build().unwrap())
         .collect();
 
     let mut group = c.benchmark_group(scenario_name);
