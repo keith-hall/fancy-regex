@@ -102,7 +102,7 @@ use crate::CompileError;
 use crate::Error;
 use crate::{BytesMode, Captures, Regex, Result};
 
-type CachePoolFn = alloc::boxed::Box<
+type CacheFactory = alloc::boxed::Box<
     dyn Fn() -> dfa::Cache + Send + Sync + core::panic::UnwindSafe + core::panic::RefUnwindSafe,
 >;
 
@@ -112,7 +112,7 @@ pub struct RegexSet {
     regexes: Vec<Arc<Regex>>,
     earliest_match_finder: RaRegex,
     overlapping_dfa: Arc<dfa::DFA>,
-    overlapping_cache_pool: Arc<Pool<dfa::Cache, CachePoolFn>>,
+    overlapping_cache_pool: Arc<Pool<dfa::Cache, CacheFactory>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -296,7 +296,7 @@ impl RegexSet {
             Arc::new(overlapping_dfa_builder.build_many(&patterns).map_err(|e| {
                 Error::CompileError(Box::new(CompileError::DfaBuildError(e.to_string())))
             })?);
-        let create: CachePoolFn = alloc::boxed::Box::new({
+        let create: CacheFactory = alloc::boxed::Box::new({
             let dfa = Arc::clone(&overlapping_dfa);
             move || dfa.create_cache()
         });
@@ -354,17 +354,15 @@ impl RegexSet {
                     // Errors from try_search_overlapping_fwd cannot occur with
                     // our DFA configuration (no cache capacity limit, no quit
                     // bytes, Anchored::Yes is always supported).
-                    if self
-                        .overlapping_dfa
+                    self.overlapping_dfa
                         .try_search_overlapping_fwd(
                             &mut cache_guard,
                             &overlapping_input,
                             &mut state,
                         )
-                        .is_err()
-                    {
-                        break;
-                    }
+                        .expect(
+                            "overlapping DFA search should be infallible for this configuration",
+                        );
                     let Some(half_match) = state.get_match() else {
                         break;
                     };

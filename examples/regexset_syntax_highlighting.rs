@@ -1,7 +1,6 @@
 // Example demonstrating RegexSet usage for syntax highlighting
 
-use fancy_regex::RegexInput;
-use fancy_regex::{RegexOptionsBuilder, RegexSet, Result};
+use fancy_regex::{RegexInput, RegexOptionsBuilder, RegexSet, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Token {
