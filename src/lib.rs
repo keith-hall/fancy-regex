@@ -1389,6 +1389,10 @@ impl Regex {
         }
     }
 
+    /// Build a `Captures` value containing only group 0 for the given span.
+    ///
+    /// This is used by `RegexSet` as a fast path for patterns without capture
+    /// groups, where we only need to preserve the overall match range.
     pub(crate) fn captures_for_span<'t, S: input::Input + ?Sized>(
         &self,
         input: &'t S,
@@ -2795,7 +2799,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_group, make_literal};
-    use crate::{Absent, Expr, Regex, RegexBuilder, RegexImpl};
+    use crate::{Absent, Expr, Regex, RegexBuilder, RegexImpl, RegexInput};
 
     //use detect_possible_backref;
 
@@ -3132,5 +3136,27 @@ mod tests {
         });
         let children: Vec<_> = expr.children_iter().collect();
         assert_eq!(children.len(), 2);
+    }
+
+    #[test]
+    fn find_input_raw_honors_anchored_flag_for_wrapped_regex() {
+        let regex = Regex::new("abc").unwrap();
+        let input = RegexInput::new("zabc");
+
+        assert_eq!(Some((1, 4)), regex.find_input_raw(&input, 0).unwrap());
+        assert_eq!(
+            None,
+            regex
+                .find_input_raw(&input, super::OPTION_ANCHORED)
+                .unwrap()
+        );
+
+        let anchored_at_match = input.clone().from_pos(1);
+        assert_eq!(
+            Some((1, 4)),
+            regex
+                .find_input_raw(&anchored_at_match, super::OPTION_ANCHORED)
+                .unwrap()
+        );
     }
 }
