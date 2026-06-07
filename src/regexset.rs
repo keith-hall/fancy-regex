@@ -88,7 +88,7 @@
 //! - any **hard patterns** (those with backreferences lookaround, etc.) which could
 //!   match there are evaluated individually using a backtracking VM in anchored mode.
 //!   These may have exponential time complexity in pathological cases.
-//! - any **Easy patterns** (those without backreferences, lookaround, etc.) which do
+//! - any **easy patterns** (those without backreferences, lookaround, etc.) which do
 //!   match are also individually run through the underlying regex crate, to resolve
 //!   capture groups etc. which may have been skipped in multi-DFA mode.
 //!
