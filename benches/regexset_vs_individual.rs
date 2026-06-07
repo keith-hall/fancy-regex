@@ -54,15 +54,27 @@ fn scan_with_individual_regexes(
 ) -> usize {
     let mut count = 0usize;
     let mut pos = 0usize;
+    let mut cached_matches: Vec<Option<(usize, usize)>> = vec![None; regexes.len()];
 
     while pos < haystack.len() {
         let mut best: Option<(usize, usize, usize)> = None;
 
         for (pattern_index, re) in regexes.iter().enumerate() {
-            let Some(matched) = re.find_from_pos(haystack, pos).unwrap() else {
+            let matched = match cached_matches[pattern_index] {
+                Some((start, end)) if start >= pos => Some((start, end)),
+                _ => {
+                    let next = re
+                        .find_from_pos(haystack, pos)
+                        .unwrap()
+                        .map(|matched| (matched.start(), matched.end()));
+                    cached_matches[pattern_index] = next;
+                    next
+                }
+            };
+            let Some((matched_start, matched_end)) = matched else {
                 continue;
             };
-            let candidate = (matched.start(), pattern_index, matched.end());
+            let candidate = (matched_start, pattern_index, matched_end);
             if best
                 .as_ref()
                 .map_or(true, |(best_start, best_pattern_index, _)| {
