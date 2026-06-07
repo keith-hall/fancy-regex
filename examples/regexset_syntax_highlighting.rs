@@ -39,11 +39,13 @@ fn build_syntax_set() -> Result<RegexSet> {
 }
 
 fn tokenize_code(code: &str, set: &RegexSet) -> Result<Vec<Token>> {
-    let mut input = RegexInput::new(code);
+    let mut start = 0;
     let mut tokens = Vec::new();
 
-    while input.start() < input.haystack().len() {
-        if let Some(mut matching_patterns) = set.find_input(input.clone())? {
+    while start < code.len() {
+        if let Some(mut matching_patterns) =
+            set.find_input(RegexInput::new(code).from_pos(start))?
+        {
             if let Some(match_result) = matching_patterns.next() {
                 let m = match_result?;
                 tokens.push(Token {
@@ -53,7 +55,7 @@ fn tokenize_code(code: &str, set: &RegexSet) -> Result<Vec<Token>> {
                     end: m.end(),
                     text: m.as_str().to_owned(),
                 });
-                input = input.from_pos(m.end());
+                start = m.end();
                 continue;
             }
         }
