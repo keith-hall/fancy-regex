@@ -520,7 +520,7 @@ impl fmt::Debug for RegexOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let seek_filter_desc = match self.seek_filter {
             None => "None",
-            Some(f_ptr) if f_ptr as usize == seek_pattern_is_useful as usize => {
+            Some(f_ptr) if (f_ptr as *const ()) == (seek_pattern_is_useful as *const ()) => {
                 "Some(seek_pattern_is_useful)"
             }
             Some(_) => "Some(<custom>)",
