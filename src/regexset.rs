@@ -102,7 +102,7 @@ use crate::CompileError;
 use crate::Error;
 use crate::{BytesMode, Captures, Regex, Result};
 
-type DfaCacheFactory = alloc::boxed::Box<
+type DfaCachePoolFactory = alloc::boxed::Box<
     dyn Fn() -> dfa::Cache + Send + Sync + core::panic::UnwindSafe + core::panic::RefUnwindSafe,
 >;
 
@@ -112,7 +112,7 @@ pub struct RegexSet {
     regexes: Vec<Arc<Regex>>,
     earliest_match_finder: RaRegex,
     overlapping_dfa: Arc<dfa::DFA>,
-    overlapping_cache_pool: Arc<Pool<dfa::Cache, DfaCacheFactory>>,
+    overlapping_cache_pool: Arc<Pool<dfa::Cache, DfaCachePoolFactory>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -296,7 +296,7 @@ impl RegexSet {
             Arc::new(overlapping_dfa_builder.build_many(&patterns).map_err(|e| {
                 Error::CompileError(Box::new(CompileError::DfaBuildError(e.to_string())))
             })?);
-        let create: DfaCacheFactory = alloc::boxed::Box::new({
+        let create: DfaCachePoolFactory = alloc::boxed::Box::new({
             let dfa = Arc::clone(&overlapping_dfa);
             move || dfa.create_cache()
         });
