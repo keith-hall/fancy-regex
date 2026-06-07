@@ -30,7 +30,7 @@
 //! Basic usage:
 //!
 //! ```rust
-//! use fancy_regex::RegexSet;
+//! use fancy_regex::{RegexInput, RegexSet};
 //!
 //! # fn main() -> Result<(), fancy_regex::Error> {
 //! let set = RegexSet::new(&[
@@ -41,10 +41,39 @@
 //!
 //! let text = "The price is $29.99 today";
 //!
-//! // TODO: get matches and show which pattern matched where
+//! let mut matches = set.find_input(RegexInput::new(text)).unwrap().unwrap();
+//!
+//! let first = matches.next().unwrap()?;
+//! assert_eq!(first.pattern(), 1);
+//! assert_eq!(first.as_str(), "The");
+//! assert_eq!(first.start(), 0);
+//!
+//! let second = matches.next().unwrap()?;
+//! assert_eq!(second.pattern(), 0);
+//! assert_eq!(second.as_str(), "29");
+//!
+//! let third = matches.next().unwrap()?;
+//! assert_eq!(third.pattern(), 2);
+//! assert_eq!(third.as_str(), "29.99");
+//! assert!(matches.next().is_none());
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # Differences from `regex::RegexSet`
+//!
+//! [`regex::RegexSet`](https://docs.rs/regex/latest/regex/struct.RegexSet.html) and
+//! `fancy_regex::RegexSet` solve similar "multiple patterns" problems, but their APIs
+//! are intentionally different:
+//!
+//! - `regex::RegexSet` reports which patterns match somewhere in the haystack.
+//! - `fancy_regex::RegexSet::find_input` finds the **earliest match position** and then
+//!   yields concrete matches at that position in pattern index order.
+//! - `regex::RegexSet` does not produce captures or match spans. `fancy_regex::RegexSet`
+//!   yields [`RegexSetMatch`] values with captures and offsets.
+//! - Each yielded item is `Result<RegexSetMatch, Error>` because fancy features
+//!   (look-around, backreferences, etc.) can fail at runtime, for example due to a
+//!   backtrack limit.
 //!
 //! # Performance
 //!
@@ -66,9 +95,8 @@
 //!
 //! # Priority and Non-Overlapping Matches
 //!
-//! There is deliberately no iterator API per se, instead the idea is that the caller
-//! would see the list of patterns which match, and the matches themselves, and decide
-//! which gets priority.
+//! `find_input` returns only matches at the earliest start offset. This is deliberate:
+//! the caller can inspect all matches at that position and decide which one has priority.
 //! This allows for most flexibility, without having to cater for various scenarios in
 //! the RegexSet itself. The `Input` struct makes it easy for the caller to advance
 //! position in case of an empty match winning, and the `RegexInput` struct sits on top
