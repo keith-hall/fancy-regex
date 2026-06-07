@@ -25,10 +25,11 @@ use fancy_regex::{Regex, RegexInput, RegexSet};
 fn scan_with_regexset(regex_set: &RegexSet, haystack: &str) -> usize {
     let mut count = 0usize;
     let mut pos = 0usize;
+    let base_input = RegexInput::new(haystack);
 
     while pos < haystack.len() {
         let Some(mut matches) = regex_set
-            .find_input(RegexInput::new(haystack).from_pos(pos))
+            .find_input(base_input.clone().from_pos(pos))
             .unwrap()
         else {
             break;
