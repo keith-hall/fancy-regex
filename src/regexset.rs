@@ -79,11 +79,11 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use bit_set::BitSet;
 use crate::CompileOptions;
 use crate::Input;
 use crate::RegexInput;
 use crate::RegexOptionsBuilder;
+use bit_set::BitSet;
 
 use regex_automata::hybrid::dfa;
 use regex_automata::hybrid::dfa::OverlappingState;
@@ -371,7 +371,7 @@ impl RegexSet {
                     seen_pattern_indices.insert(half_match.pattern().as_usize());
                 }
             } // release cache_guard back to pool before doing per-pattern matching
-            let mut candidate_pattern_indices = seen_pattern_indices.iter().collect::<Vec<_>>();
+            let candidate_pattern_indices = seen_pattern_indices.iter().collect::<Vec<_>>();
 
             let mut pending_pattern_indices = candidate_pattern_indices.into_iter();
             let mut first_match = None;
