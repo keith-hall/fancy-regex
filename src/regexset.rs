@@ -79,6 +79,7 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use bit_set::BitSet;
 use crate::CompileOptions;
 use crate::Input;
 use crate::RegexInput;
@@ -332,15 +333,9 @@ impl RegexSet {
         let haystack = input.haystack();
         let match_range = input.get_range();
         let mut search_start = input.effective_start();
-        let mut seen_pattern_generations = vec![0u32; self.regexes.len()];
-        let mut generation = 1u32;
+        let mut seen_pattern_indices = BitSet::new();
 
         while search_start <= match_range.end {
-            generation = generation.wrapping_add(1);
-            if generation == 0 {
-                seen_pattern_generations.fill(0);
-                generation = 1;
-            }
             let Some(candidate) = self
                 .earliest_match_finder
                 .search(&RaInput::new(haystack.as_bytes()).range(search_start..match_range.end))
@@ -352,7 +347,7 @@ impl RegexSet {
                 .anchored(Anchored::Yes)
                 .range(match_start..match_range.end);
             let mut state = OverlappingState::start();
-            let mut candidate_pattern_indices: Vec<usize> = Vec::with_capacity(self.regexes.len().min(8));
+            seen_pattern_indices.clear();
             {
                 let mut cache_guard = self.overlapping_cache_pool.get();
                 loop {
@@ -373,14 +368,10 @@ impl RegexSet {
                     let Some(half_match) = state.get_match() else {
                         break;
                     };
-                    let pattern_index = half_match.pattern().as_usize();
-                    if seen_pattern_generations[pattern_index] != generation {
-                        seen_pattern_generations[pattern_index] = generation;
-                        candidate_pattern_indices.push(pattern_index);
-                    }
+                    seen_pattern_indices.insert(half_match.pattern().as_usize());
                 }
             } // release cache_guard back to pool before doing per-pattern matching
-            candidate_pattern_indices.sort_unstable();
+            let mut candidate_pattern_indices = seen_pattern_indices.iter().collect::<Vec<_>>();
 
             let mut pending_pattern_indices = candidate_pattern_indices.into_iter();
             let mut first_match = None;
