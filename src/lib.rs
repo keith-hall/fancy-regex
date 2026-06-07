@@ -1364,7 +1364,9 @@ impl Regex {
                     delegated_input = delegated_input.anchored(RaAnchored::Yes);
                 }
                 let result = if !*explicit_capture_group_0 {
-                    inner.search(delegated_input).map(|m| (m.start(), m.end()))
+                    inner
+                        .search(&delegated_input)
+                        .map(|m| (m.start(), m.end()))
                 } else {
                     let mut locations = inner.create_captures();
                     inner.captures(delegated_input, &mut locations);
