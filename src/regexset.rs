@@ -36,7 +36,8 @@
 //! let set = RegexSet::new(&[
 //!     r"\d+",              // Pattern 0: numbers
 //!     r"\w+",              // Pattern 1: words
-//!     r"(?<=\$)\d+\.\d+",  // Pattern 2: prices (with lookbehind)
+//!     r"\.\d+",            // Pattern 2: decimal fractions - only matches later in "$29.99"
+//!     r"(?<=\$)\d+\.\d+",  // Pattern 3: prices (with lookbehind)
 //! ])?;
 //!
 //! let text = "$29.99";
@@ -54,8 +55,11 @@
 //! assert_eq!(second.pattern(), 1);
 //! assert_eq!(second.as_str(), "29");
 //!
+//! // Pattern 2 (\.\d+) matches ".99" but only at position 3, not at the
+//! // earliest match position (1), so it is not returned here.
+//!
 //! let third = matches.next().expect("expected third match")?;
-//! assert_eq!(third.pattern(), 2);
+//! assert_eq!(third.pattern(), 3);
 //! assert_eq!(third.as_str(), "29.99");
 //! assert!(matches.next().is_none());
 //! # Ok(())
