@@ -113,10 +113,7 @@ use crate::CompileOptions;
 use crate::Input;
 use crate::RegexInput;
 use crate::RegexOptionsBuilder;
-use bit_set::BitSet;
-
 use regex_automata::hybrid::dfa;
-use regex_automata::hybrid::dfa::OverlappingState;
 use regex_automata::meta::Config as RaConfig;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::nfa::thompson;
@@ -125,6 +122,7 @@ use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Anchored;
 use regex_automata::Input as RaInput;
 use regex_automata::MatchKind;
+use regex_automata::PatternSet;
 
 use crate::compile::options_to_rabuilder;
 use crate::vm::OPTION_ANCHORED;
@@ -336,7 +334,7 @@ impl RegexSet {
         let haystack = input.haystack();
         let match_range = input.get_range();
         let mut search_start = input.effective_start();
-        let mut seen_pattern_indices = BitSet::new();
+        let mut seen_pattern_indices = PatternSet::new(self.regexes.len());
 
         while search_start <= match_range.end {
             let Some(candidate) = self
@@ -349,30 +347,26 @@ impl RegexSet {
             let overlapping_input = RaInput::new(haystack.as_bytes())
                 .anchored(Anchored::Yes)
                 .range(match_start..match_range.end);
-            let mut state = OverlappingState::start();
             seen_pattern_indices.clear();
             {
                 let mut cache_guard = self.overlapping_cache_pool.get();
-                loop {
-                    // Errors from try_search_overlapping_fwd cannot occur with
-                    // our DFA configuration (no cache capacity limit, no quit
-                    // bytes, Anchored::Yes is always supported).
-                    self.overlapping_dfa
-                        .try_search_overlapping_fwd(
-                            &mut cache_guard,
-                            &overlapping_input,
-                            &mut state,
-                        )
-                        .expect(
-                            "overlapping DFA search is infallible: no cache capacity limit, no quit bytes, Anchored::Yes always supported",
-                        );
-                    let Some(half_match) = state.get_match() else {
-                        break;
-                    };
-                    seen_pattern_indices.insert(half_match.pattern().as_usize());
-                }
+                // Errors from try_which_overlapping_matches cannot occur with
+                // our DFA configuration (no cache capacity limit, no quit
+                // bytes, Anchored::Yes is always supported).
+                self.overlapping_dfa
+                    .try_which_overlapping_matches(
+                        &mut cache_guard,
+                        &overlapping_input,
+                        &mut seen_pattern_indices,
+                    )
+                    .expect(
+                        "overlapping DFA search is infallible: no cache capacity limit, no quit bytes, Anchored::Yes always supported",
+                    );
             } // release cache_guard back to pool before doing per-pattern matching
-            let candidate_pattern_indices = seen_pattern_indices.iter().collect::<Vec<_>>();
+            let candidate_pattern_indices = seen_pattern_indices
+                .iter()
+                .map(|pattern| pattern.as_usize())
+                .collect::<Vec<_>>();
 
             let mut pending_pattern_indices = candidate_pattern_indices.into_iter();
             let mut first_match = None;
