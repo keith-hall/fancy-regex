@@ -477,7 +477,7 @@ fn bench_concat_repeat_optimization(c: &mut Criterion, name: &str, with_optimize
     let a = analyze(
         &tree,
         AnalyzeContext {
-            explicit_capture_group_0: true,
+            explicit_capture_group_0: false,
             ..Default::default()
         },
     )
