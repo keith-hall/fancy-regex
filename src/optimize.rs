@@ -40,6 +40,7 @@ pub fn optimize(tree: &mut ExprTree) -> bool {
     };
 
     optimize_nested_repeats(&mut tree.expr);
+    optimize_ambiguous_concat_repeats(&mut tree.expr);
 
     requires_capture_group_fixup
 }
@@ -114,6 +115,237 @@ fn optimize_nested_repeats(expr: &mut Expr) {
     if let Some(replacement) = replacement {
         *expr = replacement;
     }
+}
+
+fn optimize_ambiguous_concat_repeats(expr: &mut Expr) {
+    for child in expr.children_iter_mut() {
+        optimize_ambiguous_concat_repeats(child);
+    }
+
+    if let Expr::Concat(children) = expr {
+        rewrite_concat_repeat_windows(children);
+    }
+
+    let should_rewrite = if let Expr::Repeat {
+        child,
+        lo,
+        hi,
+        greedy,
+    } = &*expr
+    {
+        *greedy && *hi == usize::MAX && check_repeated_concat(child.as_ref(), *lo)
+    } else {
+        false
+    };
+
+    if should_rewrite {
+        let owned = mem::replace(expr, Expr::Empty);
+        if let Expr::Repeat { child, lo, .. } = owned {
+            *expr = build_repeated_concat(*child, lo);
+        }
+    }
+}
+
+fn rewrite_concat_repeat_windows(children: &mut Vec<Expr>) {
+    let mut ix = 0;
+    while ix + 2 < children.len() {
+        if check_concat_repeat_triplet(&children[ix], &children[ix + 1], &children[ix + 2]) {
+            let mut left = Expr::Empty;
+            let mut middle = Expr::Empty;
+            let mut right = Expr::Empty;
+            mem::swap(&mut left, &mut children[ix]);
+            mem::swap(&mut middle, &mut children[ix + 1]);
+            mem::swap(&mut right, &mut children[ix + 2]);
+            let (prefix, optional_tail) = build_concat_repeat_triplet(left, middle, right);
+            children.splice(ix..ix + 3, [prefix, optional_tail]);
+            ix += 2;
+        } else {
+            ix += 1;
+        }
+    }
+}
+
+fn check_concat_repeat_triplet(left: &Expr, middle: &Expr, right: &Expr) -> bool {
+    let Expr::Repeat {
+        child: left_inner,
+        lo: left_lo,
+        hi: left_hi,
+        greedy: left_greedy,
+    } = left
+    else {
+        return false;
+    };
+    let Expr::Repeat {
+        child: right_inner,
+        lo: right_lo,
+        hi: right_hi,
+        greedy: right_greedy,
+    } = right
+    else {
+        return false;
+    };
+    let Expr::Repeat {
+        lo: middle_lo,
+        hi: middle_hi,
+        ..
+    } = middle
+    else {
+        return false;
+    };
+
+    is_unbounded_simple_repeat(*left_lo, *left_hi, *left_greedy)
+        && is_unbounded_simple_repeat(*right_lo, *right_hi, *right_greedy)
+        && compatible_edge_repeat_bounds(*left_lo, *right_lo)
+        && *middle_lo == 0
+        && *middle_hi != 0
+        && left_inner.as_ref() == right_inner.as_ref()
+}
+
+fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, Expr) {
+    let Expr::Repeat {
+        child: left_inner,
+        lo: left_lo,
+        ..
+    } = left
+    else {
+        unreachable!("check_concat_repeat_triplet guarantees left is a Repeat");
+    };
+    let Expr::Repeat {
+        child: middle_inner,
+        hi: middle_hi,
+        greedy: middle_greedy,
+        ..
+    } = middle
+    else {
+        unreachable!("check_concat_repeat_triplet guarantees middle is a Repeat");
+    };
+    let right_lo = if let Expr::Repeat { lo, .. } = &right {
+        *lo
+    } else {
+        unreachable!("check_concat_repeat_triplet guarantees right is a Repeat");
+    };
+
+    let prefix = Expr::Repeat {
+        child: left_inner,
+        lo: left_lo.min(right_lo),
+        hi: usize::MAX,
+        greedy: true,
+    };
+    let mandatory_middle = Expr::Repeat {
+        child: middle_inner,
+        lo: 1,
+        hi: middle_hi,
+        greedy: middle_greedy,
+    };
+    let tail = Expr::Concat(vec![mandatory_middle, right]);
+    let optional_tail = Expr::Repeat {
+        child: Box::new(tail),
+        lo: 0,
+        hi: 1,
+        greedy: true,
+    };
+    (prefix, optional_tail)
+}
+
+fn check_repeated_concat(child: &Expr, outer_lo: usize) -> bool {
+    if outer_lo != 0 && outer_lo != 1 {
+        return false;
+    }
+    let Expr::Concat(children) = child else {
+        return false;
+    };
+    let [prefix, optional_tail] = children.as_slice() else {
+        return false;
+    };
+    let Expr::Repeat {
+        child: tail_inner,
+        lo: tail_lo,
+        hi: tail_hi,
+        greedy: tail_greedy,
+    } = optional_tail
+    else {
+        return false;
+    };
+    if !*tail_greedy || *tail_lo != 0 || *tail_hi != 1 {
+        return false;
+    }
+    let Expr::Concat(tail_children) = tail_inner.as_ref() else {
+        return false;
+    };
+    let [_middle_part, right] = tail_children.as_slice() else {
+        return false;
+    };
+    let Expr::Repeat {
+        child: prefix_inner,
+        lo: prefix_lo,
+        hi: prefix_hi,
+        greedy: prefix_greedy,
+    } = prefix
+    else {
+        return false;
+    };
+    let Expr::Repeat {
+        child: right_inner,
+        lo: right_lo,
+        hi: right_hi,
+        greedy: right_greedy,
+    } = right
+    else {
+        return false;
+    };
+
+    is_unbounded_simple_repeat(*prefix_lo, *prefix_hi, *prefix_greedy)
+        && is_unbounded_simple_repeat(*right_lo, *right_hi, *right_greedy)
+        && compatible_edge_repeat_bounds(*prefix_lo, *right_lo)
+        && prefix_inner.as_ref() == right_inner.as_ref()
+}
+
+fn build_repeated_concat(child: Expr, outer_lo: usize) -> Expr {
+    let Expr::Concat(mut children) = child else {
+        unreachable!("check_repeated_concat guarantees child is a Concat");
+    };
+    // children = [prefix_repeat, optional_tail]
+    let optional_tail = children.pop().unwrap();
+    let prefix = children.pop().unwrap();
+
+    let Expr::Repeat {
+        child: tail_inner, ..
+    } = optional_tail
+    else {
+        unreachable!("check_repeated_concat guarantees tail is a Repeat");
+    };
+    let Expr::Concat(mut tail_children) = *tail_inner else {
+        unreachable!("check_repeated_concat guarantees tail inner is a Concat");
+    };
+    // tail_children = [middle_part, right_repeat]
+    let right = tail_children.pop().unwrap();
+    let middle_part = tail_children.pop().unwrap();
+
+    let repeated_tail = Expr::Repeat {
+        child: Box::new(Expr::Concat(vec![middle_part, right])),
+        lo: 0,
+        hi: usize::MAX,
+        greedy: true,
+    };
+    let core = Expr::Concat(vec![prefix, repeated_tail]);
+    match outer_lo {
+        1 => core,
+        0 => Expr::Repeat {
+            child: Box::new(core),
+            lo: 0,
+            hi: 1,
+            greedy: true,
+        },
+        _ => unreachable!("check_repeated_concat guarantees outer_lo is 0 or 1"),
+    }
+}
+
+fn is_unbounded_simple_repeat(lo: usize, hi: usize, greedy: bool) -> bool {
+    greedy && hi == usize::MAX && matches!(lo, 0 | 1)
+}
+
+fn compatible_edge_repeat_bounds(left_lo: usize, right_lo: usize) -> bool {
+    matches!((left_lo, right_lo), (0, 0) | (0, 1) | (1, 0) | (1, 1))
 }
 
 fn compose_repeat(child: Box<Expr>, result_kind: QuantifierKind) -> Expr {
@@ -400,6 +632,46 @@ mod tests {
         assert_eq!(
             optimized_pattern_with_flags(r"(x+){1,}{0,}", oniguruma_flags()),
             "(x*)"
+        );
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_simplified_basic() {
+        assert_eq!(optimized_pattern(r"\s*\w?\s*"), r"\s*(?:\w{1}\s*)?");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_simplified_with_bounded_middle() {
+        assert_eq!(
+            optimized_pattern(r"foo\w*\s{0,5}\w+"),
+            r"foo\w*(?:\s{1,5}\w+)?"
+        );
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_simplified_with_nongreedy_middle() {
+        assert_eq!(
+            optimized_pattern(r"foo\w*\s{0,5}?\w+"),
+            r"foo\w*(?:\s{1,5}?\w+)?"
+        );
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_simplified_with_plus_and_star() {
+        assert_eq!(optimized_pattern(r"\s+\w{0,1}\s*"), r"\s*(?:\w{1}\s*)?");
+        assert_eq!(optimized_pattern(r"^\s+\w{0,1}\s*$"), r"^\s*(?:\w{1}\s*)?$");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_inside_plus_simplified() {
+        assert_eq!(optimized_pattern(r"(?:\s*\w?\s*)+"), r"\s*(?:\w{1}\s*)*");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_inside_star_simplified() {
+        assert_eq!(
+            optimized_pattern(r"(?:\s*\w?\s*)*"),
+            r"(?:\s*(?:\w{1}\s*)*)?"
         );
     }
 }
