@@ -25,8 +25,6 @@ use alloc::format;
 use alloc::string::{String, ToString};
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
-#[cfg(feature = "variable-lookbehinds")]
-use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
@@ -703,22 +701,6 @@ impl<'a> Compiler<'a> {
     }
 
     #[cfg(feature = "variable-lookbehinds")]
-    fn compile_variable_lookbehind_from_concat_nodes(
-        &mut self,
-        infos: &Vec<&Info<'_>>,
-    ) -> Result<()> {
-        if infos.is_empty() {
-            Ok(())
-        } else {
-            let mut delegate_builder = DelegateBuilder::new(&self.options);
-            for info in infos.iter().rev() {
-                delegate_builder.push(info);
-            }
-            self.compile_variable_lookbehind(delegate_builder)
-        }
-    }
-
-    #[cfg(feature = "variable-lookbehinds")]
     fn compile_variable_lookbehind(&mut self, delegate_builder: DelegateBuilder) -> Result<()> {
         let pattern = &delegate_builder.re;
         let capture_groups = delegate_builder
@@ -775,12 +757,11 @@ impl<'a> Compiler<'a> {
 
     #[cfg(feature = "variable-lookbehinds")]
     fn compile_hard_variable_lookbehind(&mut self, inner: &Info<'_>) -> Result<()> {
-        let mut pattern = String::new();
-        inner.expr.to_str(&mut pattern, 0);
-        let prog = compile_anchored_subprog(inner, self.options.clone(), self.root_info.end_group())?;
+        let prog =
+            compile_anchored_subprog(inner, self.options.clone(), self.root_info.end_group())?;
         self.b.add(Insn::BackwardsProg(ReverseProg {
             prog: Arc::new(prog),
-            pattern,
+            pattern: "<hard-lookbehind>".to_string(),
         }));
         Ok(())
     }
@@ -1676,14 +1657,13 @@ mod tests {
     fn variable_lookbehind_with_required_feature_no_captures_hard_const_size_zero_length() {
         let prog = compile_prog(r"(?<=\bab+)x");
 
-        assert_eq!(prog.len(), 6, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
-        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "ab+");
-        assert_matches!(prog[2], Insn::Assertion(crate::Assertion::WordBoundary));
-        assert_matches!(prog[3], Restore(0));
-        assert_matches!(prog[4], Lit(ref l) if l == "x");
-        assert_matches!(prog[5], End);
+        assert_matches!(&prog[1], BackwardsProg(ReverseProg { pattern, .. }) if pattern == "<hard-lookbehind>");
+        assert_matches!(prog[2], Restore(0));
+        assert_matches!(prog[3], Lit(ref l) if l == "x");
+        assert_matches!(prog[4], End);
     }
 
     #[test]
@@ -1691,7 +1671,7 @@ mod tests {
     fn variable_lookbehind_with_required_feature_no_captures_hard_const_size_non_zero_length() {
         let prog = compile_prog(r"((.)b+(?<=\1\1b+)x)");
 
-        assert_eq!(prog.len(), 16, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 12, "prog: {:?}", prog);
 
         assert_matches!(prog[0], SaveCaptureGroupStart(0));
         assert_matches!(prog[1], SaveCaptureGroupStart(1));
@@ -1700,29 +1680,11 @@ mod tests {
         assert_matches!(prog[4], Lit(ref l) if l == "b");
         assert_matches!(prog[5], Split(4, 6));
         assert_matches!(prog[6], Save(4));
-        assert_matches!(&prog[7], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "b+");
-        assert_matches!(prog[8], GoBack(1));
-        assert_matches!(
-            prog[9],
-            Backref {
-                slot: 2,
-                casei: false,
-                unicode: true,
-            }
-        );
-        assert_matches!(prog[10], GoBack(2));
-        assert_matches!(
-            prog[11],
-            Backref {
-                slot: 2,
-                casei: false,
-                unicode: true,
-            }
-        );
-        assert_matches!(prog[12], Restore(4));
-        assert_matches!(prog[13], Lit(ref l) if l == "x");
-        assert_matches!(prog[14], Save(1));
-        assert_matches!(prog[15], End);
+        assert_matches!(&prog[7], BackwardsProg(ReverseProg { pattern, .. }) if pattern == "<hard-lookbehind>");
+        assert_matches!(prog[8], Restore(4));
+        assert_matches!(prog[9], Lit(ref l) if l == "x");
+        assert_matches!(prog[10], Save(1));
+        assert_matches!(prog[11], End);
     }
 
     #[test]
@@ -1742,21 +1704,34 @@ mod tests {
     #[test]
     #[cfg(feature = "variable-lookbehinds")]
     fn variable_lookbehind_with_required_feature_backref_captures() {
-        // currently hard variable lookbehinds are unsupported.
-        // the backref to a capture group inside the variable lookbehind makes the capture group hard
         let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
         let info = analyze(&tree, AnalyzeContext::default()).unwrap();
-        assert_compile_error(
-            compile(
-                &info,
-                CompileOptions {
-                    anchored: true,
-                    contains_subroutines: tree.contains_subroutines,
-                    ..CompileOptions::default()
-                },
-            ),
-            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        let prog = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+                ..CompileOptions::default()
+            },
+        )
+        .unwrap()
+        .body;
+
+        assert_eq!(prog.len(), 7, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(prog[1], Save(4));
+        assert_matches!(&prog[2], BackwardsProg(ReverseProg { pattern, .. }) if pattern == "<hard-lookbehind>");
+        assert_matches!(prog[3], Restore(4));
+        assert_matches!(
+            prog[4],
+            Backref {
+                slot: 2,
+                casei: false,
+                unicode: true,
+            }
         );
+        assert_matches!(prog[5], Save(1));
+        assert_matches!(prog[6], End);
     }
 
     #[test]
