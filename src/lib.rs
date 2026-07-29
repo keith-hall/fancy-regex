@@ -44,7 +44,11 @@ use core::fmt;
 use core::fmt::{Debug, Formatter};
 use core::ops::{Index, Range};
 use core::str::FromStr;
+#[cfg(feature = "variable-lookbehinds")]
+use regex_automata::hybrid::dfa;
 use regex_automata::meta::Regex as RaRegex;
+#[cfg(feature = "variable-lookbehinds")]
+use regex_automata::nfa::thompson;
 use regex_automata::util::captures::Captures as RaCaptures;
 use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Anchored as RaAnchored;
@@ -1397,6 +1401,39 @@ impl Regex {
         self.find_input(RegexInput::new(input).from_pos(pos))
     }
 
+    /// Find the previous match in the input.
+    ///
+    /// This returns the match with the greatest start position within the
+    /// configured search range. If multiple matches start at the same position,
+    /// the same match is returned as an anchored forward search from that
+    /// position.
+    pub fn find_previous<'t, S: input::Input + ?Sized>(
+        &self,
+        input: &'t S,
+    ) -> Result<Option<S::Match<'t>>> {
+        self.find_previous_input(RegexInput::new(input))
+    }
+
+    /// Find the previous match in the given search input.
+    pub fn find_previous_input<'t, S: input::Input + ?Sized>(
+        &self,
+        input: RegexInput<'t, S>,
+    ) -> Result<Option<S::Match<'t>>> {
+        Ok(self
+            .find_input_raw_reverse(&input, 0)?
+            .map(|(s, e)| input.haystack().make_match(s, e)))
+    }
+
+    /// Returns the previous match in `input`, searching the prefix ending at
+    /// the specified byte position `pos`.
+    pub fn find_previous_from_pos<'t, S: input::Input + ?Sized>(
+        &self,
+        input: &'t S,
+        pos: usize,
+    ) -> Result<Option<S::Match<'t>>> {
+        self.find_previous_input(RegexInput::new(input).to_pos(pos))
+    }
+
     pub(crate) fn find_input_raw<S: input::Input + ?Sized>(
         &self,
         input: &RegexInput<'_, S>,
@@ -1442,6 +1479,65 @@ impl Regex {
                 // Span-only VM entry: nothing is moved out of the pooled
                 // scratch, so this path is allocation-free per call.
                 vm::run_spans(prog, input, option_flags, options)
+            }
+        }
+    }
+
+    pub(crate) fn find_input_raw_reverse<S: input::Input + ?Sized>(
+        &self,
+        input: &RegexInput<'_, S>,
+        option_flags: u32,
+    ) -> Result<Option<(usize, usize)>> {
+        if input.is_done() {
+            return Ok(None);
+        }
+        match &self.inner {
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                delegated_pattern,
+                ..
+            } => {
+                let start = reverse_search_start(
+                    inner,
+                    delegated_pattern,
+                    input,
+                    option_flags & OPTION_FIND_NOT_EMPTY != 0,
+                )?;
+                let Some(start) = start else {
+                    return Ok(None);
+                };
+                let anchored_input = input
+                    .clone()
+                    .from_pos(start)
+                    .range(start..input.get_range().end)
+                    .anchored(true);
+                let mut delegated_input = ra_input(&anchored_input);
+                delegated_input = delegated_input.anchored(RaAnchored::Yes);
+                let result = if !*explicit_capture_group_0 {
+                    inner.search(&delegated_input).map(|m| (m.start(), m.end()))
+                } else {
+                    let mut slots = [None; 4];
+                    if inner.search_slots(&delegated_input, &mut slots).is_some() {
+                        slots[2]
+                            .zip(slots[3])
+                            .map(|(match_start, match_end)| {
+                                (match_start.get(), match_end.get())
+                            })
+                    } else {
+                        None
+                    }
+                };
+                Ok(result)
+            }
+            RegexImpl::Fancy { prog, options, .. } => {
+                let option_flags = option_flags
+                    | if options.find_not_empty {
+                        OPTION_FIND_NOT_EMPTY
+                    } else {
+                        0
+                    };
+                vm::run_rev_spans(prog, input, option_flags, options)
             }
         }
     }
@@ -1590,6 +1686,33 @@ impl Regex {
         self.captures_input(RegexInput::new(text).from_pos(pos))
     }
 
+    /// Returns the capture groups for the previous match in `text`.
+    pub fn captures_previous<'t, S: input::Input + ?Sized>(
+        &self,
+        text: &'t S,
+    ) -> Result<Option<Captures<'t, S>>> {
+        self.captures_previous_input(RegexInput::new(text))
+    }
+
+    /// Returns the capture groups for the previous match in the given search
+    /// input.
+    pub fn captures_previous_input<'t, S: input::Input + ?Sized>(
+        &self,
+        input: RegexInput<'t, S>,
+    ) -> Result<Option<Captures<'t, S>>> {
+        self.captures_input_with_option_flags_reverse(&input, 0)
+    }
+
+    /// Returns the capture groups for the previous match in `text`, searching
+    /// the prefix ending at byte position `pos`.
+    pub fn captures_previous_from_pos<'t, S: input::Input + ?Sized>(
+        &self,
+        text: &'t S,
+        pos: usize,
+    ) -> Result<Option<Captures<'t, S>>> {
+        self.captures_previous_input(RegexInput::new(text).to_pos(pos))
+    }
+
     pub(crate) fn captures_input_with_option_flags<'t, S: input::Input + ?Sized>(
         &self,
         input: &RegexInput<'t, S>,
@@ -1637,6 +1760,76 @@ impl Regex {
                         0
                     };
                 let result = vm::run(prog, input, option_flags, options)?;
+                Ok(result.map(|mut saves| {
+                    saves.truncate(n_groups * 2);
+                    Captures {
+                        inner: CapturesImpl::Fancy { saves },
+                        named_groups,
+                        input: haystack,
+                    }
+                }))
+            }
+        }
+    }
+
+    pub(crate) fn captures_input_with_option_flags_reverse<'t, S: input::Input + ?Sized>(
+        &self,
+        input: &RegexInput<'t, S>,
+        option_flags: u32,
+    ) -> Result<Option<Captures<'t, S>>> {
+        if input.is_done() {
+            return Ok(None);
+        }
+        let named_groups = self.named_groups.clone();
+        let haystack = input.haystack();
+        match &self.inner {
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                delegated_pattern,
+                ..
+            } => {
+                let Some(start) = reverse_search_start(
+                    inner,
+                    delegated_pattern,
+                    input,
+                    option_flags & OPTION_FIND_NOT_EMPTY != 0,
+                )?
+                else {
+                    return Ok(None);
+                };
+                let explicit = *explicit_capture_group_0;
+                let mut locations = inner.create_captures();
+                let anchored_input = input
+                    .clone()
+                    .from_pos(start)
+                    .range(start..input.get_range().end)
+                    .anchored(true);
+                let mut delegated_input = ra_input(&anchored_input);
+                delegated_input = delegated_input.anchored(RaAnchored::Yes);
+                inner.captures(delegated_input, &mut locations);
+                Ok(locations.is_match().then_some(Captures {
+                    inner: CapturesImpl::Wrap {
+                        locations,
+                        explicit_capture_group_0: explicit,
+                    },
+                    named_groups,
+                    input: haystack,
+                }))
+            }
+            RegexImpl::Fancy {
+                prog,
+                n_groups,
+                options,
+                ..
+            } => {
+                let option_flags = option_flags
+                    | if options.find_not_empty {
+                        OPTION_FIND_NOT_EMPTY
+                    } else {
+                        0
+                    };
+                let result = vm::run_rev(prog, input, option_flags, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures {
@@ -1957,6 +2150,77 @@ fn ra_input<'a, S: input::Input + ?Sized>(input: &'a RegexInput<'a, S>) -> RaInp
     let mut ra_input = RaInput::new(input.haystack().as_bytes()).range(input.get_range());
     ra_input.set_start(input.effective_start());
     ra_input
+}
+
+fn reverse_search_start<S: input::Input + ?Sized>(
+    inner: &RaRegex,
+    pattern: &str,
+    input: &RegexInput<'_, S>,
+    find_not_empty: bool,
+) -> Result<Option<usize>> {
+    #[cfg(feature = "variable-lookbehinds")]
+    {
+        let dfa = dfa::DFA::builder()
+            .configure(dfa::Config::new().unicode_word_boundary(true))
+            .thompson(thompson::Config::new().reverse(true))
+            .build(pattern)
+            .map_err(|e| {
+                Error::CompileError(Box::new(CompileError::DfaBuildError(
+                    pattern.to_string(),
+                    e.to_string(),
+                )))
+            })?;
+        let mut cache = dfa.create_cache();
+        let reverse_input = regex_automata::Input::new(input.haystack().as_bytes())
+            .range(input.get_range());
+        if let Some(m) = dfa.try_search_rev(&mut cache, &reverse_input).map_err(|e| {
+            Error::CompileError(Box::new(CompileError::DfaBuildError(
+                pattern.to_string(),
+                e.to_string(),
+            )))
+        })? {
+            let start = m.offset();
+            if !find_not_empty {
+                return Ok(Some(start));
+            }
+            let anchored_input = input
+                .clone()
+                .from_pos(start)
+                .range(start..input.get_range().end)
+                .anchored(true);
+            let mut delegated_input = ra_input(&anchored_input);
+            delegated_input = delegated_input.anchored(RaAnchored::Yes);
+            return Ok(inner
+                .search(&delegated_input)
+                .filter(|m| m.start() != m.end())
+                .map(|m| m.start()));
+        }
+        Ok(None)
+    }
+    #[cfg(not(feature = "variable-lookbehinds"))]
+    {
+        let haystack = input.haystack();
+        let range = input.get_range();
+        let mut pos = range.end;
+        loop {
+            let anchored_input = input
+                .clone()
+                .from_pos(pos)
+                .range(pos..range.end)
+                .anchored(true);
+            let mut delegated_input = ra_input(&anchored_input);
+            delegated_input = delegated_input.anchored(RaAnchored::Yes);
+            if let Some(m) = inner.search(&delegated_input) {
+                if !find_not_empty || m.start() != m.end() {
+                    return Ok(Some(m.start()));
+                }
+            }
+            if pos <= input.effective_start() {
+                return Ok(None);
+            }
+            pos = haystack.prev_codepoint_ix(pos);
+        }
+    }
 }
 
 impl TryFrom<&str> for Regex {
