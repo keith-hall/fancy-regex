@@ -900,7 +900,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<Vec<usize>>> {
     // The clone is the one allocation the caller keeps (it owns the captures).
-    run_with(prog, input, option_flags, options, |state| {
+    run_with_seed(prog, input, option_flags, options, None, |state| {
         state.saves.clone()
     })
 }
@@ -916,7 +916,7 @@ pub(crate) fn run_spans<S: HaystackInput + ?Sized>(
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<(usize, usize)>> {
-    run_with(prog, input, option_flags, options, |state| {
+    run_with_seed(prog, input, option_flags, options, None, |state| {
         (state.get(0), state.get(1))
     })
 }
@@ -929,7 +929,9 @@ pub(crate) fn run_rev<S: HaystackInput + ?Sized>(
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<Vec<usize>>> {
-    run_rev_with(prog, input, option_flags, options, |state| state.saves.clone())
+    run_rev_with(prog, input, option_flags, options, |state| {
+        state.saves.clone()
+    })
 }
 
 /// Run the program in reverse, returning only the overall match span.
@@ -955,7 +957,7 @@ fn run_rev_with<S: HaystackInput + ?Sized, T>(
         return Ok(None);
     }
     if input.is_anchored() {
-        return run_with(prog, input, option_flags, options, extract);
+        return run_with_seed(prog, input, option_flags, options, None, extract);
     }
     let haystack = input.haystack();
     let range = input.get_range();
@@ -963,9 +965,14 @@ fn run_rev_with<S: HaystackInput + ?Sized, T>(
     let mut pos = range.end;
     loop {
         let anchored_input = input.clone().from_pos(pos).anchored(true);
-        if let Some(m) = run_with(prog, &anchored_input, option_flags, options, |state| {
-            extract(state)
-        })? {
+        if let Some(m) = run_with_seed(
+            prog,
+            &anchored_input,
+            option_flags,
+            options,
+            None,
+            |state| extract(state),
+        )? {
             return Ok(Some(m));
         }
         if pos <= start {
@@ -975,7 +982,11 @@ fn run_rev_with<S: HaystackInput + ?Sized, T>(
     }
 }
 
-fn reverse_step<S: HaystackInput + ?Sized>(haystack: &S, pos: usize, bytes_mode: BytesMode) -> usize {
+fn reverse_step<S: HaystackInput + ?Sized>(
+    haystack: &S,
+    pos: usize,
+    bytes_mode: BytesMode,
+) -> usize {
     match bytes_mode {
         BytesMode::Ascii => pos - 1,
         BytesMode::Unicode | BytesMode::UnicodeBytes => haystack.prev_codepoint_ix(pos),
@@ -985,11 +996,61 @@ fn reverse_step<S: HaystackInput + ?Sized>(haystack: &S, pos: usize, bytes_mode:
 /// Run the program with options; `extract` pulls the result out of the final
 /// state before the scratch returns to the pool.
 #[allow(clippy::cognitive_complexity)]
-fn run_with<S: HaystackInput + ?Sized, T>(
+pub(crate) fn run_rev_seed<S: HaystackInput + ?Sized>(
     prog: &Prog,
     input: &RegexInput<'_, S>,
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
+    seed: &[usize],
+) -> Result<Option<Vec<usize>>> {
+    run_rev_with_seed(prog, input, option_flags, options, Some(seed), |state| {
+        state.saves.clone()
+    })
+}
+
+fn run_rev_with_seed<S: HaystackInput + ?Sized, T>(
+    prog: &Prog,
+    input: &RegexInput<'_, S>,
+    option_flags: u32,
+    options: &HardRegexRuntimeOptions,
+    seed: Option<&[usize]>,
+    extract: impl Fn(&State) -> T,
+) -> Result<Option<T>> {
+    if input.is_done() {
+        return Ok(None);
+    }
+    if input.is_anchored() {
+        return run_with_seed(prog, input, option_flags, options, seed, extract);
+    }
+    let haystack = input.haystack();
+    let range = input.get_range();
+    let start = input.effective_start();
+    let mut pos = range.end;
+    loop {
+        let anchored_input = input.clone().from_pos(pos).anchored(true);
+        if let Some(m) = run_with_seed(
+            prog,
+            &anchored_input,
+            option_flags,
+            options,
+            seed,
+            |state| extract(state),
+        )? {
+            return Ok(Some(m));
+        }
+        if pos <= start {
+            return Ok(None);
+        }
+        pos = reverse_step(haystack, pos, prog.bytes_mode);
+    }
+}
+
+fn run_with_seed<S: HaystackInput + ?Sized, T>(
+    prog: &Prog,
+    input: &RegexInput<'_, S>,
+    option_flags: u32,
+    options: &HardRegexRuntimeOptions,
+    seed: Option<&[usize]>,
     extract: impl FnOnce(&State) -> T,
 ) -> Result<Option<T>> {
     if input.is_done() {
@@ -1001,6 +1062,11 @@ fn run_with<S: HaystackInput + ?Sized, T>(
     let mut scratch_guard = prog.scratch_pool.get();
     let Scratch { state, inner_slots } = &mut *scratch_guard;
     state.reset(prog.n_saves, option_flags);
+    if let Some(seed) = seed {
+        for (slot, value) in seed.iter().copied().enumerate().take(state.saves.len()) {
+            state.saves[slot] = value;
+        }
+    }
     inner_slots.clear();
     let look_matcher = LookMatcher::new();
     #[cfg(feature = "std")]
@@ -1378,9 +1444,9 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                 }
                 Insn::BackwardsProg(ReverseProg { ref prog, .. }) => {
                     let reverse_input = RegexInput::new(haystack).range(0..ix);
-                    match run_rev(prog, &reverse_input, 0, options)? {
+                    match run_rev_seed(prog, &reverse_input, 0, options, &state.saves)? {
                         Some(saves) => {
-                            for (slot, value) in saves.iter().copied().enumerate() {
+                            for (slot, value) in saves.iter().copied().enumerate().skip(2) {
                                 if value != usize::MAX && slot < state.saves.len() {
                                     state.save(slot, value);
                                 }
@@ -1404,7 +1470,7 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     capture_groups,
                 }) => {
                     let input = Input::new(haystack.as_bytes())
-                        .span(ix..haystack.len())
+                        .span(ix..match_range.end)
                         .anchored(Anchored::Yes);
                     if let Some(range) = capture_groups {
                         // Has capture groups, need to extract them
@@ -1432,7 +1498,7 @@ fn run_with<S: HaystackInput + ?Sized, T>(
 
                     // Check if delegate matches at current position
                     let input = Input::new(haystack.as_bytes())
-                        .span(ix..haystack.len())
+                        .span(ix..match_range.end)
                         .anchored(Anchored::Yes);
                     // capture groups in the delegate are always ignored, so we can use the quicker search_half method
                     let delegate_matches_here = delegate.inner.search_half(&input).is_some();

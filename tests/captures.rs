@@ -25,6 +25,25 @@ fn captures_fancy() {
 }
 
 #[test]
+fn captures_previous_wrap() {
+    let re = common::regex(r"(\w+)");
+    let captures = re.captures_previous("foo bar baz").unwrap().unwrap();
+    assert_match(captures.get(0), "z", 10, 11);
+    assert_match(captures.get(1), "z", 10, 11);
+}
+
+#[test]
+fn captures_previous_range_and_zero_width() {
+    let re = common::regex(r"(?m:^)(\w+)?");
+    let captures = re
+        .captures_previous_input(RegexInput::new("ab\ncd").range(0..2))
+        .unwrap()
+        .unwrap();
+    assert_match(captures.get(0), "ab", 0, 2);
+    assert_match(captures.get(1), "ab", 0, 2);
+}
+
+#[test]
 fn nested_repeats_preserve_capture_numbering() {
     let re = RegexBuilder::new(r"(x+){1,}(y)$")
         .oniguruma_mode(true)
@@ -107,6 +126,15 @@ fn captures_both_inside_and_outside_variable_lookbehind() {
     assert_match(captures.get(2), "bbb", 3, 6);
     assert_match(captures.get(3), "ccc", 6, 9);
     assert_match(captures.get(4), "ddd", 9, 12);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_inside_hard_variable_lookbehind() {
+    let captures = captures(r"(?<=a(b+))\1", "abbbb");
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "b", 2, 3);
+    assert_match(captures.get(1), "b", 1, 2);
 }
 
 #[test]

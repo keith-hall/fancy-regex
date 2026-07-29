@@ -44,11 +44,7 @@ use core::fmt;
 use core::fmt::{Debug, Formatter};
 use core::ops::{Index, Range};
 use core::str::FromStr;
-#[cfg(feature = "variable-lookbehinds")]
-use regex_automata::hybrid::dfa;
 use regex_automata::meta::Regex as RaRegex;
-#[cfg(feature = "variable-lookbehinds")]
-use regex_automata::nfa::thompson;
 use regex_automata::util::captures::Captures as RaCaptures;
 use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Anchored as RaAnchored;
@@ -1521,9 +1517,7 @@ impl Regex {
                     if inner.search_slots(&delegated_input, &mut slots).is_some() {
                         slots[2]
                             .zip(slots[3])
-                            .map(|(match_start, match_end)| {
-                                (match_start.get(), match_end.get())
-                            })
+                            .map(|(match_start, match_end)| (match_start.get(), match_end.get()))
                     } else {
                         None
                     }
@@ -2158,68 +2152,27 @@ fn reverse_search_start<S: input::Input + ?Sized>(
     input: &RegexInput<'_, S>,
     find_not_empty: bool,
 ) -> Result<Option<usize>> {
-    #[cfg(feature = "variable-lookbehinds")]
-    {
-        let dfa = dfa::DFA::builder()
-            .configure(dfa::Config::new().unicode_word_boundary(true))
-            .thompson(thompson::Config::new().reverse(true))
-            .build(pattern)
-            .map_err(|e| {
-                Error::CompileError(Box::new(CompileError::DfaBuildError(
-                    pattern.to_string(),
-                    e.to_string(),
-                )))
-            })?;
-        let mut cache = dfa.create_cache();
-        let reverse_input = regex_automata::Input::new(input.haystack().as_bytes())
-            .range(input.get_range());
-        if let Some(m) = dfa.try_search_rev(&mut cache, &reverse_input).map_err(|e| {
-            Error::CompileError(Box::new(CompileError::DfaBuildError(
-                pattern.to_string(),
-                e.to_string(),
-            )))
-        })? {
-            let start = m.offset();
-            if !find_not_empty {
-                return Ok(Some(start));
+    let _ = pattern;
+    let haystack = input.haystack();
+    let range = input.get_range();
+    let mut pos = range.end;
+    loop {
+        let anchored_input = input
+            .clone()
+            .from_pos(pos)
+            .range(pos..range.end)
+            .anchored(true);
+        let mut delegated_input = ra_input(&anchored_input);
+        delegated_input = delegated_input.anchored(RaAnchored::Yes);
+        if let Some(m) = inner.search(&delegated_input) {
+            if !find_not_empty || m.start() != m.end() {
+                return Ok(Some(m.start()));
             }
-            let anchored_input = input
-                .clone()
-                .from_pos(start)
-                .range(start..input.get_range().end)
-                .anchored(true);
-            let mut delegated_input = ra_input(&anchored_input);
-            delegated_input = delegated_input.anchored(RaAnchored::Yes);
-            return Ok(inner
-                .search(&delegated_input)
-                .filter(|m| m.start() != m.end())
-                .map(|m| m.start()));
         }
-        Ok(None)
-    }
-    #[cfg(not(feature = "variable-lookbehinds"))]
-    {
-        let haystack = input.haystack();
-        let range = input.get_range();
-        let mut pos = range.end;
-        loop {
-            let anchored_input = input
-                .clone()
-                .from_pos(pos)
-                .range(pos..range.end)
-                .anchored(true);
-            let mut delegated_input = ra_input(&anchored_input);
-            delegated_input = delegated_input.anchored(RaAnchored::Yes);
-            if let Some(m) = inner.search(&delegated_input) {
-                if !find_not_empty || m.start() != m.end() {
-                    return Ok(Some(m.start()));
-                }
-            }
-            if pos <= input.effective_start() {
-                return Ok(None);
-            }
-            pos = haystack.prev_codepoint_ix(pos);
+        if pos <= input.effective_start() {
+            return Ok(None);
         }
+        pos = haystack.prev_codepoint_ix(pos);
     }
 }
 
