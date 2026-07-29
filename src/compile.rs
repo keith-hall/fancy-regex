@@ -44,7 +44,7 @@ use crate::seek::build_seek_pattern;
 use crate::to_hir::{expr_to_hir, HirCtx};
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
-use crate::vm::{CaptureGroupRange, CharClassMatcher, Delegate, Insn, Prog, Seek};
+use crate::vm::{CaptureGroupRange, CharClassMatcher, Delegate, Insn, Prog, ReverseProg, Seek};
 use crate::LookAround::*;
 use crate::{
     Absent, BacktrackingControlVerb, BytesMode, CompileError, Error, Expr, LookAround, Result,
@@ -686,63 +686,14 @@ impl<'a> Compiler<'a> {
                     )))
                 }
             } else {
-                // If the variable lookbehind is a Concat expression where all children
-                // are either easy or are guaranteed to consume 0 characters, then we can
-                // compile it as variable lookbehind without additional goback instructions.
-                if let Expr::Concat(_) = inner.expr {
-                    let can_compile = inner
-                        .children
-                        .iter()
-                        .all(|child| !child.hard || child.const_size);
-
-                    if can_compile {
-                        #[cfg(feature = "variable-lookbehinds")]
-                        {
-                            let mut delegate_nodes = vec![];
-                            let mut go_back: usize = 0;
-                            for child in inner.children.iter().rev() {
-                                if child.hard {
-                                    self.compile_variable_lookbehind_from_concat_nodes(
-                                        &delegate_nodes,
-                                    )?;
-                                    delegate_nodes.clear();
-
-                                    go_back += child.min_size;
-                                    if go_back > 0 {
-                                        self.b.add(Insn::GoBack(go_back));
-                                    }
-                                    self.visit(child, false)?;
-                                    go_back = child.min_size;
-                                } else {
-                                    if go_back > 0 {
-                                        self.b.add(Insn::GoBack(go_back));
-                                        go_back = 0;
-                                    }
-                                    delegate_nodes.push(child);
-                                }
-                            }
-                            self.compile_variable_lookbehind_from_concat_nodes(&delegate_nodes)?;
-                            Ok(())
-                        }
-                        #[cfg(not(feature = "variable-lookbehinds"))]
-                        {
-                            Err(Error::CompileError(Box::new(
-                                CompileError::VariableLookBehindRequiresFeature,
-                            )))
-                        }
-                    } else {
-                        Err(Error::CompileError(Box::new(
-                            CompileError::FeatureNotYetSupported(
-                                "Variable length lookbehinds with fancy features".to_string(),
-                            ),
-                        )))
-                    }
-                } else {
-                    // variable sized lookbehinds with fancy features are currently unsupported
+                #[cfg(feature = "variable-lookbehinds")]
+                {
+                    self.compile_hard_variable_lookbehind(inner)
+                }
+                #[cfg(not(feature = "variable-lookbehinds"))]
+                {
                     Err(Error::CompileError(Box::new(
-                        CompileError::FeatureNotYetSupported(
-                            "Variable length lookbehinds with fancy features".to_string(),
-                        ),
+                        CompileError::VariableLookBehindRequiresFeature,
                     )))
                 }
             }
@@ -819,6 +770,18 @@ impl<'a> Compiler<'a> {
                 capture_group_extraction_inner: forward_regex,
                 capture_groups: capture_groups.to_option_if_non_empty(),
             }));
+        Ok(())
+    }
+
+    #[cfg(feature = "variable-lookbehinds")]
+    fn compile_hard_variable_lookbehind(&mut self, inner: &Info<'_>) -> Result<()> {
+        let mut pattern = String::new();
+        inner.expr.to_str(&mut pattern, 0);
+        let prog = compile_anchored_subprog(inner, self.options.clone(), self.root_info.end_group())?;
+        self.b.add(Insn::BackwardsProg(ReverseProg {
+            prog: Arc::new(prog),
+            pattern,
+        }));
         Ok(())
     }
 
@@ -1258,6 +1221,30 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     }
     c.b.add(Insn::End);
     Ok(c.b.build(bytes_mode, seek_pattern))
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+fn compile_anchored_subprog(
+    info: &Info<'_>,
+    options: CompileOptions,
+    max_group: usize,
+) -> Result<Prog> {
+    let bytes_mode = options.bytes_mode;
+    let mut group_info_map = Map::new();
+    populate_group_info_map(&mut group_info_map, info);
+    let mut c = Compiler {
+        b: VMBuilder::new(max_group),
+        options,
+        inside_alternation: false,
+        group_info_map,
+        subroutine_recursion_stack: Vec::new(),
+        root_info: info,
+    };
+    c.b.add(Insn::Save(0));
+    c.visit(info, false)?;
+    c.b.add(Insn::Save(1));
+    c.b.add(Insn::End);
+    Ok(c.b.build(bytes_mode, String::new()))
 }
 
 struct DelegateBuilder {

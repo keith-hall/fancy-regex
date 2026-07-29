@@ -83,6 +83,25 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
         self
     }
 
+    /// Return a copy of this input whose search range ends at `end`.
+    ///
+    /// This is convenient for reverse searches that should inspect only the
+    /// prefix ending at a specific byte position.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `end` is not within the haystack bounds or if `end` is before
+    /// the current range start.
+    pub fn to_pos(mut self, end: usize) -> Self {
+        assert!(end >= self.range.start, "range end must be >= range start");
+        assert!(
+            end <= self.haystack.len(),
+            "range end must be within haystack bounds"
+        );
+        self.range.end = end;
+        self
+    }
+
     /// Return a copy of this input with a different search range.
     ///
     /// # Panics
