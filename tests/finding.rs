@@ -19,6 +19,53 @@ fn find_wrap() {
 }
 
 #[test]
+fn find_previous_wrap() {
+    let re = RegexBuilder::new(r"\w+").build().unwrap();
+    let hay = "... test more";
+    assert_eq!(
+        re.find_previous(hay).unwrap().map(|m| (m.start(), m.end())),
+        Some((12, 13))
+    );
+    assert_eq!(
+        re.find_previous_from_pos(hay, 9)
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((7, 8))
+    );
+}
+
+#[test]
+fn find_previous_fancy_and_zero_width() {
+    let re = RegexBuilder::new(r"\w+(?=!)").build().unwrap();
+    let hay = "go! now! stop!";
+    assert_eq!(
+        re.find_previous(hay).unwrap().map(|m| (m.start(), m.end())),
+        Some((12, 13))
+    );
+
+    let empty = RegexBuilder::new(r"(?m:^)")
+        .build()
+        .unwrap()
+        .find_previous("a\nb")
+        .unwrap()
+        .unwrap();
+    assert_eq!((empty.start(), empty.end()), (2, 2));
+}
+
+#[test]
+fn find_previous_input_range_is_respected() {
+    let re = RegexBuilder::new(r"\w+").build().unwrap();
+    let hay = "alpha beta gamma";
+    let input = RegexInput::new(hay).range(0..10);
+    assert_eq!(
+        re.find_previous_input(input)
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((9, 10))
+    );
+}
+
+#[test]
 fn find_fancy_case_insensitive() {
     assert_eq!(find(r"(x|xy)\1", "XX"), None);
     assert_eq!(find(r"(x|xy)\1", "xx"), Some((0, 2)));
@@ -153,6 +200,14 @@ fn lookbehind_positive_variable_sized_functionality_unicode() {
 #[test]
 fn lookbehind_containing_const_size_backref() {
     assert_eq!(find(r"(..)(?<=\1\1)", "yyxxxx"), Some((4, 6)));
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_can_match_in_reverse_search_path() {
+    let re = RegexBuilder::new(r"(?<=a(b+))\1").build().unwrap();
+    let m = re.find("abbbb").unwrap().unwrap();
+    assert_eq!((m.start(), m.end()), (2, 3));
 }
 
 #[test]

@@ -27,6 +27,7 @@ use crate::LookAround;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::mem;
 
 /// Rewrite the expression tree to help the VM compile an efficient program.
