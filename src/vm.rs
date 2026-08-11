@@ -239,7 +239,7 @@ impl CaseiLiteral {
     fn match_len<S: HaystackInput + ?Sized>(&self, s: &S, ix: usize) -> Option<usize> {
         let bytes = s.as_bytes();
         let mut pos = ix;
-        for ranges in &self.chars {
+        for ranges in self.chars.iter() {
             if pos >= bytes.len() {
                 return None;
             }
@@ -254,7 +254,7 @@ impl CaseiLiteral {
                 .ok()?
                 .chars()
                 .next()?;
-            if !range_contains(ranges, c) {
+            if !range_contains(ranges.as_ref(), c) {
                 return None;
             }
             pos = end;
