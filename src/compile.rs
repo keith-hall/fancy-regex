@@ -835,7 +835,7 @@ impl<'a> Compiler<'a> {
         // scale with the number of branches.
         if let Some(any_casei) = infos
             .iter()
-            .try_fold(false, |any, e| e.literal_casei().map(|c| any || c))
+            .try_fold(false, |any, e| e.is_literal_get_casei().map(|c| any || c))
         {
             if !any_casei {
                 let mut val = String::new();
