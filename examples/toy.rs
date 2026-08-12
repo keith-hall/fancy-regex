@@ -270,6 +270,40 @@ digraph G {
     }
 
     #[test]
+    fn test_meta_char_class_graph() {
+        assert_graph(
+            r"(?i)hello(?<!\w)",
+            "\
+digraph G {
+  0 [label=\"0: SplitUnanchored(3, 1)\"];
+  0 -> 3;
+  0 -> 1;
+  1 [label=\"1: Any\"];
+  1 -> 2;
+  2 [label=\"2: Jmp(0)\"];
+  2 -> 0;
+  3 [label=\"3: Save(0)\"];
+  3 -> 4;
+  4 [label=\"4: LitCasei(CaseiLiteral { chars: [[('H', 'H'), ('h', 'h')], [('E', 'E'), ('e', 'e')], [('L', 'L'), ('l', 'l')], [('L', 'L'), ('l', 'l')], [('O', 'O'), ('o', 'o')]] })\"];
+  4 -> 5;
+  5 [label=\"5: Split(6, 9)\"];
+  5 -> 6;
+  5 -> 9;
+  6 [label=\"6: GoBack(1)\"];
+  6 -> 7;
+  7 [label=\"7: CharClass(Codepoint \\\\w)\"];
+  7 -> 8;
+  8 [label=\"8: FailNegativeLookAround\"];
+  8 -> 9;
+  9 [label=\"9: Save(1)\"];
+  9 -> 10;
+ 10 [label=\"10: End\"];
+}
+",
+        );
+    }
+
+    #[test]
     fn test_simple_analysis() {
         assert_analysis_succeeds("a+bc?");
     }

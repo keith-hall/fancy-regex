@@ -75,6 +75,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::fmt;
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::pool::Pool;
@@ -157,14 +158,43 @@ impl CaptureGroupRange {
 /// The ranges are taken verbatim from the `regex-syntax` `Hir` for the class
 /// (sorted, non-overlapping, and already case-folded / Unicode-expanded), so the
 /// matched set is identical to what the delegated engine would accept.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum CharClassMatcher {
     /// Match one Unicode scalar value against inclusive `char` ranges. Used in
     /// Unicode bytes mode, where the haystack is valid UTF-8.
-    Codepoint(Box<[(char, char)]>),
+    Codepoint {
+        ranges: Box<[(char, char)]>,
+        name: Option<String>,
+    },
     /// Match one byte against inclusive byte ranges. Used in ASCII bytes mode
     /// (and for ASCII-only `(?-u:...)` classes).
-    Byte(Box<[(u8, u8)]>),
+    Byte {
+        ranges: Box<[(u8, u8)]>,
+        name: Option<String>,
+    },
+}
+
+impl fmt::Debug for CharClassMatcher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(ref name) = match self {
+            CharClassMatcher::Codepoint { name, .. } => name,
+            CharClassMatcher::Byte { name, .. } => name,
+        } {
+            match self {
+                CharClassMatcher::Codepoint { .. } => write!(f, "Codepoint {}", name),
+                CharClassMatcher::Byte { .. } => write!(f, "Byte {}", name),
+            }
+        } else {
+            match self {
+                CharClassMatcher::Codepoint { ranges, .. } => {
+                    f.debug_tuple("Codepoint").field(ranges).finish()
+                }
+                CharClassMatcher::Byte { ranges, .. } => {
+                    f.debug_tuple("Byte").field(ranges).finish()
+                }
+            }
+        }
+    }
 }
 
 impl CharClassMatcher {
@@ -178,14 +208,14 @@ impl CharClassMatcher {
             return None;
         }
         match self {
-            CharClassMatcher::Byte(ranges) => {
+            CharClassMatcher::Byte { ranges, .. } => {
                 if range_contains(ranges, bytes[ix]) {
                     Some(1)
                 } else {
                     None
                 }
             }
-            CharClassMatcher::Codepoint(ranges) => {
+            CharClassMatcher::Codepoint { ranges, .. } => {
                 let len = codepoint_len(bytes[ix]);
                 let end = ix + len;
                 if end > bytes.len() {
