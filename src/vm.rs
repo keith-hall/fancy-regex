@@ -929,7 +929,7 @@ pub(crate) fn run_rev<S: HaystackInput + ?Sized>(
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<Vec<usize>>> {
-    run_rev_with(prog, input, option_flags, options, |state| {
+    run_rev_with_seed(prog, input, option_flags, options, None, |state| {
         state.saves.clone()
     })
 }
@@ -941,61 +941,11 @@ pub(crate) fn run_rev_spans<S: HaystackInput + ?Sized>(
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<(usize, usize)>> {
-    run_rev_with(prog, input, option_flags, options, |state| {
+    run_rev_with_seed(prog, input, option_flags, options, None, |state| {
         (state.get(0), state.get(1))
     })
 }
 
-fn run_rev_with<S: HaystackInput + ?Sized, T>(
-    prog: &Prog,
-    input: &RegexInput<'_, S>,
-    option_flags: u32,
-    options: &HardRegexRuntimeOptions,
-    extract: impl Fn(&State) -> T,
-) -> Result<Option<T>> {
-    if input.is_done() {
-        return Ok(None);
-    }
-    if input.is_anchored() {
-        return run_with_seed(prog, input, option_flags, options, None, extract);
-    }
-    let haystack = input.haystack();
-    let range = input.get_range();
-    let start = input.effective_start();
-    let mut pos = range.end;
-    loop {
-        let anchored_input = input.clone().from_pos(pos).anchored(true);
-        if let Some(m) = run_with_seed(
-            prog,
-            &anchored_input,
-            option_flags,
-            options,
-            None,
-            |state| extract(state),
-        )? {
-            return Ok(Some(m));
-        }
-        if pos <= start {
-            return Ok(None);
-        }
-        pos = reverse_step(haystack, pos, prog.bytes_mode);
-    }
-}
-
-fn reverse_step<S: HaystackInput + ?Sized>(
-    haystack: &S,
-    pos: usize,
-    bytes_mode: BytesMode,
-) -> usize {
-    match bytes_mode {
-        BytesMode::Ascii => pos - 1,
-        BytesMode::Unicode | BytesMode::UnicodeBytes => haystack.prev_codepoint_ix(pos),
-    }
-}
-
-/// Run the program with options; `extract` pulls the result out of the final
-/// state before the scratch returns to the pool.
-#[allow(clippy::cognitive_complexity)]
 pub(crate) fn run_rev_seed<S: HaystackInput + ?Sized>(
     prog: &Prog,
     input: &RegexInput<'_, S>,
@@ -1042,6 +992,17 @@ fn run_rev_with_seed<S: HaystackInput + ?Sized, T>(
             return Ok(None);
         }
         pos = reverse_step(haystack, pos, prog.bytes_mode);
+    }
+}
+
+fn reverse_step<S: HaystackInput + ?Sized>(
+    haystack: &S,
+    pos: usize,
+    bytes_mode: BytesMode,
+) -> usize {
+    match bytes_mode {
+        BytesMode::Ascii => pos - 1,
+        BytesMode::Unicode | BytesMode::UnicodeBytes => haystack.prev_codepoint_ix(pos),
     }
 }
 
