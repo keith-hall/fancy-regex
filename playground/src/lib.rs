@@ -242,6 +242,8 @@ pub struct AnalysisTreeNode {
     pub children: Vec<AnalysisTreeNode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<GroupInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub casei: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -287,6 +289,13 @@ fn info_to_tree_node<'a>(
     info: &fancy_regex::internal::Info<'a>,
     group_names: &std::collections::HashMap<usize, String>,
 ) -> AnalysisTreeNode {
+    let casei = match info.expr {
+        Expr::Literal { casei, .. } => Some(casei),
+        Expr::Backref { casei, .. } => Some(casei),
+        Expr::BackrefWithRelativeRecursionLevel { casei, .. } => Some(casei),
+        _ => None,
+    };
+
     let (kind, summary, group_info) = match info.expr {
         Expr::Empty => ("Empty".to_string(), None, None),
         Expr::Any { newline, crlf } => {
@@ -333,7 +342,15 @@ fn info_to_tree_node<'a>(
         Expr::GeneralNewline { .. } => {
             ("GeneralNewline".to_string(), Some("\\R".to_string()), None)
         }
-        Expr::Literal { val, .. } => ("Literal".to_string(), Some(format!("{:?}", val)), None),
+        Expr::Literal { val, .. } => {
+            let mut summary = format!("{:?}", val);
+            if let Some(ci) = casei {
+                if *ci {
+                    summary.push_str(" (case-insensitive)");
+                }
+            }
+            ("Literal".to_string(), Some(summary), None)
+        }
         Expr::Concat(v) => ("Concat".to_string(), Some(format!("({})", v.len())), None),
         Expr::Alt(v) => ("Alt".to_string(), Some(format!("({})", v.len())), None),
         Expr::Group(_) => {
@@ -389,25 +406,34 @@ fn info_to_tree_node<'a>(
                 None,
             )
         }
-        Expr::Backref { group, .. } => {
-            let summary = if let Some(name) = group_names.get(group) {
-                Some(format!("({})", name))
+        Expr::Backref {
+            group,
+            casei: br_casei,
+        } => {
+            let mut summary = if let Some(name) = group_names.get(group) {
+                format!("({})", name)
             } else {
-                Some(format!("{}", group))
+                format!("{}", group)
             };
-            ("Backref".to_string(), summary, None)
+            if *br_casei {
+                summary.push_str(" (case-insensitive)");
+            }
+            ("Backref".to_string(), Some(summary), None)
         }
         Expr::BackrefWithRelativeRecursionLevel {
             group,
             relative_level,
-            ..
+            casei: br_casei,
         } => {
-            let summary = if let Some(name) = group_names.get(group) {
-                Some(format!("({}) level={}", name, relative_level))
+            let mut summary = if let Some(name) = group_names.get(group) {
+                format!("({}) level={}", name, relative_level)
             } else {
-                Some(format!("{} level={}", group, relative_level))
+                format!("{} level={}", group, relative_level)
             };
-            ("Backref".to_string(), summary, None)
+            if *br_casei {
+                summary.push_str(" (case-insensitive)");
+            }
+            ("Backref".to_string(), Some(summary), None)
         }
         Expr::AtomicGroup(_) => ("AtomicGroup".to_string(), None, None),
         Expr::KeepOut => ("KeepOut".to_string(), None, None),
@@ -466,6 +492,7 @@ fn info_to_tree_node<'a>(
         const_size: info.const_size,
         children,
         group: group_info,
+        casei: casei.copied(),
     }
 }
 
@@ -516,7 +543,12 @@ mod tests {
     /// Parse a pattern, analyze it, and convert to an AnalysisTreeNode.
     /// Builds a group names lookup from the parse tree's named_groups (for patterns with named captures).
     fn parse_and_analyze(pattern: &str) -> AnalysisTreeNode {
-        let tree = fancy_regex::Expr::parse_tree(pattern).unwrap();
+        parse_and_analyze_with_flags(pattern, 0)
+    }
+
+    /// Parse a pattern with flags, analyze it, and convert to an AnalysisTreeNode.
+    fn parse_and_analyze_with_flags(pattern: &str, flags: u32) -> AnalysisTreeNode {
+        let tree = fancy_regex::Expr::parse_tree_with_flags(pattern, flags).unwrap();
         let group_names = build_group_names_lookup(&tree.named_groups);
         let info =
             fancy_regex::internal::analyze(&tree, fancy_regex::internal::AnalyzeContext::default())
@@ -577,6 +609,84 @@ mod tests {
         assert_eq!(node.children[0].kind, "Literal");
         assert_eq!(node.children[0].summary.as_deref(), Some("\"t\""));
         assert_eq!(node.children[4].summary.as_deref(), Some("\"\\\\\""));
+    }
+
+    #[test]
+    fn test_info_to_tree_node_literal_case_insensitive() {
+        use fancy_regex::internal::FLAG_CASEI;
+
+        // Single literal with case-insensitive flag
+        let node = parse_and_analyze_with_flags("a", FLAG_CASEI);
+        assert_eq!(node.kind, "Literal");
+        assert_eq!(node.summary.as_deref(), Some("\"a\" (case-insensitive)"));
+        assert_eq!(node.casei, Some(true));
+
+        // Single literal without flag
+        let node = parse_and_analyze_with_flags("a", 0);
+        assert_eq!(node.kind, "Literal");
+        assert_eq!(node.summary.as_deref(), Some("\"a\""));
+        assert_eq!(node.casei, Some(false));
+
+        // Mixed case-insensitive and case-sensitive in concat
+        let node = parse_and_analyze_with_flags("abc", FLAG_CASEI);
+        assert_eq!(node.kind, "Concat");
+        assert_eq!(node.children.len(), 3);
+        for child in &node.children {
+            assert_eq!(child.kind, "Literal");
+            assert_eq!(child.casei, Some(true));
+            assert!(child
+                .summary
+                .as_deref()
+                .unwrap()
+                .contains("(case-insensitive)"));
+        }
+
+        // Non-literal node should have casei: null
+        let node = parse_and_analyze_with_flags(r"\w", FLAG_CASEI);
+        assert_eq!(node.kind, "Delegate");
+        assert_eq!(node.casei, None);
+    }
+
+    #[test]
+    fn test_info_to_tree_node_backref_case_insensitive() {
+        use fancy_regex::internal::FLAG_CASEI;
+
+        let node = parse_and_analyze_with_flags(r"(\w+)\1", FLAG_CASEI);
+        assert_eq!(node.kind, "Concat");
+        let backref = node
+            .children
+            .iter()
+            .find(|n| n.kind == "Backref")
+            .expect("Should find Backref node");
+        assert_eq!(backref.casei, Some(true));
+        assert!(
+            backref
+                .summary
+                .as_deref()
+                .unwrap_or("")
+                .contains("(case-insensitive)"),
+            "Backref summary should indicate case-insensitive"
+        );
+    }
+
+    #[test]
+    fn test_info_to_tree_node_backref_case_sensitive() {
+        let node = parse_and_analyze(r"(\w+)\1");
+        assert_eq!(node.kind, "Concat");
+        let backref = node
+            .children
+            .iter()
+            .find(|n| n.kind == "Backref")
+            .expect("Should find Backref node");
+        assert_eq!(backref.casei, Some(false));
+        assert!(
+            !backref
+                .summary
+                .as_deref()
+                .unwrap_or("")
+                .contains("(case-insensitive)"),
+            "Backref summary should NOT indicate case-insensitive when case-sensitive"
+        );
     }
 
     #[test]
