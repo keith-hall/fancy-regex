@@ -658,12 +658,12 @@ mod tests {
     #[test]
     fn seek_pattern_self_referential_backref_is_bounded() {
         // Inlining a backref whose target transitively references the backref's
-        // own ancestors expands exponentially with recursion depth. The length
-        // cap must keep the seek pattern small (and, therefore, compilation
-        // fast) rather than producing a multi-megabyte string.
+        // own ancestors can expand exponentially with recursion depth. Cycle
+        // detection should fall back to a permissive placeholder instead of
+        // continuing to recurse.
         let seek = get_seek_pattern(r"(end)(\s+(function))?(\s+((\3|\4|\5)))?");
         assert!(
-            seek.len() < 2 * MAX_SEEK_PATTERN_LEN,
+            seek.len() <= MAX_SEEK_PATTERN_LEN,
             "seek pattern should stay bounded, got {} bytes",
             seek.len()
         );
