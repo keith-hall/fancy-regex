@@ -835,7 +835,7 @@ impl<'a> Compiler<'a> {
         // scale with the number of branches.
         if let Some(any_casei) = infos
             .iter()
-            .try_fold(false, |any, e| e.literal_casei().map(|c| any || c))
+            .try_fold(false, |any, e| e.is_literal_get_casei().map(|c| any || c))
         {
             if !any_casei {
                 let mut val = String::new();
@@ -1091,6 +1091,15 @@ pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsag
     builder
 }
 
+/// Strip the `(?i:` prefix and `)` suffix that `Expr::to_str` wraps around
+/// case-insensitive delegate expressions. This keeps the stored `CharClassMatcher`
+/// name readable (e.g. `\w` instead of `(?i:\w)`).
+fn strip_delegate_flags(s: &str) -> &str {
+    s.strip_prefix("(?i:")
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(s)
+}
+
 /// Try to compile a delegated fragment to a native [`CharClassMatcher`] instead
 /// of a regex-automata engine.
 ///
@@ -1116,12 +1125,16 @@ fn try_char_class_matcher(re: &str, options: &CompileOptions) -> Option<CharClas
         .parse(re)
         .ok()?;
 
-    char_class_matcher_from_hir(&hir, options)
+    char_class_matcher_from_hir(&hir, options, Some(strip_delegate_flags(re).to_string()))
 }
 
 /// Build a [`CharClassMatcher`] from an `Hir` that is a single character class,
 /// or `None` if it isn't one (or can't be matched natively in this bytes mode).
-fn char_class_matcher_from_hir(hir: &Hir, options: &CompileOptions) -> Option<CharClassMatcher> {
+fn char_class_matcher_from_hir(
+    hir: &Hir,
+    options: &CompileOptions,
+    name: Option<String>,
+) -> Option<CharClassMatcher> {
     use regex_syntax::hir::{Class, HirKind};
 
     match hir.kind() {
@@ -1134,11 +1147,11 @@ fn char_class_matcher_from_hir(hir: &Hir, options: &CompileOptions) -> Option<Ch
                 return None;
             }
             let ranges = cu.ranges().iter().map(|r| (r.start(), r.end())).collect();
-            Some(CharClassMatcher::Codepoint(ranges))
+            Some(CharClassMatcher::Codepoint { ranges, name })
         }
         HirKind::Class(Class::Bytes(cb)) => {
             let ranges = cb.ranges().iter().map(|r| (r.start(), r.end())).collect();
-            Some(CharClassMatcher::Byte(ranges))
+            Some(CharClassMatcher::Byte { ranges, name })
         }
         _ => None,
     }
@@ -1374,7 +1387,11 @@ impl DelegateBuilder {
         if self.capture_groups.map_or(false, |r| r.start() == r.end()) {
             let matcher = match &self.hirs {
                 // A single fragment whose Hir is a class; no parse needed.
-                Some(hirs) if hirs.len() == 1 => char_class_matcher_from_hir(&hirs[0], options),
+                Some(hirs) if hirs.len() == 1 => char_class_matcher_from_hir(
+                    &hirs[0],
+                    options,
+                    Some(strip_delegate_flags(&self.re).to_string()),
+                ),
                 // Multiple fragments can't be a single class.
                 Some(_) => None,
                 // Translation bailed; fall back to parsing the string.

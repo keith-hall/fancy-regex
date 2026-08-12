@@ -9,8 +9,9 @@ with the exception that 0.x versions can break between minor versions.
 ## [Unreleased]
 ### Added
 ### Changed
-- Add VM instruction for case insensitive literals when in Unicode mode, to keep the build cost bounded (#268)
+- Add VM instruction for case insensitive literals when in Unicode mode, to keep the build cost bounded (#268) and ensured the toy example graph output remains readable instead of being super verbose (#269)
 ### Fixed
+- The playground didn't show when a literal or backreference was being matched case insensitively in the analysis tree view (#269)
 
 ## [0.19.0] - 2026-07-28
 ### Added
