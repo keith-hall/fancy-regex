@@ -2433,10 +2433,18 @@ fn is_special(c: char) -> bool {
 
 pub(crate) fn push_quoted(buf: &mut String, s: &str) {
     for c in s.chars() {
-        if is_special(c) {
-            buf.push('\\');
+        match c {
+            '\\' => buf.push_str("\\\\"),
+            '\n' => buf.push_str("\\n"),
+            '\t' => buf.push_str("\\t"),
+            '\r' => buf.push_str("\\r"),
+            _ => {
+                if is_special(c) {
+                    buf.push('\\');
+                }
+                buf.push(c);
+            }
         }
-        buf.push(c);
     }
 }
 

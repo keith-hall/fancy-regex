@@ -667,7 +667,7 @@ mod tests {
     fn seek_pattern_subroutine_call_inlined_and_anchors_are_preserved() {
         assert_eq!(
             get_seek_pattern(r"((?m:^)[A-Z][a-z0-9]*)\n\g<1>"),
-            "(?:(?m:^)[A-Z][a-z0-9]*)\n(?:(?m:^)[A-Z][a-z0-9]*)"
+            "(?:(?m:^)[A-Z][a-z0-9]*)\\n(?:(?m:^)[A-Z][a-z0-9]*)"
         );
     }
 
