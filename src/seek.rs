@@ -23,6 +23,7 @@
 
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as Map;
@@ -56,6 +57,17 @@ pub(crate) fn expr_contains_positional_anchor(expr: &Expr) -> bool {
         _ => expr.children_iter().any(expr_contains_positional_anchor),
     }
 }
+
+/// Cap on the seek-pattern buffer length. Inlining a backref/subroutine
+/// substitutes the referenced group's body, and when that body transitively
+/// references the same group (e.g. `(\s+((\3|\4|\5)))?` where `\4`/`\5` point
+/// at ancestors of the backref) the substitution branches at every level and,
+/// bounded only by the recursion depth, expands the buffer exponentially — so
+/// a short pattern can produce a multi-megabyte seek string. Once the buffer
+/// is already this large, further inlining stops and a permissive placeholder
+/// is emitted instead: the seek pattern only narrows candidate start positions
+/// and never decides matches, so a less-selective approximation stays correct.
+pub(crate) const MAX_SEEK_PATTERN_LEN: usize = 4096;
 
 /// Emit a permissive size placeholder — `(?s:.)+` or `(?s:.){N,}` — into `buf`.
 ///
@@ -108,7 +120,16 @@ pub(crate) fn build_seek_pattern<'a>(
     buf: &mut String,
     precedence: u8,
 ) {
-    build_seek_pattern_impl(info, group_info_map, depth, buf, precedence, false);
+    let mut inlined_groups = Vec::new();
+    build_seek_pattern_impl(
+        info,
+        group_info_map,
+        depth,
+        buf,
+        precedence,
+        false,
+        &mut inlined_groups,
+    );
 }
 
 pub(crate) fn build_seek_pattern_impl<'a>(
@@ -118,6 +139,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
     buf: &mut String,
     precedence: u8,
     drop_positional_anchors: bool,
+    inlined_groups: &mut Vec<usize>,
 ) {
     // Drop positional anchors at this node when requested (used when inlining for a backref).
     if drop_positional_anchors {
@@ -202,6 +224,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     buf,
                     2,
                     drop_positional_anchors,
+                    inlined_groups,
                 );
             }
             if precedence > 1 {
@@ -224,6 +247,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     buf,
                     1,
                     drop_positional_anchors,
+                    inlined_groups,
                 );
                 first = false;
             }
@@ -241,6 +265,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     buf,
                     precedence,
                     drop_positional_anchors,
+                    inlined_groups,
                 );
             }
         }
@@ -256,6 +281,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     buf,
                     3,
                     drop_positional_anchors,
+                    inlined_groups,
                 );
             }
             write_quantifier(buf, *lo, *hi, *greedy);
@@ -275,12 +301,17 @@ pub(crate) fn build_seek_pattern_impl<'a>(
             // For BackrefWithRelativeRecursionLevel, the relative_level is ignored here:
             // for seeking purposes, the group body is the same regardless of recursion level.
             //
-            // If inlining is not possible (depth limit, group not in map), emit a permissive
+            // If inlining is not possible (depth limit, group not in map, or recursive cycle), emit a permissive
             // placeholder so that no match positions are incorrectly skipped.
-            if depth < MAX_SUBROUTINE_RECURSION_DEPTH {
+            if depth < MAX_SUBROUTINE_RECURSION_DEPTH && buf.len() < MAX_SEEK_PATTERN_LEN {
                 if let Some(group_info) = group_info_map.get(group) {
+                    if inlined_groups.contains(group) {
+                        emit_min_size_placeholder(buf, group_info.min_size, precedence);
+                        return;
+                    }
                     if !group_info.children.is_empty() {
                         let child = &group_info.children[0];
+                        inlined_groups.push(*group);
                         if *casei {
                             let mut inner = String::new();
                             build_seek_pattern_impl(
@@ -291,7 +322,9 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                                 // Precedence 0 (alternation) so content inside (?i:...) is unambiguous.
                                 0,
                                 true,
+                                inlined_groups,
                             );
+                            inlined_groups.pop();
                             if !inner.is_empty() {
                                 buf.push_str("(?i:");
                                 buf.push_str(&inner);
@@ -305,7 +338,9 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                                 buf,
                                 precedence,
                                 true,
+                                inlined_groups,
                             );
+                            inlined_groups.pop();
                         }
                         return;
                     }
@@ -319,7 +354,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
         }
         Expr::SubroutineCall(target_group) => {
             // Inline the body of the target group, honouring the recursion depth limit.
-            if depth < MAX_SUBROUTINE_RECURSION_DEPTH {
+            if depth < MAX_SUBROUTINE_RECURSION_DEPTH && buf.len() < MAX_SEEK_PATTERN_LEN {
                 if let Some(group_info) = group_info_map.get(target_group) {
                     if !group_info.children.is_empty() {
                         build_seek_pattern_impl(
@@ -329,6 +364,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                             buf,
                             precedence,
                             drop_positional_anchors,
+                            inlined_groups,
                         );
                         return;
                     }
@@ -349,6 +385,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     buf,
                     precedence,
                     drop_positional_anchors,
+                    inlined_groups,
                 );
             }
         }
@@ -379,6 +416,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     &mut cond_pat,
                     2,
                     drop_positional_anchors,
+                    inlined_groups,
                 );
             }
             if info.children.len() >= 2 {
@@ -389,6 +427,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     &mut true_pat,
                     2,
                     drop_positional_anchors,
+                    inlined_groups,
                 );
             }
             if info.children.len() >= 3 {
@@ -399,6 +438,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     &mut false_pat,
                     1,
                     drop_positional_anchors,
+                    inlined_groups,
                 );
             }
             // Build the "condition then true-branch" alternative.
@@ -443,6 +483,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     buf,
                     precedence,
                     drop_positional_anchors,
+                    inlined_groups,
                 );
             }
         }
@@ -484,6 +525,7 @@ mod tests {
     use crate::analyze::{analyze, AnalyzeContext};
     use crate::compile::populate_group_info_map;
     use crate::optimize;
+    use crate::Regex;
 
     /// Build the seek pattern for a regex string and return it.
     fn get_seek_pattern(re: &str) -> String {
@@ -611,5 +653,40 @@ mod tests {
         // dropped when inlining the group body for the backref.
         // `(a\Z)\1` — seek = `(?:a\n*$)` (group) + `(?:a\n*)` (backref, \Z anchor dropped, newline matching kept)
         assert_eq!(get_seek_pattern(r"(a\Z)\1"), r"(?:a\n*$)(?:a\n*)");
+    }
+
+    #[test]
+    fn seek_pattern_subroutine_call_inlined() {
+        assert_eq!(
+            get_seek_pattern(r"([A-Z][a-z0-9]*)::\g<1>"),
+            r"(?:[A-Z][a-z0-9]*)::(?:[A-Z][a-z0-9]*)"
+        );
+    }
+
+    #[test]
+    fn seek_pattern_subroutine_call_inlined_and_anchors_are_preserved() {
+        assert_eq!(
+            get_seek_pattern(r"((?m:^)[A-Z][a-z0-9]*)\n\g<1>"),
+            "(?:(?m:^)[A-Z][a-z0-9]*)\n(?:(?m:^)[A-Z][a-z0-9]*)"
+        );
+    }
+
+    #[test]
+    fn seek_pattern_self_referential_backref_is_bounded() {
+        // Inlining a backref whose target transitively references the backref's
+        // own ancestors would expand exponentially with recursion depth if we
+        // didn't have cycle detection or a length cap to cause it to fall back
+        // to a permissive placeholder instead of continuing to recurse.
+        // Together these help to keep the seek pattern small (and, therefore, compilation
+        // fast) rather than producing a multi-megabyte string which would likely not help
+        // to narrow candidate start positions much better anyway.
+        let seek = get_seek_pattern(r"(end)(\s+(function))?(\s+((\3|\4|\5)))?");
+        assert!(
+            seek.len() <= MAX_SEEK_PATTERN_LEN,
+            "seek pattern should stay bounded, got {} bytes",
+            seek.len()
+        );
+        // Compiling it must succeed and stay well-formed.
+        Regex::new(r"(end)(\s+(function))?(\s+((\3|\4|\5)))?").unwrap();
     }
 }
