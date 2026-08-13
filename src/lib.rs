@@ -44,8 +44,14 @@ use core::fmt;
 use core::fmt::{Debug, Formatter};
 use core::ops::{Index, Range};
 use core::str::FromStr;
+#[cfg(feature = "variable-lookbehinds")]
+use regex_automata::hybrid::dfa;
 use regex_automata::meta::Regex as RaRegex;
+#[cfg(feature = "variable-lookbehinds")]
+use regex_automata::nfa::thompson;
 use regex_automata::util::captures::Captures as RaCaptures;
+#[cfg(feature = "variable-lookbehinds")]
+use regex_automata::util::pool::Pool;
 use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Anchored as RaAnchored;
 use regex_automata::Input as RaInput;
@@ -71,6 +77,8 @@ use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
+#[cfg(feature = "variable-lookbehinds")]
+use crate::vm::CachePoolFn;
 use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH};
 
 pub use crate::bytes::MatchBytes;
@@ -176,6 +184,9 @@ enum RegexImpl {
         /// True if the pattern starts with a line or text start assertion (`^` / `\A`).
         /// Used by `find_input_raw_reverse` to choose the efficient backward scan.
         start_line_anchored: bool,
+        /// Reverse search helper used to jump between plausible anchored match starts.
+        #[cfg(feature = "variable-lookbehinds")]
+        reverse_search: Option<ReverseSearch>,
     },
     Fancy {
         prog: Arc<Prog>,
@@ -186,7 +197,58 @@ enum RegexImpl {
         /// True if the pattern starts with a line or text start assertion (`^` / `\A`).
         /// Used by `find_input_raw_reverse` to choose the efficient backward scan.
         start_line_anchored: bool,
+        /// Reverse search helper used to jump between plausible anchored match starts.
+        #[cfg(feature = "variable-lookbehinds")]
+        reverse_search: Option<ReverseSearch>,
     },
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+struct ReverseSearch {
+    dfa: Arc<dfa::DFA>,
+    cache_pool: Pool<dfa::Cache, CachePoolFn>,
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+impl Clone for ReverseSearch {
+    fn clone(&self) -> Self {
+        let dfa_for_closure = Arc::clone(&self.dfa);
+        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
+        Self {
+            dfa: Arc::clone(&self.dfa),
+            cache_pool: Pool::new(create),
+        }
+    }
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+impl ReverseSearch {
+    fn new(pattern: &str, options: &CompileOptions) -> Option<Self> {
+        let utf8 = matches!(options.bytes_mode, BytesMode::Unicode);
+        let syntax = SyntaxConfig::new().utf8(utf8).unicode(options.unicode);
+        let dfa = dfa::DFA::builder()
+            .configure(dfa::Config::new().unicode_word_boundary(true))
+            .syntax(syntax)
+            .thompson(thompson::Config::new().reverse(true).utf8(utf8))
+            .build(pattern)
+            .ok()?;
+        let dfa = Arc::new(dfa);
+        let dfa_for_closure = Arc::clone(&dfa);
+        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
+        Some(Self {
+            dfa,
+            cache_pool: Pool::new(create),
+        })
+    }
+
+    fn find_candidate_start(&self, haystack: &[u8], range: Range<usize>) -> Option<usize> {
+        let mut cache_guard = self.cache_pool.get();
+        self.dfa
+            .try_search_rev(&mut cache_guard, &RaInput::new(haystack).span(range))
+            .ok()
+            .flatten()
+            .map(|m| m.offset())
+    }
 }
 
 /// A single match of a regex or group in an input text
@@ -1197,6 +1259,7 @@ impl Regex {
                 // delegate compile in the easy path and their defaults are correct.
                 ..CompileOptions::default()
             };
+            let start_line_anchored = starts_with_line_anchor(&tree.expr);
             // The whole pattern is delegated and searched unanchored, so it keeps
             // its prefilter and all capture groups (the user may request captures).
             // RegexSet members are the exception: they are only searched anchored,
@@ -1215,39 +1278,50 @@ impl Regex {
                 Some(hir) => compile::compile_inner_from_hir(&hir, &compile_options, usage)?,
                 None => compile::compile_inner(&re_cooked, &compile_options, usage)?,
             };
+            #[cfg(feature = "variable-lookbehinds")]
+            let reverse_search = start_line_anchored
+                .then(|| ReverseSearch::new(&re_cooked, &compile_options))
+                .flatten();
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,
                     pattern,
                     explicit_capture_group_0: requires_capture_group_fixup,
                     delegated_pattern: re_cooked,
-                    start_line_anchored: starts_with_line_anchor(&tree.expr),
+                    start_line_anchored,
+                    #[cfg(feature = "variable-lookbehinds")]
+                    reverse_search,
                 },
                 named_groups: Arc::new(tree.named_groups),
             });
         }
 
-        let prog = compile(
-            &info,
-            CompileOptions {
-                anchored: can_compile_as_anchored(&tree.expr),
-                contains_subroutines: tree.contains_subroutines,
-                seek_filter: options.seek_filter,
-                disallow_empty_match_at_eof_after_newline,
-                bytes_mode: options.bytes_mode,
-                unicode: options.syntaxc.get_unicode()
-                    && !matches!(options.bytes_mode, BytesMode::Ascii),
-                delegate_size_limit: options.delegate_size_limit,
-                delegate_dfa_size_limit: options.delegate_dfa_size_limit,
-            },
-        )?;
+        let start_line_anchored = starts_with_line_anchor(&tree.expr);
+        let compile_options = CompileOptions {
+            anchored: can_compile_as_anchored(&tree.expr),
+            contains_subroutines: tree.contains_subroutines,
+            seek_filter: options.seek_filter,
+            disallow_empty_match_at_eof_after_newline,
+            bytes_mode: options.bytes_mode,
+            unicode: options.syntaxc.get_unicode()
+                && !matches!(options.bytes_mode, BytesMode::Ascii),
+            delegate_size_limit: options.delegate_size_limit,
+            delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+        };
+        let prog = compile(&info, compile_options.clone())?;
+        #[cfg(feature = "variable-lookbehinds")]
+        let reverse_search = start_line_anchored
+            .then(|| ReverseSearch::new(&prog.seek_pattern, &compile_options))
+            .flatten();
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog: Arc::new(prog),
                 n_groups: info.end_group(),
                 options: options.hard_regex_runtime_options,
                 pattern,
-                start_line_anchored: starts_with_line_anchor(&tree.expr),
+                start_line_anchored,
+                #[cfg(feature = "variable-lookbehinds")]
+                reverse_search,
             },
             named_groups: Arc::new(tree.named_groups),
         })
@@ -1553,6 +1627,27 @@ impl Regex {
         // one match, so "last non-overlapping forward match" = "match at the
         // last anchor point that succeeds".
         if self.is_start_line_anchored() {
+            #[cfg(feature = "variable-lookbehinds")]
+            if let Some(reverse_search) = self.reverse_search() {
+                let haystack = forward_input.haystack().as_bytes();
+                let mut end = range.end;
+                loop {
+                    let Some(pos) = reverse_search.find_candidate_start(haystack, start..end)
+                    else {
+                        break;
+                    };
+                    let step_input = forward_input.clone().from_pos(pos).anchored(true);
+                    if let Some(m) = self.find_input_raw(&step_input, option_flags)? {
+                        return Ok(Some(m));
+                    }
+                    if pos <= start {
+                        break;
+                    }
+                    end = if pos < end { pos } else { pos - 1 };
+                }
+                return Ok(None);
+            }
+
             let mut pos = range.end;
             loop {
                 let step_input = forward_input.clone().from_pos(pos).anchored(true);
@@ -1933,6 +2028,15 @@ impl Regex {
                 start_line_anchored,
                 ..
             } => *start_line_anchored,
+        }
+    }
+
+    #[cfg(feature = "variable-lookbehinds")]
+    fn reverse_search(&self) -> Option<&ReverseSearch> {
+        match &self.inner {
+            RegexImpl::Wrap { reverse_search, .. } | RegexImpl::Fancy { reverse_search, .. } => {
+                reverse_search.as_ref()
+            }
         }
     }
 

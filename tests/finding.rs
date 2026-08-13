@@ -187,6 +187,18 @@ fn find_previous_start_anchored_no_match() {
 }
 
 #[test]
+fn find_previous_start_anchored_hard_seek_false_positive() {
+    let re = RegexBuilder::new(r"(?m)^a(?=b)(b|c)\1").build().unwrap();
+    let hay = "abb\nacc";
+    assert_eq!(
+        re.find_input(RegexInput::new(hay).direction(SearchDirection::Reverse))
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((0, 3))
+    );
+}
+
+#[test]
 fn find_previous_start_anchored_bytes_input() {
     // Verify that the backward scan steps by one *byte* for [u8] inputs so it
     // doesn't skip a line-start byte that happens to look like a UTF-8
