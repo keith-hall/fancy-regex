@@ -1,5 +1,6 @@
 use fancy_regex::{
     BytesMode, Captures, CompileError, Error, Expander, Match, RegexBuilder, RegexInput, Result,
+    SearchDirection,
 };
 use matches::assert_matches;
 use std::borrow::Cow;
@@ -22,6 +23,43 @@ fn captures_fancy() {
     assert_match(captures.get(0), " bar", 3, 7);
     assert_match(captures.get(1), "bar", 4, 7);
     assert!(captures.get(2).is_none());
+}
+
+#[test]
+#[allow(deprecated)]
+fn captures_previous_wrap() {
+    let re = common::regex(r"(\w+)");
+    let captures = re.captures_previous("foo bar baz").unwrap().unwrap();
+    assert_match(captures.get(0), "baz", 8, 11);
+    assert_match(captures.get(1), "baz", 8, 11);
+}
+
+#[test]
+#[allow(deprecated)]
+fn captures_input_reverse_direction_matches_previous_api() {
+    let re = common::regex(r"(\w+)");
+    let hay = "foo bar baz";
+    let by_direction = re
+        .captures_input(RegexInput::new(hay).direction(SearchDirection::Reverse))
+        .unwrap()
+        .unwrap();
+    let by_previous = re.captures_previous(hay).unwrap().unwrap();
+    assert_match(by_direction.get(0), "baz", 8, 11);
+    assert_match(by_direction.get(1), "baz", 8, 11);
+    assert_match(by_previous.get(0), "baz", 8, 11);
+    assert_match(by_previous.get(1), "baz", 8, 11);
+}
+
+#[test]
+#[allow(deprecated)]
+fn captures_previous_range_and_zero_width() {
+    let re = common::regex(r"(?m:^)(\w+)?");
+    let captures = re
+        .captures_previous_input(RegexInput::new("ab\ncd").range(0..2))
+        .unwrap()
+        .unwrap();
+    assert_match(captures.get(0), "ab", 0, 2);
+    assert_match(captures.get(1), "ab", 0, 2);
 }
 
 #[test]
@@ -107,6 +145,15 @@ fn captures_both_inside_and_outside_variable_lookbehind() {
     assert_match(captures.get(2), "bbb", 3, 6);
     assert_match(captures.get(3), "ccc", 6, 9);
     assert_match(captures.get(4), "ddd", 9, 12);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_inside_hard_variable_lookbehind() {
+    let captures = captures(r"(?<=a(b+))\1", "abbbb");
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "b", 2, 3);
+    assert_match(captures.get(1), "b", 1, 2);
 }
 
 #[test]

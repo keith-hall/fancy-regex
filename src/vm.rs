@@ -71,11 +71,10 @@
 
 use alloc::boxed::Box;
 use alloc::string::String;
-#[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use regex_automata::meta::Regex;
+use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::pool::Pool;
 use regex_automata::util::primitives::NonMaxUsize;
@@ -224,7 +223,7 @@ fn range_contains<T: Ord + Copy>(ranges: &[(T, T)], needle: T) -> bool {
 /// Delegate matching to the regex crate
 pub struct Delegate {
     /// The regex
-    pub inner: Regex,
+    pub inner: RaRegex,
     /// The regex pattern as a string
     pub pattern: String,
     /// The range of capture groups. None if there are no capture groups.
@@ -251,7 +250,7 @@ impl core::fmt::Debug for Delegate {
 /// pattern, then hand off to the backtracking VM at that position.
 pub struct Seek {
     /// The compiled seek pre-filter regex (un-anchored, finds leftmost match).
-    pub inner: Regex,
+    pub inner: RaRegex,
     /// The seek-pattern string (for debug display).
     pub pattern: String,
 }
@@ -275,9 +274,27 @@ pub struct ReverseBackwardsDelegate {
     /// Cache pool for DFA searches
     pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
     /// The forward regex for capture group extraction
-    pub(crate) capture_group_extraction_inner: Option<Regex>,
+    pub(crate) capture_group_extraction_inner: Option<RaRegex>,
     /// The range of capture groups. None if there are no capture groups.
     pub capture_groups: Option<CaptureGroupRange>,
+}
+
+#[derive(Clone)]
+/// Run a reverse search using a nested VM program.
+pub struct ReverseProg {
+    /// The nested program to search in reverse.
+    pub prog: Arc<Prog>,
+    /// The regex pattern as a string.
+    pub pattern: String,
+}
+
+impl core::fmt::Debug for ReverseProg {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let Self { prog: _, pattern } = self;
+        f.debug_struct("ReverseProg")
+            .field("pattern", pattern)
+            .finish()
+    }
 }
 
 #[cfg(feature = "variable-lookbehinds")]
@@ -425,6 +442,8 @@ pub enum Insn {
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     BackwardsDelegate(ReverseBackwardsDelegate),
+    /// Reverse search using a nested VM program.
+    BackwardsProg(ReverseProg),
     /// Absent repeater operator - matches if delegate does not match from current position
     AbsentRepeater(Delegate),
     /// Seek pre-filter: advance `ix` to the next position where the pattern could plausibly match,
@@ -881,7 +900,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<Vec<usize>>> {
     // The clone is the one allocation the caller keeps (it owns the captures).
-    run_with(prog, input, option_flags, options, |state| {
+    run_with_seed(prog, input, option_flags, options, None, |state| {
         state.saves.clone()
     })
 }
@@ -897,19 +916,89 @@ pub(crate) fn run_spans<S: HaystackInput + ?Sized>(
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<(usize, usize)>> {
-    run_with(prog, input, option_flags, options, |state| {
+    run_with_seed(prog, input, option_flags, options, None, |state| {
         (state.get(0), state.get(1))
     })
 }
 
-/// Run the program with options; `extract` pulls the result out of the final
-/// state before the scratch returns to the pool.
-#[allow(clippy::cognitive_complexity)]
-fn run_with<S: HaystackInput + ?Sized, T>(
+/// Run the VM in reverse with a seed saves vector, returning the full saves
+/// for the last match within the configured range.
+///
+/// `seed` is the captures/saves vector from the outer VM thread that is
+/// pre-populated before matching begins. This allows variable-length
+/// lookbehinds to seed the reverse match with the surrounding capture context.
+pub(crate) fn run_rev_seed<S: HaystackInput + ?Sized>(
     prog: &Prog,
     input: &RegexInput<'_, S>,
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
+    seed: &[usize],
+) -> Result<Option<Vec<usize>>> {
+    run_rev_with_seed(prog, input, option_flags, options, Some(seed), |state| {
+        state.saves.clone()
+    })
+}
+
+fn run_rev_with_seed<S: HaystackInput + ?Sized, T>(
+    prog: &Prog,
+    input: &RegexInput<'_, S>,
+    option_flags: u32,
+    options: &HardRegexRuntimeOptions,
+    seed: Option<&[usize]>,
+    extract: impl Fn(&State) -> T,
+) -> Result<Option<T>> {
+    if input.is_done() {
+        return Ok(None);
+    }
+    if input.is_anchored() {
+        return run_with_seed(prog, input, option_flags, options, seed, extract);
+    }
+    let haystack = input.haystack();
+    let range = input.get_range();
+    let start = input.effective_start();
+    let mut pos = range.end;
+    loop {
+        let anchored_input = input.clone().from_pos(pos).anchored(true);
+        if let Some(m) = run_with_seed(
+            prog,
+            &anchored_input,
+            option_flags,
+            options,
+            seed,
+            |state| extract(state),
+        )? {
+            return Ok(Some(m));
+        }
+        if pos <= start {
+            return Ok(None);
+        }
+        pos = reverse_step(haystack, pos, prog.bytes_mode);
+    }
+}
+
+fn reverse_step<S: HaystackInput + ?Sized>(
+    haystack: &S,
+    pos: usize,
+    bytes_mode: BytesMode,
+) -> usize {
+    match bytes_mode {
+        BytesMode::Ascii => pos - 1,
+        BytesMode::Unicode | BytesMode::UnicodeBytes => haystack.prev_codepoint_ix(pos),
+    }
+}
+
+/// Run the VM from a starting position, optionally seeding the saves vector
+/// before execution begins.
+///
+/// `seed` is the captures/saves vector from the outer VM thread that is
+/// pre-populated before matching begins. This allows variable-length
+/// lookbehinds to seed the reverse match with the surrounding capture context.
+fn run_with_seed<S: HaystackInput + ?Sized, T>(
+    prog: &Prog,
+    input: &RegexInput<'_, S>,
+    option_flags: u32,
+    options: &HardRegexRuntimeOptions,
+    seed: Option<&[usize]>,
     extract: impl FnOnce(&State) -> T,
 ) -> Result<Option<T>> {
     if input.is_done() {
@@ -921,6 +1010,11 @@ fn run_with<S: HaystackInput + ?Sized, T>(
     let mut scratch_guard = prog.scratch_pool.get();
     let Scratch { state, inner_slots } = &mut *scratch_guard;
     state.reset(prog.n_saves, option_flags);
+    if let Some(seed) = seed {
+        for (slot, value) in seed.iter().copied().enumerate().take(state.saves.len()) {
+            state.saves[slot] = value;
+        }
+    }
     inner_slots.clear();
     let look_matcher = LookMatcher::new();
     #[cfg(feature = "std")]
@@ -1296,6 +1390,20 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         _ => break 'fail,
                     }
                 }
+                Insn::BackwardsProg(ReverseProg { ref prog, .. }) => {
+                    let reverse_input = RegexInput::new(haystack).range(0..ix);
+                    match run_rev_seed(prog, &reverse_input, option_flags, options, &state.saves)? {
+                        Some(saves) => {
+                            for (slot, value) in saves.iter().copied().enumerate().skip(2) {
+                                if value != usize::MAX && slot < state.saves.len() {
+                                    state.save(slot, value);
+                                }
+                            }
+                            ix = saves[0];
+                        }
+                        None => break 'fail,
+                    }
+                }
                 Insn::BeginAtomic => {
                     let count = state.backtrack_count();
                     state.stack_push(count);
@@ -1310,7 +1418,7 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     capture_groups,
                 }) => {
                     let input = Input::new(haystack.as_bytes())
-                        .span(ix..haystack.len())
+                        .span(ix..match_range.end)
                         .anchored(Anchored::Yes);
                     if let Some(range) = capture_groups {
                         // Has capture groups, need to extract them
@@ -1338,7 +1446,7 @@ fn run_with<S: HaystackInput + ?Sized, T>(
 
                     // Check if delegate matches at current position
                     let input = Input::new(haystack.as_bytes())
-                        .span(ix..haystack.len())
+                        .span(ix..match_range.end)
                         .anchored(Anchored::Yes);
                     // capture groups in the delegate are always ignored, so we can use the quicker search_half method
                     let delegate_matches_here = delegate.inner.search_half(&input).is_some();

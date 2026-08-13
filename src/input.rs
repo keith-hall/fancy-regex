@@ -3,6 +3,16 @@ use crate::Match;
 use alloc::string::String;
 use core::ops::Range;
 
+/// Controls whether searches proceed forward or in reverse.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SearchDirection {
+    /// Search from left to right for the earliest match.
+    #[default]
+    Forward,
+    /// Search from right to left for the latest match.
+    Reverse,
+}
+
 /// Returns the smallest possible index of the next valid UTF-8 sequence
 /// starting after `i`.
 ///
@@ -27,6 +37,7 @@ pub struct RegexInput<'h, S: Input + ?Sized> {
     start: usize,
     range: Range<usize>,
     anchored: bool,
+    direction: SearchDirection,
     start_text: Option<bool>,
     end_text: Option<bool>,
     continue_from_previous_match_end: Option<bool>,
@@ -41,6 +52,7 @@ impl<'h, S: Input + ?Sized> Clone for RegexInput<'h, S> {
             start: self.start,
             range: self.range.clone(),
             anchored: self.anchored,
+            direction: self.direction,
             start_text: self.start_text,
             end_text: self.end_text,
             continue_from_previous_match_end: self.continue_from_previous_match_end,
@@ -56,6 +68,7 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
             start: 0,
             range: 0..haystack.len(),
             anchored: false,
+            direction: SearchDirection::Forward,
             start_text: None,
             end_text: None,
             continue_from_previous_match_end: None,
@@ -80,6 +93,25 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
     /// Return a copy of this input with a different search start.
     pub fn from_pos(mut self, start: usize) -> Self {
         self.start = start;
+        self
+    }
+
+    /// Return a copy of this input whose search range ends at `end`.
+    ///
+    /// This is convenient for reverse searches that should inspect only the
+    /// prefix ending at a specific byte position.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `end` is not within the haystack bounds or if `end` is before
+    /// the current range start.
+    pub fn to_pos(mut self, end: usize) -> Self {
+        assert!(end >= self.range.start, "range end must be >= range start");
+        assert!(
+            end <= self.haystack.len(),
+            "range end must be within haystack bounds"
+        );
+        self.range.end = end;
         self
     }
 
@@ -138,6 +170,17 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
     pub fn anchored(mut self, yes: bool) -> Self {
         self.anchored = yes;
         self
+    }
+
+    /// Return a copy of this input with the given search direction.
+    pub fn direction(mut self, direction: SearchDirection) -> Self {
+        self.direction = direction;
+        self
+    }
+
+    /// Return the search direction for this input.
+    pub fn get_direction(&self) -> SearchDirection {
+        self.direction
     }
 
     pub(crate) fn effective_start(&self) -> usize {
@@ -211,6 +254,15 @@ pub trait Input {
     fn make_match<'t>(&'t self, start: usize, end: usize) -> Self::Match<'t>;
     /// Advance past the codepoint at position `i`.
     fn advance_position(&self, i: usize) -> usize;
+    /// Step back by the smallest meaningful unit: one codepoint for UTF-8 text
+    /// (`str` / `String`), one byte for raw byte slices (`[u8]`).
+    ///
+    /// This is the backward analogue of [`advance_position`](Self::advance_position)
+    /// and is used by the reverse-search backward scan so that it visits every
+    /// valid match-start position exactly once regardless of the input type.
+    fn prev_position(&self, i: usize) -> usize {
+        self.prev_codepoint_ix(i)
+    }
 }
 
 impl<S: Input + ?Sized> Input for &S {
@@ -322,6 +374,9 @@ impl Input for [u8] {
     fn advance_position(&self, i: usize) -> usize {
         i + 1
     }
+    fn prev_position(&self, i: usize) -> usize {
+        i - 1
+    }
 }
 
 impl<const N: usize> Input for [u8; N] {
@@ -351,5 +406,8 @@ impl<const N: usize> Input for [u8; N] {
     }
     fn advance_position(&self, i: usize) -> usize {
         i + 1
+    }
+    fn prev_position(&self, i: usize) -> usize {
+        i - 1
     }
 }

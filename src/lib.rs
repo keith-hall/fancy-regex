@@ -65,8 +65,8 @@ mod seek;
 mod to_hir;
 mod vm;
 
-use crate::analyze::can_compile_as_anchored;
 use crate::analyze::{analyze, AnalyzeContext};
+use crate::analyze::{can_compile_as_anchored, starts_with_line_anchor};
 use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
@@ -76,7 +76,7 @@ use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_NOT_CONTINUED_FROM_PREVIOUS_
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
-pub use crate::input::{Input, RegexInput};
+pub use crate::input::{Input, RegexInput, SearchDirection};
 pub use crate::regexset::{RegexSet, RegexSetMatch, RegexSetOptions};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 pub use crate::seek::seek_pattern_is_useful;
@@ -173,6 +173,9 @@ enum RegexImpl {
         explicit_capture_group_0: bool,
         /// The actual pattern passed to regex-automata for delegation
         delegated_pattern: String,
+        /// True if the pattern starts with a line or text start assertion (`^` / `\A`).
+        /// Used by `find_input_raw_reverse` to choose the efficient backward scan.
+        start_line_anchored: bool,
     },
     Fancy {
         prog: Arc<Prog>,
@@ -180,6 +183,9 @@ enum RegexImpl {
         /// The original pattern which the regex was constructed from
         pattern: String,
         options: HardRegexRuntimeOptions,
+        /// True if the pattern starts with a line or text start assertion (`^` / `\A`).
+        /// Used by `find_input_raw_reverse` to choose the efficient backward scan.
+        start_line_anchored: bool,
     },
 }
 
@@ -1215,6 +1221,7 @@ impl Regex {
                     pattern,
                     explicit_capture_group_0: requires_capture_group_fixup,
                     delegated_pattern: re_cooked,
+                    start_line_anchored: starts_with_line_anchor(&tree.expr),
                 },
                 named_groups: Arc::new(tree.named_groups),
             });
@@ -1240,6 +1247,7 @@ impl Regex {
                 n_groups: info.end_group(),
                 options: options.hard_regex_runtime_options,
                 pattern,
+                start_line_anchored: starts_with_line_anchor(&tree.expr),
             },
             named_groups: Arc::new(tree.named_groups),
         })
@@ -1359,13 +1367,17 @@ impl Regex {
         self.find_input(RegexInput::new(input))
     }
 
-    /// Find the first match in the given search input.
+    /// Find a match in the given search input.
+    ///
+    /// By default this finds the first match. Set
+    /// [`RegexInput::direction`](crate::RegexInput::direction) to
+    /// [`SearchDirection::Reverse`] to find the previous match instead.
     pub fn find_input<'t, S: input::Input + ?Sized>(
         &self,
         input: RegexInput<'t, S>,
     ) -> Result<Option<S::Match<'t>>> {
         Ok(self
-            .find_input_raw(&input, 0)?
+            .find_input_raw_with_direction(&input, 0)?
             .map(|(s, e)| input.haystack().make_match(s, e)))
     }
 
@@ -1395,6 +1407,67 @@ impl Regex {
         pos: usize,
     ) -> Result<Option<S::Match<'t>>> {
         self.find_input(RegexInput::new(input).from_pos(pos))
+    }
+
+    /// Find the previous match in the input.
+    ///
+    /// This returns the last non-overlapping forward match within the
+    /// configured search range.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`find_input`](Self::find_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `find_input` with `RegexInput::direction(SearchDirection::Reverse)` instead"
+    )]
+    pub fn find_previous<'t, S: input::Input + ?Sized>(
+        &self,
+        input: &'t S,
+    ) -> Result<Option<S::Match<'t>>> {
+        self.find_previous_input(RegexInput::new(input))
+    }
+
+    /// Find the previous match in the given search input.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`find_input`](Self::find_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `find_input` with `RegexInput::direction(SearchDirection::Reverse)` instead"
+    )]
+    pub fn find_previous_input<'t, S: input::Input + ?Sized>(
+        &self,
+        input: RegexInput<'t, S>,
+    ) -> Result<Option<S::Match<'t>>> {
+        self.find_input(input.direction(SearchDirection::Reverse))
+    }
+
+    /// Returns the previous match in `input`, searching the prefix ending at
+    /// the specified byte position `pos`.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`find_input`](Self::find_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] and
+    /// [`RegexInput::to_pos`](crate::RegexInput::to_pos) instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `find_input` with `RegexInput::direction(SearchDirection::Reverse)` and `RegexInput::to_pos` instead"
+    )]
+    pub fn find_previous_from_pos<'t, S: input::Input + ?Sized>(
+        &self,
+        input: &'t S,
+        pos: usize,
+    ) -> Result<Option<S::Match<'t>>> {
+        #[allow(deprecated)]
+        self.find_previous_input(RegexInput::new(input).to_pos(pos))
     }
 
     pub(crate) fn find_input_raw<S: input::Input + ?Sized>(
@@ -1444,6 +1517,97 @@ impl Regex {
                 vm::run_spans(prog, input, option_flags, options)
             }
         }
+    }
+
+    pub(crate) fn find_input_raw_with_direction<S: input::Input + ?Sized>(
+        &self,
+        input: &RegexInput<'_, S>,
+        option_flags: u32,
+    ) -> Result<Option<(usize, usize)>> {
+        match input.get_direction() {
+            SearchDirection::Forward => self.find_input_raw(input, option_flags),
+            SearchDirection::Reverse => self.find_input_raw_reverse(input, option_flags),
+        }
+    }
+
+    pub(crate) fn find_input_raw_reverse<S: input::Input + ?Sized>(
+        &self,
+        input: &RegexInput<'_, S>,
+        option_flags: u32,
+    ) -> Result<Option<(usize, usize)>> {
+        if input.is_done() {
+            return Ok(None);
+        }
+        // Return the last non-overlapping forward match within the configured range,
+        // equivalent to iterating with find_iter_input and taking the last result.
+        let forward_input = input.clone().direction(SearchDirection::Forward);
+        let range = forward_input.get_range();
+        let start = forward_input.effective_start();
+
+        // Fast path for patterns that begin with a line or text start assertion
+        // (e.g. `(?m)^…` or `\A…`).  At every position that is *not* a valid
+        // anchor point the assertion fails in O(1), so scanning backward from
+        // `range.end` reaches the last matching line without visiting every
+        // preceding match.  The result is identical to the forward-iteration
+        // path for these patterns because each anchor point can produce at most
+        // one match, so "last non-overlapping forward match" = "match at the
+        // last anchor point that succeeds".
+        if self.is_start_line_anchored() {
+            let mut pos = range.end;
+            loop {
+                let step_input = forward_input.clone().from_pos(pos).anchored(true);
+                if let Some(m) = self.find_input_raw(&step_input, option_flags)? {
+                    return Ok(Some(m));
+                }
+                if pos <= start {
+                    break;
+                }
+                pos = forward_input.haystack().prev_position(pos);
+            }
+            return Ok(None);
+        }
+
+        let mut last_match: Option<(usize, usize)> = None;
+        let mut last_match_end: Option<usize> = None;
+        let mut pos = start;
+        let mut last_skipped_empty = false;
+
+        loop {
+            let iter_flags = if last_skipped_empty {
+                option_flags | OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH
+            } else {
+                option_flags
+            };
+            let step_input = forward_input.clone().from_pos(pos);
+
+            match self.find_input_raw(&step_input, iter_flags)? {
+                None => break,
+                Some((start, end)) if start == end => {
+                    let next_pos = forward_input.haystack().advance_position(end);
+                    last_skipped_empty = end == pos;
+                    // Skip empty match immediately after the previous match's end.
+                    if last_match_end != Some(end) {
+                        last_match = Some((start, end));
+                        last_match_end = Some(end);
+                    }
+                    if next_pos >= range.end {
+                        break;
+                    }
+                    pos = next_pos;
+                }
+                Some((start, end)) => {
+                    last_skipped_empty = false;
+                    last_match = Some((start, end));
+                    last_match_end = Some(end);
+                    if end >= range.end {
+                        break;
+                    }
+                    pos = end;
+                }
+            }
+        }
+
+        Ok(last_match)
     }
 
     /// Build a `Captures` value containing only group 0 for the given span.
@@ -1536,13 +1700,16 @@ impl Regex {
         self.captures_input(RegexInput::new(text))
     }
 
-    /// Returns the capture groups for the first match in the given search
-    /// input.
+    /// Returns the capture groups for a match in the given search input.
+    ///
+    /// By default this returns captures for the first match. Set
+    /// [`RegexInput::direction`](crate::RegexInput::direction) to
+    /// [`SearchDirection::Reverse`] to return captures for the previous match.
     pub fn captures_input<'t, S: input::Input + ?Sized>(
         &self,
         input: RegexInput<'t, S>,
     ) -> Result<Option<Captures<'t, S>>> {
-        self.captures_input_with_option_flags(&input, 0)
+        self.captures_input_with_option_flags_and_direction(&input, 0)
     }
 
     /// Returns the capture groups for the first match in `text`, starting from
@@ -1588,6 +1755,66 @@ impl Regex {
         pos: usize,
     ) -> Result<Option<Captures<'t, S>>> {
         self.captures_input(RegexInput::new(text).from_pos(pos))
+    }
+
+    /// Returns the capture groups for the previous match in `text`.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`captures_input`](Self::captures_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `captures_input` with `RegexInput::direction(SearchDirection::Reverse)` instead"
+    )]
+    pub fn captures_previous<'t, S: input::Input + ?Sized>(
+        &self,
+        text: &'t S,
+    ) -> Result<Option<Captures<'t, S>>> {
+        #[allow(deprecated)]
+        self.captures_previous_input(RegexInput::new(text))
+    }
+
+    /// Returns the capture groups for the previous match in the given search
+    /// input.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`captures_input`](Self::captures_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `captures_input` with `RegexInput::direction(SearchDirection::Reverse)` instead"
+    )]
+    pub fn captures_previous_input<'t, S: input::Input + ?Sized>(
+        &self,
+        input: RegexInput<'t, S>,
+    ) -> Result<Option<Captures<'t, S>>> {
+        self.captures_input(input.direction(SearchDirection::Reverse))
+    }
+
+    /// Returns the capture groups for the previous match in `text`, searching
+    /// the prefix ending at byte position `pos`.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`captures_input`](Self::captures_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] and
+    /// [`RegexInput::to_pos`](crate::RegexInput::to_pos) instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `captures_input` with `RegexInput::direction(SearchDirection::Reverse)` and `RegexInput::to_pos` instead"
+    )]
+    pub fn captures_previous_from_pos<'t, S: input::Input + ?Sized>(
+        &self,
+        text: &'t S,
+        pos: usize,
+    ) -> Result<Option<Captures<'t, S>>> {
+        #[allow(deprecated)]
+        self.captures_previous_input(RegexInput::new(text).to_pos(pos))
     }
 
     pub(crate) fn captures_input_with_option_flags<'t, S: input::Input + ?Sized>(
@@ -1649,12 +1876,63 @@ impl Regex {
         }
     }
 
+    pub(crate) fn captures_input_with_option_flags_and_direction<'t, S: input::Input + ?Sized>(
+        &self,
+        input: &RegexInput<'t, S>,
+        option_flags: u32,
+    ) -> Result<Option<Captures<'t, S>>> {
+        match input.get_direction() {
+            SearchDirection::Forward => self.captures_input_with_option_flags(input, option_flags),
+            SearchDirection::Reverse => {
+                self.captures_input_with_option_flags_reverse(input, option_flags)
+            }
+        }
+    }
+
+    pub(crate) fn captures_input_with_option_flags_reverse<'t, S: input::Input + ?Sized>(
+        &self,
+        input: &RegexInput<'t, S>,
+        option_flags: u32,
+    ) -> Result<Option<Captures<'t, S>>> {
+        if input.is_done() {
+            return Ok(None);
+        }
+        // Find the span of the last non-overlapping forward match.
+        let Some((start, _end)) = self.find_input_raw_reverse(input, option_flags)? else {
+            return Ok(None);
+        };
+        // Retrieve capture groups via an anchored forward search at the match start.
+        let anchored_input = input
+            .clone()
+            .direction(SearchDirection::Forward)
+            .from_pos(start)
+            .range(start..input.get_range().end)
+            .anchored(true);
+        self.captures_input_with_option_flags(&anchored_input, option_flags)
+    }
+
     pub(crate) fn seek_pattern(&self) -> &str {
         match &self.inner {
             RegexImpl::Wrap {
                 delegated_pattern, ..
             } => delegated_pattern,
             RegexImpl::Fancy { prog, .. } => &prog.seek_pattern,
+        }
+    }
+
+    /// Returns `true` if the compiled pattern begins with a line or text start
+    /// assertion.  Used by the reverse search to choose the efficient backward
+    /// scan path.
+    fn is_start_line_anchored(&self) -> bool {
+        match &self.inner {
+            RegexImpl::Wrap {
+                start_line_anchored,
+                ..
+            } => *start_line_anchored,
+            RegexImpl::Fancy {
+                start_line_anchored,
+                ..
+            } => *start_line_anchored,
         }
     }
 

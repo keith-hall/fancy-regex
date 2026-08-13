@@ -25,8 +25,6 @@ use alloc::format;
 use alloc::string::{String, ToString};
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
-#[cfg(feature = "variable-lookbehinds")]
-use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
@@ -42,6 +40,8 @@ use std::collections::HashMap as Map;
 use crate::analyze::Info;
 use crate::seek::build_seek_pattern;
 use crate::to_hir::{expr_to_hir, HirCtx};
+#[cfg(feature = "variable-lookbehinds")]
+use crate::vm::ReverseProg;
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, CharClassMatcher, Delegate, Insn, Prog, Seek};
@@ -686,84 +686,19 @@ impl<'a> Compiler<'a> {
                     )))
                 }
             } else {
-                // If the variable lookbehind is a Concat expression where all children
-                // are either easy or are guaranteed to consume 0 characters, then we can
-                // compile it as variable lookbehind without additional goback instructions.
-                if let Expr::Concat(_) = inner.expr {
-                    let can_compile = inner
-                        .children
-                        .iter()
-                        .all(|child| !child.hard || child.const_size);
-
-                    if can_compile {
-                        #[cfg(feature = "variable-lookbehinds")]
-                        {
-                            let mut delegate_nodes = vec![];
-                            let mut go_back: usize = 0;
-                            for child in inner.children.iter().rev() {
-                                if child.hard {
-                                    self.compile_variable_lookbehind_from_concat_nodes(
-                                        &delegate_nodes,
-                                    )?;
-                                    delegate_nodes.clear();
-
-                                    go_back += child.min_size;
-                                    if go_back > 0 {
-                                        self.b.add(Insn::GoBack(go_back));
-                                    }
-                                    self.visit(child, false)?;
-                                    go_back = child.min_size;
-                                } else {
-                                    if go_back > 0 {
-                                        self.b.add(Insn::GoBack(go_back));
-                                        go_back = 0;
-                                    }
-                                    delegate_nodes.push(child);
-                                }
-                            }
-                            self.compile_variable_lookbehind_from_concat_nodes(&delegate_nodes)?;
-                            Ok(())
-                        }
-                        #[cfg(not(feature = "variable-lookbehinds"))]
-                        {
-                            Err(Error::CompileError(Box::new(
-                                CompileError::VariableLookBehindRequiresFeature,
-                            )))
-                        }
-                    } else {
-                        Err(Error::CompileError(Box::new(
-                            CompileError::FeatureNotYetSupported(
-                                "Variable length lookbehinds with fancy features".to_string(),
-                            ),
-                        )))
-                    }
-                } else {
-                    // variable sized lookbehinds with fancy features are currently unsupported
+                #[cfg(feature = "variable-lookbehinds")]
+                {
+                    self.compile_hard_variable_lookbehind(inner)
+                }
+                #[cfg(not(feature = "variable-lookbehinds"))]
+                {
                     Err(Error::CompileError(Box::new(
-                        CompileError::FeatureNotYetSupported(
-                            "Variable length lookbehinds with fancy features".to_string(),
-                        ),
+                        CompileError::VariableLookBehindRequiresFeature,
                     )))
                 }
             }
         } else {
             self.visit(inner, false)
-        }
-    }
-
-    #[cfg(feature = "variable-lookbehinds")]
-    fn compile_variable_lookbehind_from_concat_nodes(
-        &mut self,
-        infos: &Vec<&Info<'_>>,
-    ) -> Result<()> {
-        if infos.is_empty() {
-            Ok(())
-        } else {
-            let mut delegate_builder = DelegateBuilder::new(&self.options);
-            for info in infos.iter().rev() {
-                delegate_builder.push(info);
-            }
-            self.compile_variable_lookbehind(delegate_builder)
         }
     }
 
@@ -819,6 +754,17 @@ impl<'a> Compiler<'a> {
                 capture_group_extraction_inner: forward_regex,
                 capture_groups: capture_groups.to_option_if_non_empty(),
             }));
+        Ok(())
+    }
+
+    #[cfg(feature = "variable-lookbehinds")]
+    fn compile_hard_variable_lookbehind(&mut self, inner: &Info<'_>) -> Result<()> {
+        let prog =
+            compile_anchored_subprog(inner, self.options.clone(), self.root_info.end_group())?;
+        self.b.add(Insn::BackwardsProg(ReverseProg {
+            prog: Arc::new(prog),
+            pattern: "<hard-lookbehind>".to_string(),
+        }));
         Ok(())
     }
 
@@ -1260,6 +1206,30 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     Ok(c.b.build(bytes_mode, seek_pattern))
 }
 
+#[cfg(feature = "variable-lookbehinds")]
+fn compile_anchored_subprog(
+    info: &Info<'_>,
+    options: CompileOptions,
+    max_group: usize,
+) -> Result<Prog> {
+    let bytes_mode = options.bytes_mode;
+    let mut group_info_map = Map::new();
+    populate_group_info_map(&mut group_info_map, info);
+    let mut c = Compiler {
+        b: VMBuilder::new(max_group),
+        options,
+        inside_alternation: false,
+        group_info_map,
+        subroutine_recursion_stack: Vec::new(),
+        root_info: info,
+    };
+    c.b.add(Insn::Save(0));
+    c.visit(info, false)?;
+    c.b.add(Insn::Save(1));
+    c.b.add(Insn::End);
+    Ok(c.b.build(bytes_mode, String::new()))
+}
+
 struct DelegateBuilder {
     re: String,
     min_size: usize,
@@ -1689,14 +1659,13 @@ mod tests {
     fn variable_lookbehind_with_required_feature_no_captures_hard_const_size_zero_length() {
         let prog = compile_prog(r"(?<=\bab+)x");
 
-        assert_eq!(prog.len(), 6, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
-        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "ab+");
-        assert_matches!(prog[2], Insn::Assertion(crate::Assertion::WordBoundary));
-        assert_matches!(prog[3], Restore(0));
-        assert_matches!(prog[4], Lit(ref l) if l == "x");
-        assert_matches!(prog[5], End);
+        assert_matches!(&prog[1], BackwardsProg(ReverseProg { pattern, .. }) if pattern == "<hard-lookbehind>");
+        assert_matches!(prog[2], Restore(0));
+        assert_matches!(prog[3], Lit(ref l) if l == "x");
+        assert_matches!(prog[4], End);
     }
 
     #[test]
@@ -1704,7 +1673,7 @@ mod tests {
     fn variable_lookbehind_with_required_feature_no_captures_hard_const_size_non_zero_length() {
         let prog = compile_prog(r"((.)b+(?<=\1\1b+)x)");
 
-        assert_eq!(prog.len(), 16, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 12, "prog: {:?}", prog);
 
         assert_matches!(prog[0], SaveCaptureGroupStart(0));
         assert_matches!(prog[1], SaveCaptureGroupStart(1));
@@ -1713,29 +1682,11 @@ mod tests {
         assert_matches!(prog[4], Lit(ref l) if l == "b");
         assert_matches!(prog[5], Split(4, 6));
         assert_matches!(prog[6], Save(4));
-        assert_matches!(&prog[7], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "b+");
-        assert_matches!(prog[8], GoBack(1));
-        assert_matches!(
-            prog[9],
-            Backref {
-                slot: 2,
-                casei: false,
-                unicode: true,
-            }
-        );
-        assert_matches!(prog[10], GoBack(2));
-        assert_matches!(
-            prog[11],
-            Backref {
-                slot: 2,
-                casei: false,
-                unicode: true,
-            }
-        );
-        assert_matches!(prog[12], Restore(4));
-        assert_matches!(prog[13], Lit(ref l) if l == "x");
-        assert_matches!(prog[14], Save(1));
-        assert_matches!(prog[15], End);
+        assert_matches!(&prog[7], BackwardsProg(ReverseProg { pattern, .. }) if pattern == "<hard-lookbehind>");
+        assert_matches!(prog[8], Restore(4));
+        assert_matches!(prog[9], Lit(ref l) if l == "x");
+        assert_matches!(prog[10], Save(1));
+        assert_matches!(prog[11], End);
     }
 
     #[test]
@@ -1755,21 +1706,34 @@ mod tests {
     #[test]
     #[cfg(feature = "variable-lookbehinds")]
     fn variable_lookbehind_with_required_feature_backref_captures() {
-        // currently hard variable lookbehinds are unsupported.
-        // the backref to a capture group inside the variable lookbehind makes the capture group hard
         let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
         let info = analyze(&tree, AnalyzeContext::default()).unwrap();
-        assert_compile_error(
-            compile(
-                &info,
-                CompileOptions {
-                    anchored: true,
-                    contains_subroutines: tree.contains_subroutines,
-                    ..CompileOptions::default()
-                },
-            ),
-            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        let prog = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+                ..CompileOptions::default()
+            },
+        )
+        .unwrap()
+        .body;
+
+        assert_eq!(prog.len(), 7, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(prog[1], Save(4));
+        assert_matches!(&prog[2], BackwardsProg(ReverseProg { pattern, .. }) if pattern == "<hard-lookbehind>");
+        assert_matches!(prog[3], Restore(4));
+        assert_matches!(
+            prog[4],
+            Backref {
+                slot: 2,
+                casei: false,
+                unicode: true,
+            }
         );
+        assert_matches!(prog[5], Save(1));
+        assert_matches!(prog[6], End);
     }
 
     #[test]
