@@ -1,5 +1,6 @@
 use fancy_regex::{
     BytesMode, Captures, CompileError, Error, Expander, Match, RegexBuilder, RegexInput, Result,
+    SearchDirection,
 };
 use matches::assert_matches;
 use std::borrow::Cow;
@@ -30,6 +31,21 @@ fn captures_previous_wrap() {
     let captures = re.captures_previous("foo bar baz").unwrap().unwrap();
     assert_match(captures.get(0), "z", 10, 11);
     assert_match(captures.get(1), "z", 10, 11);
+}
+
+#[test]
+fn captures_input_reverse_direction_matches_previous_api() {
+    let re = common::regex(r"(\w+)");
+    let hay = "foo bar baz";
+    let by_direction = re
+        .captures_input(RegexInput::new(hay).direction(SearchDirection::Reverse))
+        .unwrap()
+        .unwrap();
+    let by_previous = re.captures_previous(hay).unwrap().unwrap();
+    assert_match(by_direction.get(0), "z", 10, 11);
+    assert_match(by_direction.get(1), "z", 10, 11);
+    assert_match(by_previous.get(0), "z", 10, 11);
+    assert_match(by_previous.get(1), "z", 10, 11);
 }
 
 #[test]

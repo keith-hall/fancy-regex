@@ -3,6 +3,16 @@ use crate::Match;
 use alloc::string::String;
 use core::ops::Range;
 
+/// Controls whether searches proceed forward or in reverse.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SearchDirection {
+    /// Search from left to right for the earliest match.
+    #[default]
+    Forward,
+    /// Search from right to left for the latest match.
+    Reverse,
+}
+
 /// Returns the smallest possible index of the next valid UTF-8 sequence
 /// starting after `i`.
 ///
@@ -27,6 +37,7 @@ pub struct RegexInput<'h, S: Input + ?Sized> {
     start: usize,
     range: Range<usize>,
     anchored: bool,
+    direction: SearchDirection,
     start_text: Option<bool>,
     end_text: Option<bool>,
     continue_from_previous_match_end: Option<bool>,
@@ -41,6 +52,7 @@ impl<'h, S: Input + ?Sized> Clone for RegexInput<'h, S> {
             start: self.start,
             range: self.range.clone(),
             anchored: self.anchored,
+            direction: self.direction,
             start_text: self.start_text,
             end_text: self.end_text,
             continue_from_previous_match_end: self.continue_from_previous_match_end,
@@ -56,6 +68,7 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
             start: 0,
             range: 0..haystack.len(),
             anchored: false,
+            direction: SearchDirection::Forward,
             start_text: None,
             end_text: None,
             continue_from_previous_match_end: None,
@@ -157,6 +170,17 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
     pub fn anchored(mut self, yes: bool) -> Self {
         self.anchored = yes;
         self
+    }
+
+    /// Return a copy of this input with the given search direction.
+    pub fn direction(mut self, direction: SearchDirection) -> Self {
+        self.direction = direction;
+        self
+    }
+
+    /// Return the search direction for this input.
+    pub fn get_direction(&self) -> SearchDirection {
+        self.direction
     }
 
     pub(crate) fn effective_start(&self) -> usize {

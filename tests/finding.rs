@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::{BytesMode, Match, RegexBuilder, RegexInput};
+use fancy_regex::{BytesMode, Match, RegexBuilder, RegexInput, SearchDirection};
 use matches::assert_matches;
 use std::ops::Range;
 
@@ -31,6 +31,30 @@ fn find_previous_wrap() {
             .unwrap()
             .map(|m| (m.start(), m.end())),
         Some((7, 8))
+    );
+}
+
+#[test]
+fn find_input_reverse_direction_matches_previous_api() {
+    let re = RegexBuilder::new(r"\w+").build().unwrap();
+    let hay = "... test more";
+    assert_eq!(
+        re.find_input(RegexInput::new(hay).direction(SearchDirection::Reverse))
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        re.find_previous(hay).unwrap().map(|m| (m.start(), m.end()))
+    );
+    assert_eq!(
+        re.find_input(
+            RegexInput::new(hay)
+                .to_pos(9)
+                .direction(SearchDirection::Reverse)
+        )
+        .unwrap()
+        .map(|m| (m.start(), m.end())),
+        re.find_previous_from_pos(hay, 9)
+            .unwrap()
+            .map(|m| (m.start(), m.end()))
     );
 }
 

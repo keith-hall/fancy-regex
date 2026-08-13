@@ -76,7 +76,7 @@ use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_NOT_CONTINUED_FROM_PREVIOUS_
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
-pub use crate::input::{Input, RegexInput};
+pub use crate::input::{Input, RegexInput, SearchDirection};
 pub use crate::regexset::{RegexSet, RegexSetMatch, RegexSetOptions};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 pub use crate::seek::seek_pattern_is_useful;
@@ -1359,13 +1359,17 @@ impl Regex {
         self.find_input(RegexInput::new(input))
     }
 
-    /// Find the first match in the given search input.
+    /// Find a match in the given search input.
+    ///
+    /// By default this finds the first match. Set
+    /// [`RegexInput::direction`](crate::RegexInput::direction) to
+    /// [`SearchDirection::Reverse`] to find the previous match instead.
     pub fn find_input<'t, S: input::Input + ?Sized>(
         &self,
         input: RegexInput<'t, S>,
     ) -> Result<Option<S::Match<'t>>> {
         Ok(self
-            .find_input_raw(&input, 0)?
+            .find_input_raw_with_direction(&input, 0)?
             .map(|(s, e)| input.haystack().make_match(s, e)))
     }
 
@@ -1415,9 +1419,7 @@ impl Regex {
         &self,
         input: RegexInput<'t, S>,
     ) -> Result<Option<S::Match<'t>>> {
-        Ok(self
-            .find_input_raw_reverse(&input, 0)?
-            .map(|(s, e)| input.haystack().make_match(s, e)))
+        self.find_input(input.direction(SearchDirection::Reverse))
     }
 
     /// Returns the previous match in `input`, searching the prefix ending at
@@ -1476,6 +1478,17 @@ impl Regex {
                 // scratch, so this path is allocation-free per call.
                 vm::run_spans(prog, input, option_flags, options)
             }
+        }
+    }
+
+    pub(crate) fn find_input_raw_with_direction<S: input::Input + ?Sized>(
+        &self,
+        input: &RegexInput<'_, S>,
+        option_flags: u32,
+    ) -> Result<Option<(usize, usize)>> {
+        match input.get_direction() {
+            SearchDirection::Forward => self.find_input_raw(input, option_flags),
+            SearchDirection::Reverse => self.find_input_raw_reverse(input, option_flags),
         }
     }
 
@@ -1626,13 +1639,16 @@ impl Regex {
         self.captures_input(RegexInput::new(text))
     }
 
-    /// Returns the capture groups for the first match in the given search
-    /// input.
+    /// Returns the capture groups for a match in the given search input.
+    ///
+    /// By default this returns captures for the first match. Set
+    /// [`RegexInput::direction`](crate::RegexInput::direction) to
+    /// [`SearchDirection::Reverse`] to return captures for the previous match.
     pub fn captures_input<'t, S: input::Input + ?Sized>(
         &self,
         input: RegexInput<'t, S>,
     ) -> Result<Option<Captures<'t, S>>> {
-        self.captures_input_with_option_flags(&input, 0)
+        self.captures_input_with_option_flags_and_direction(&input, 0)
     }
 
     /// Returns the capture groups for the first match in `text`, starting from
@@ -1694,7 +1710,7 @@ impl Regex {
         &self,
         input: RegexInput<'t, S>,
     ) -> Result<Option<Captures<'t, S>>> {
-        self.captures_input_with_option_flags_reverse(&input, 0)
+        self.captures_input(input.direction(SearchDirection::Reverse))
     }
 
     /// Returns the capture groups for the previous match in `text`, searching
@@ -1762,6 +1778,19 @@ impl Regex {
                         input: haystack,
                     }
                 }))
+            }
+        }
+    }
+
+    pub(crate) fn captures_input_with_option_flags_and_direction<'t, S: input::Input + ?Sized>(
+        &self,
+        input: &RegexInput<'t, S>,
+        option_flags: u32,
+    ) -> Result<Option<Captures<'t, S>>> {
+        match input.get_direction() {
+            SearchDirection::Forward => self.captures_input_with_option_flags(input, option_flags),
+            SearchDirection::Reverse => {
+                self.captures_input_with_option_flags_reverse(input, option_flags)
             }
         }
     }
