@@ -1504,15 +1504,10 @@ impl Regex {
             RegexImpl::Wrap {
                 inner,
                 explicit_capture_group_0,
-                delegated_pattern,
                 ..
             } => {
-                let start = reverse_search_start(
-                    inner,
-                    delegated_pattern,
-                    input,
-                    option_flags & OPTION_FIND_NOT_EMPTY != 0,
-                )?;
+                let start =
+                    reverse_search_start(inner, input, option_flags & OPTION_FIND_NOT_EMPTY != 0)?;
                 let Some(start) = start else {
                     return Ok(None);
                 };
@@ -1809,15 +1804,10 @@ impl Regex {
             RegexImpl::Wrap {
                 inner,
                 explicit_capture_group_0,
-                delegated_pattern,
                 ..
             } => {
-                let Some(start) = reverse_search_start(
-                    inner,
-                    delegated_pattern,
-                    input,
-                    option_flags & OPTION_FIND_NOT_EMPTY != 0,
-                )?
+                let Some(start) =
+                    reverse_search_start(inner, input, option_flags & OPTION_FIND_NOT_EMPTY != 0)?
                 else {
                     return Ok(None);
                 };
@@ -2177,11 +2167,9 @@ fn ra_input<'a, S: input::Input + ?Sized>(input: &'a RegexInput<'a, S>) -> RaInp
 
 fn reverse_search_start<S: input::Input + ?Sized>(
     inner: &RaRegex,
-    pattern: &str,
     input: &RegexInput<'_, S>,
     find_not_empty: bool,
 ) -> Result<Option<usize>> {
-    let _ = pattern;
     let haystack = input.haystack();
     let range = input.get_range();
     let mut pos = range.end;

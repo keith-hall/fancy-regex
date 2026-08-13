@@ -1405,7 +1405,7 @@ fn run_with_seed<S: HaystackInput + ?Sized, T>(
                 }
                 Insn::BackwardsProg(ReverseProg { ref prog, .. }) => {
                     let reverse_input = RegexInput::new(haystack).range(0..ix);
-                    match run_rev_seed(prog, &reverse_input, 0, options, &state.saves)? {
+                    match run_rev_seed(prog, &reverse_input, option_flags, options, &state.saves)? {
                         Some(saves) => {
                             for (slot, value) in saves.iter().copied().enumerate().skip(2) {
                                 if value != usize::MAX && slot < state.saves.len() {
