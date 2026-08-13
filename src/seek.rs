@@ -656,6 +656,22 @@ mod tests {
     }
 
     #[test]
+    fn seek_pattern_subroutine_call_inlined() {
+        assert_eq!(
+            get_seek_pattern(r"([A-Z][a-z0-9]*)::\g<1>"),
+            r"(?:[A-Z][a-z0-9]*)::(?:[A-Z][a-z0-9]*)"
+        );
+    }
+
+    #[test]
+    fn seek_pattern_subroutine_call_inlined_and_anchors_are_preserved() {
+        assert_eq!(
+            get_seek_pattern(r"((?m:^)[A-Z][a-z0-9]*)\n\g<1>"),
+            "(?:(?m:^)[A-Z][a-z0-9]*)\n(?:(?m:^)[A-Z][a-z0-9]*)"
+        );
+    }
+
+    #[test]
     fn seek_pattern_self_referential_backref_is_bounded() {
         // Inlining a backref whose target transitively references the backref's
         // own ancestors would expand exponentially with recursion depth if we

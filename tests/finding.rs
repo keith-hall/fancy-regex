@@ -1380,6 +1380,9 @@ fn seek_matches_identical_to_default() {
         ),
         // long haystack with no match
         (r"(xyz)\1", &"abcdefghij".repeat(1000)),
+        // literals
+        (r"(?<=)\nbaz", "foobar\nbaz\ntest"),
+        (r"(?<=)\tbaz", "foobar\n\tbaz\n\ttest"),
     ];
     for (re, text) in cases {
         assert_seek_same(re, text);
