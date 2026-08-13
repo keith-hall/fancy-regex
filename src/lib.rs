@@ -65,8 +65,8 @@ mod seek;
 mod to_hir;
 mod vm;
 
-use crate::analyze::can_compile_as_anchored;
 use crate::analyze::{analyze, AnalyzeContext};
+use crate::analyze::{can_compile_as_anchored, starts_with_line_anchor};
 use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
@@ -173,6 +173,9 @@ enum RegexImpl {
         explicit_capture_group_0: bool,
         /// The actual pattern passed to regex-automata for delegation
         delegated_pattern: String,
+        /// True if the pattern starts with a line or text start assertion (`^` / `\A`).
+        /// Used by `find_input_raw_reverse` to choose the efficient backward scan.
+        start_line_anchored: bool,
     },
     Fancy {
         prog: Arc<Prog>,
@@ -180,6 +183,9 @@ enum RegexImpl {
         /// The original pattern which the regex was constructed from
         pattern: String,
         options: HardRegexRuntimeOptions,
+        /// True if the pattern starts with a line or text start assertion (`^` / `\A`).
+        /// Used by `find_input_raw_reverse` to choose the efficient backward scan.
+        start_line_anchored: bool,
     },
 }
 
@@ -1215,6 +1221,7 @@ impl Regex {
                     pattern,
                     explicit_capture_group_0: requires_capture_group_fixup,
                     delegated_pattern: re_cooked,
+                    start_line_anchored: starts_with_line_anchor(&tree.expr),
                 },
                 named_groups: Arc::new(tree.named_groups),
             });
@@ -1240,6 +1247,7 @@ impl Regex {
                 n_groups: info.end_group(),
                 options: options.hard_regex_runtime_options,
                 pattern,
+                start_line_anchored: starts_with_line_anchor(&tree.expr),
             },
             named_groups: Arc::new(tree.named_groups),
         })
@@ -1534,9 +1542,34 @@ impl Regex {
         // equivalent to iterating with find_iter_input and taking the last result.
         let forward_input = input.clone().direction(SearchDirection::Forward);
         let range = forward_input.get_range();
+        let start = forward_input.effective_start();
+
+        // Fast path for patterns that begin with a line or text start assertion
+        // (e.g. `(?m)^…` or `\A…`).  At every position that is *not* a valid
+        // anchor point the assertion fails in O(1), so scanning backward from
+        // `range.end` reaches the last matching line without visiting every
+        // preceding match.  The result is identical to the forward-iteration
+        // path for these patterns because each anchor point can produce at most
+        // one match, so "last non-overlapping forward match" = "match at the
+        // last anchor point that succeeds".
+        if self.is_start_line_anchored() {
+            let mut pos = range.end;
+            loop {
+                let step_input = forward_input.clone().from_pos(pos).anchored(true);
+                if let Some(m) = self.find_input_raw(&step_input, option_flags)? {
+                    return Ok(Some(m));
+                }
+                if pos <= start {
+                    break;
+                }
+                pos = forward_input.haystack().prev_position(pos);
+            }
+            return Ok(None);
+        }
+
         let mut last_match: Option<(usize, usize)> = None;
         let mut last_match_end: Option<usize> = None;
-        let mut pos = forward_input.effective_start();
+        let mut pos = start;
         let mut last_skipped_empty = false;
 
         loop {
@@ -1884,6 +1917,22 @@ impl Regex {
                 delegated_pattern, ..
             } => delegated_pattern,
             RegexImpl::Fancy { prog, .. } => &prog.seek_pattern,
+        }
+    }
+
+    /// Returns `true` if the compiled pattern begins with a line or text start
+    /// assertion.  Used by the reverse search to choose the efficient backward
+    /// scan path.
+    fn is_start_line_anchored(&self) -> bool {
+        match &self.inner {
+            RegexImpl::Wrap {
+                start_line_anchored,
+                ..
+            } => *start_line_anchored,
+            RegexImpl::Fancy {
+                start_line_anchored,
+                ..
+            } => *start_line_anchored,
         }
     }
 

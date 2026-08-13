@@ -94,6 +94,132 @@ fn find_previous_input_range_is_respected() {
 }
 
 #[test]
+fn find_previous_start_anchored_easy_multiline() {
+    // Easy (delegated) pattern starting with (?m)^ — uses the backward scan.
+    let re = RegexBuilder::new(r"(?m)^\w+").build().unwrap();
+    let hay = "alpha\nbeta\ngamma";
+    assert_eq!(
+        re.find_input(RegexInput::new(hay).direction(SearchDirection::Reverse))
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((11, 16)) // "gamma"
+    );
+    // Restricted range: should only find "beta".
+    assert_eq!(
+        re.find_input(
+            RegexInput::new(hay)
+                .range(0..10)
+                .direction(SearchDirection::Reverse)
+        )
+        .unwrap()
+        .map(|m| (m.start(), m.end())),
+        Some((6, 10)) // "beta"
+    );
+    // No match when range covers only the first line.
+    assert_eq!(
+        re.find_input(
+            RegexInput::new(hay)
+                .range(0..5)
+                .direction(SearchDirection::Reverse)
+        )
+        .unwrap()
+        .map(|m| (m.start(), m.end())),
+        Some((0, 5)) // "alpha"
+    );
+}
+
+#[test]
+fn find_previous_start_anchored_fancy_multiline() {
+    // Fancy (VM) pattern starting with (?m)^ — also uses the backward scan.
+    let re = RegexBuilder::new(r"(?m)^(\w+)\1").build().unwrap();
+    let hay = "aa\nbb\ncc";
+    assert_eq!(
+        re.find_input(RegexInput::new(hay).direction(SearchDirection::Reverse))
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((6, 8)) // "cc"
+    );
+    assert_eq!(
+        re.find_input(
+            RegexInput::new(hay)
+                .range(0..4)
+                .direction(SearchDirection::Reverse)
+        )
+        .unwrap()
+        .map(|m| (m.start(), m.end())),
+        Some((0, 2)) // "aa"
+    );
+}
+
+#[test]
+fn find_previous_start_anchored_text_start() {
+    // \A-anchored pattern: can only match at position 0 so at most one result.
+    let re = RegexBuilder::new(r"\A\w+").build().unwrap();
+    let hay = "hello world";
+    assert_eq!(
+        re.find_input(RegexInput::new(hay).direction(SearchDirection::Reverse))
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((0, 5)) // "hello"
+    );
+    // No match if the range starts after position 0.
+    assert_eq!(
+        re.find_input(
+            RegexInput::new(hay)
+                .range(1..hay.len())
+                .direction(SearchDirection::Reverse)
+        )
+        .unwrap()
+        .map(|m| (m.start(), m.end())),
+        None
+    );
+}
+
+#[test]
+fn find_previous_start_anchored_no_match() {
+    let re = RegexBuilder::new(r"(?m)^zzz").build().unwrap();
+    let hay = "alpha\nbeta\ngamma";
+    assert_eq!(
+        re.find_input(RegexInput::new(hay).direction(SearchDirection::Reverse))
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn find_previous_start_anchored_bytes_input() {
+    // Verify that the backward scan steps by one *byte* for [u8] inputs so it
+    // doesn't skip a line-start byte that happens to look like a UTF-8
+    // continuation byte (0x80–0xBF).  Without `prev_position` being overridden
+    // for `[u8]`, `prev_codepoint_ix` would jump over such a position.
+    use fancy_regex::BytesMode;
+    let re = RegexBuilder::new(r"(?m)^.")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    // Haystack: ['\n', 0x80, '\n', 0x41 ('A')]
+    // Line starts: position 1 (0x80) and position 3 (0x41).
+    let hay: &[u8] = b"\n\x80\nA";
+    assert_eq!(
+        re.find_input(RegexInput::new(hay).direction(SearchDirection::Reverse))
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((3, 4)) // 'A' on the last line
+    );
+    // With a range ending before the last line start, we get 0x80.
+    assert_eq!(
+        re.find_input(
+            RegexInput::new(hay)
+                .range(0..3)
+                .direction(SearchDirection::Reverse)
+        )
+        .unwrap()
+        .map(|m| (m.start(), m.end())),
+        Some((1, 2)) // 0x80 at the start of line 2
+    );
+}
+
+#[test]
 fn find_fancy_case_insensitive() {
     assert_eq!(find(r"(x|xy)\1", "XX"), None);
     assert_eq!(find(r"(x|xy)\1", "xx"), Some((0, 2)));

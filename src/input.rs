@@ -254,6 +254,15 @@ pub trait Input {
     fn make_match<'t>(&'t self, start: usize, end: usize) -> Self::Match<'t>;
     /// Advance past the codepoint at position `i`.
     fn advance_position(&self, i: usize) -> usize;
+    /// Step back by the smallest meaningful unit: one codepoint for UTF-8 text
+    /// (`str` / `String`), one byte for raw byte slices (`[u8]`).
+    ///
+    /// This is the backward analogue of [`advance_position`](Self::advance_position)
+    /// and is used by the reverse-search backward scan so that it visits every
+    /// valid match-start position exactly once regardless of the input type.
+    fn prev_position(&self, i: usize) -> usize {
+        self.prev_codepoint_ix(i)
+    }
 }
 
 impl<S: Input + ?Sized> Input for &S {
@@ -365,6 +374,9 @@ impl Input for [u8] {
     fn advance_position(&self, i: usize) -> usize {
         i + 1
     }
+    fn prev_position(&self, i: usize) -> usize {
+        i - 1
+    }
 }
 
 impl<const N: usize> Input for [u8; N] {
@@ -394,5 +406,8 @@ impl<const N: usize> Input for [u8; N] {
     }
     fn advance_position(&self, i: usize) -> usize {
         i + 1
+    }
+    fn prev_position(&self, i: usize) -> usize {
+        i - 1
     }
 }

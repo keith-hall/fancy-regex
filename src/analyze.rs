@@ -904,6 +904,28 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
     Ok(analyzed)
 }
 
+/// Determine if the expression begins with a line or text start assertion
+/// (`^`, `\A`, or their multiline / CRLF variants), making it safe and efficient
+/// to use a backward position scan for reverse-search: at positions that are not
+/// valid anchor points the assertion fails in O(1), so the scan skips quickly to
+/// the rightmost valid starting position without visiting every character.
+///
+/// Note that false negatives are possible.  This is only an optimisation hint.
+pub(crate) fn starts_with_line_anchor(root_expr: &Expr) -> bool {
+    let first = match root_expr {
+        Expr::Concat(children) if !children.is_empty() => &children[0],
+        other => other,
+    };
+    matches!(
+        first,
+        Expr::Assertion(
+            Assertion::StartText
+                | Assertion::StartLine { .. }
+                | Assertion::StartLineOniguruma { .. }
+        )
+    )
+}
+
 /// Determine if the expression will always only ever match at position 0.
 /// Note that false negatives are possible - it can return false even if it could be anchored.
 /// This should therefore only be treated as an optimization.
@@ -1468,6 +1490,43 @@ mod tests {
     fn not_anchored_for_startline_assertions() {
         let tree = Expr::parse_tree(r"(?m)^(\w+)\1").unwrap();
         assert_eq!(can_compile_as_anchored(&tree.expr), false);
+    }
+
+    #[test]
+    fn starts_with_line_anchor_detection() {
+        use super::starts_with_line_anchor;
+
+        // StartText (`^` without multiline, or `\A`) → true
+        assert!(starts_with_line_anchor(
+            &Expr::parse_tree(r"^abc").unwrap().expr
+        ));
+        assert!(starts_with_line_anchor(
+            &Expr::parse_tree(r"\Aabc").unwrap().expr
+        ));
+
+        // StartLine (`(?m)^`) → true
+        assert!(starts_with_line_anchor(
+            &Expr::parse_tree(r"(?m)^abc").unwrap().expr
+        ));
+        assert!(starts_with_line_anchor(
+            &Expr::parse_tree(r"(?m)^").unwrap().expr
+        ));
+
+        // No anchor at start → false
+        assert!(!starts_with_line_anchor(
+            &Expr::parse_tree(r"abc").unwrap().expr
+        ));
+        assert!(!starts_with_line_anchor(
+            &Expr::parse_tree(r"\bword").unwrap().expr
+        ));
+        // Anchor not at the very beginning
+        assert!(!starts_with_line_anchor(
+            &Expr::parse_tree(r"a(?m)^b").unwrap().expr
+        ));
+        // `\G` anchor is not covered by this helper
+        assert!(!starts_with_line_anchor(
+            &Expr::parse_tree(r"\Gpattern").unwrap().expr
+        ));
     }
 
     #[test]
