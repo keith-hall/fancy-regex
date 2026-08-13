@@ -2432,11 +2432,45 @@ fn is_special(c: char) -> bool {
 }
 
 pub(crate) fn push_quoted(buf: &mut String, s: &str) {
+    if !s.bytes().any(|b| {
+        b == b'\\'
+            || b == b'\n'
+            || b == b'\t'
+            || b == b'\r'
+            || matches!(
+                b,
+                b'.' | b'+'
+                    | b'*'
+                    | b'?'
+                    | b'('
+                    | b')'
+                    | b'|'
+                    | b'['
+                    | b']'
+                    | b'{'
+                    | b'}'
+                    | b'^'
+                    | b'$'
+                    | b'#'
+            )
+    }) {
+        buf.push_str(s);
+        return;
+    }
+
     for c in s.chars() {
-        if is_special(c) {
-            buf.push('\\');
+        match c {
+            '\\' => buf.push_str("\\\\"),
+            '\n' => buf.push_str("\\n"),
+            '\t' => buf.push_str("\\t"),
+            '\r' => buf.push_str("\\r"),
+            _ => {
+                if is_special(c) {
+                    buf.push('\\');
+                }
+                buf.push(c);
+            }
         }
-        buf.push(c);
     }
 }
 
@@ -2928,6 +2962,15 @@ mod tests {
     }
 
     #[test]
+    fn to_str_literal_special_chars() {
+        assert_eq!(to_str(make_literal("\n")), "\\n");
+        assert_eq!(to_str(make_literal("\t")), "\\t");
+        assert_eq!(to_str(make_literal("\r")), "\\r");
+        assert_eq!(to_str(make_literal("\\")), "\\\\");
+        assert_eq!(to_str(make_literal(".")), "\\.");
+    }
+
+    #[test]
     fn as_str_debug() {
         let s = r"(a+)b\1";
         let regex = Regex::new(s).unwrap();
@@ -2988,6 +3031,23 @@ mod tests {
 
         // Check that multibyte characters are handled correctly.
         assert_eq!(crate::escape("fø*ø").into_owned(), "fø\\*ø");
+    }
+
+    #[test]
+    fn push_quoted_special_chars() {
+        fn pq(s: &str) -> String {
+            let mut buf = String::new();
+            crate::push_quoted(&mut buf, s);
+            buf
+        }
+        assert_eq!(pq("\n"), "\\n");
+        assert_eq!(pq("\t"), "\\t");
+        assert_eq!(pq("\r"), "\\r");
+        assert_eq!(pq("\\"), "\\\\");
+        assert_eq!(pq("."), "\\.");
+        assert_eq!(pq("hello"), "hello");
+        assert_eq!(pq("a.b"), "a\\.b");
+        assert_eq!(pq("fø*ø"), "fø\\*ø");
     }
 
     #[test]
