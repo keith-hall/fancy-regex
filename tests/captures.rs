@@ -26,14 +26,16 @@ fn captures_fancy() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn captures_previous_wrap() {
     let re = common::regex(r"(\w+)");
     let captures = re.captures_previous("foo bar baz").unwrap().unwrap();
-    assert_match(captures.get(0), "z", 10, 11);
-    assert_match(captures.get(1), "z", 10, 11);
+    assert_match(captures.get(0), "baz", 8, 11);
+    assert_match(captures.get(1), "baz", 8, 11);
 }
 
 #[test]
+#[allow(deprecated)]
 fn captures_input_reverse_direction_matches_previous_api() {
     let re = common::regex(r"(\w+)");
     let hay = "foo bar baz";
@@ -42,13 +44,14 @@ fn captures_input_reverse_direction_matches_previous_api() {
         .unwrap()
         .unwrap();
     let by_previous = re.captures_previous(hay).unwrap().unwrap();
-    assert_match(by_direction.get(0), "z", 10, 11);
-    assert_match(by_direction.get(1), "z", 10, 11);
-    assert_match(by_previous.get(0), "z", 10, 11);
-    assert_match(by_previous.get(1), "z", 10, 11);
+    assert_match(by_direction.get(0), "baz", 8, 11);
+    assert_match(by_direction.get(1), "baz", 8, 11);
+    assert_match(by_previous.get(0), "baz", 8, 11);
+    assert_match(by_previous.get(1), "baz", 8, 11);
 }
 
 #[test]
+#[allow(deprecated)]
 fn captures_previous_range_and_zero_width() {
     let re = common::regex(r"(?m:^)(\w+)?");
     let captures = re

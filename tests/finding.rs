@@ -19,22 +19,24 @@ fn find_wrap() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn find_previous_wrap() {
     let re = RegexBuilder::new(r"\w+").build().unwrap();
     let hay = "... test more";
     assert_eq!(
         re.find_previous(hay).unwrap().map(|m| (m.start(), m.end())),
-        Some((12, 13))
+        Some((9, 13))
     );
     assert_eq!(
         re.find_previous_from_pos(hay, 9)
             .unwrap()
             .map(|m| (m.start(), m.end())),
-        Some((7, 8))
+        Some((4, 8))
     );
 }
 
 #[test]
+#[allow(deprecated)]
 fn find_input_reverse_direction_matches_previous_api() {
     let re = RegexBuilder::new(r"\w+").build().unwrap();
     let hay = "... test more";
@@ -59,12 +61,13 @@ fn find_input_reverse_direction_matches_previous_api() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn find_previous_fancy_and_zero_width() {
     let re = RegexBuilder::new(r"\w+(?=!)").build().unwrap();
     let hay = "go! now! stop!";
     assert_eq!(
         re.find_previous(hay).unwrap().map(|m| (m.start(), m.end())),
-        Some((12, 13))
+        Some((9, 13))
     );
 
     let empty = RegexBuilder::new(r"(?m:^)")
@@ -77,6 +80,7 @@ fn find_previous_fancy_and_zero_width() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn find_previous_input_range_is_respected() {
     let re = RegexBuilder::new(r"\w+").build().unwrap();
     let hay = "alpha beta gamma";
@@ -85,7 +89,7 @@ fn find_previous_input_range_is_respected() {
         re.find_previous_input(input)
             .unwrap()
             .map(|m| (m.start(), m.end())),
-        Some((9, 10))
+        Some((6, 10))
     );
 }
 

@@ -1403,10 +1403,18 @@ impl Regex {
 
     /// Find the previous match in the input.
     ///
-    /// This returns the match with the greatest start position within the
-    /// configured search range. If multiple matches start at the same position,
-    /// the same match is returned as an anchored forward search from that
-    /// position.
+    /// This returns the last non-overlapping forward match within the
+    /// configured search range.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`find_input`](Self::find_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `find_input` with `RegexInput::direction(SearchDirection::Reverse)` instead"
+    )]
     pub fn find_previous<'t, S: input::Input + ?Sized>(
         &self,
         input: &'t S,
@@ -1415,6 +1423,16 @@ impl Regex {
     }
 
     /// Find the previous match in the given search input.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`find_input`](Self::find_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `find_input` with `RegexInput::direction(SearchDirection::Reverse)` instead"
+    )]
     pub fn find_previous_input<'t, S: input::Input + ?Sized>(
         &self,
         input: RegexInput<'t, S>,
@@ -1424,11 +1442,23 @@ impl Regex {
 
     /// Returns the previous match in `input`, searching the prefix ending at
     /// the specified byte position `pos`.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`find_input`](Self::find_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] and
+    /// [`RegexInput::to_pos`](crate::RegexInput::to_pos) instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `find_input` with `RegexInput::direction(SearchDirection::Reverse)` and `RegexInput::to_pos` instead"
+    )]
     pub fn find_previous_from_pos<'t, S: input::Input + ?Sized>(
         &self,
         input: &'t S,
         pos: usize,
     ) -> Result<Option<S::Match<'t>>> {
+        #[allow(deprecated)]
         self.find_previous_input(RegexInput::new(input).to_pos(pos))
     }
 
@@ -1500,48 +1530,51 @@ impl Regex {
         if input.is_done() {
             return Ok(None);
         }
-        match &self.inner {
-            RegexImpl::Wrap {
-                inner,
-                explicit_capture_group_0,
-                ..
-            } => {
-                let start =
-                    reverse_search_start(inner, input, option_flags & OPTION_FIND_NOT_EMPTY != 0)?;
-                let Some(start) = start else {
-                    return Ok(None);
-                };
-                let anchored_input = input
-                    .clone()
-                    .from_pos(start)
-                    .range(start..input.get_range().end)
-                    .anchored(true);
-                let mut delegated_input = ra_input(&anchored_input);
-                delegated_input = delegated_input.anchored(RaAnchored::Yes);
-                let result = if !*explicit_capture_group_0 {
-                    inner.search(&delegated_input).map(|m| (m.start(), m.end()))
-                } else {
-                    let mut slots = [None; 4];
-                    if inner.search_slots(&delegated_input, &mut slots).is_some() {
-                        slots[2]
-                            .zip(slots[3])
-                            .map(|(match_start, match_end)| (match_start.get(), match_end.get()))
-                    } else {
-                        None
+        // Return the last non-overlapping forward match within the configured range,
+        // equivalent to iterating with find_iter_input and taking the last result.
+        let forward_input = input.clone().direction(SearchDirection::Forward);
+        let range = forward_input.get_range();
+        let mut last_match: Option<(usize, usize)> = None;
+        let mut last_match_end: Option<usize> = None;
+        let mut pos = forward_input.effective_start();
+        let mut last_skipped_empty = false;
+
+        loop {
+            let iter_flags = if last_skipped_empty {
+                option_flags | OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH
+            } else {
+                option_flags
+            };
+            let step_input = forward_input.clone().from_pos(pos);
+
+            match self.find_input_raw(&step_input, iter_flags)? {
+                None => break,
+                Some((start, end)) if start == end => {
+                    let next_pos = forward_input.haystack().advance_position(end);
+                    last_skipped_empty = end == pos;
+                    // Skip empty match immediately after the previous match's end.
+                    if last_match_end != Some(end) {
+                        last_match = Some((start, end));
+                        last_match_end = Some(end);
                     }
-                };
-                Ok(result)
-            }
-            RegexImpl::Fancy { prog, options, .. } => {
-                let option_flags = option_flags
-                    | if options.find_not_empty {
-                        OPTION_FIND_NOT_EMPTY
-                    } else {
-                        0
-                    };
-                vm::run_rev_spans(prog, input, option_flags, options)
+                    if next_pos >= range.end {
+                        break;
+                    }
+                    pos = next_pos;
+                }
+                Some((start, end)) => {
+                    last_skipped_empty = false;
+                    last_match = Some((start, end));
+                    last_match_end = Some(end);
+                    if end >= range.end {
+                        break;
+                    }
+                    pos = end;
+                }
             }
         }
+
+        Ok(last_match)
     }
 
     /// Build a `Captures` value containing only group 0 for the given span.
@@ -1692,15 +1725,36 @@ impl Regex {
     }
 
     /// Returns the capture groups for the previous match in `text`.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`captures_input`](Self::captures_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `captures_input` with `RegexInput::direction(SearchDirection::Reverse)` instead"
+    )]
     pub fn captures_previous<'t, S: input::Input + ?Sized>(
         &self,
         text: &'t S,
     ) -> Result<Option<Captures<'t, S>>> {
+        #[allow(deprecated)]
         self.captures_previous_input(RegexInput::new(text))
     }
 
     /// Returns the capture groups for the previous match in the given search
     /// input.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`captures_input`](Self::captures_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `captures_input` with `RegexInput::direction(SearchDirection::Reverse)` instead"
+    )]
     pub fn captures_previous_input<'t, S: input::Input + ?Sized>(
         &self,
         input: RegexInput<'t, S>,
@@ -1710,11 +1764,23 @@ impl Regex {
 
     /// Returns the capture groups for the previous match in `text`, searching
     /// the prefix ending at byte position `pos`.
+    ///
+    /// # Deprecation
+    ///
+    /// Use [`captures_input`](Self::captures_input) with
+    /// [`RegexInput::direction`](crate::RegexInput::direction) set to
+    /// [`SearchDirection::Reverse`] and
+    /// [`RegexInput::to_pos`](crate::RegexInput::to_pos) instead.
+    #[deprecated(
+        since = "0.19.0",
+        note = "use `captures_input` with `RegexInput::direction(SearchDirection::Reverse)` and `RegexInput::to_pos` instead"
+    )]
     pub fn captures_previous_from_pos<'t, S: input::Input + ?Sized>(
         &self,
         text: &'t S,
         pos: usize,
     ) -> Result<Option<Captures<'t, S>>> {
+        #[allow(deprecated)]
         self.captures_previous_input(RegexInput::new(text).to_pos(pos))
     }
 
@@ -1798,61 +1864,18 @@ impl Regex {
         if input.is_done() {
             return Ok(None);
         }
-        let named_groups = self.named_groups.clone();
-        let haystack = input.haystack();
-        match &self.inner {
-            RegexImpl::Wrap {
-                inner,
-                explicit_capture_group_0,
-                ..
-            } => {
-                let Some(start) =
-                    reverse_search_start(inner, input, option_flags & OPTION_FIND_NOT_EMPTY != 0)?
-                else {
-                    return Ok(None);
-                };
-                let explicit = *explicit_capture_group_0;
-                let mut locations = inner.create_captures();
-                let anchored_input = input
-                    .clone()
-                    .from_pos(start)
-                    .range(start..input.get_range().end)
-                    .anchored(true);
-                let mut delegated_input = ra_input(&anchored_input);
-                delegated_input = delegated_input.anchored(RaAnchored::Yes);
-                inner.captures(delegated_input, &mut locations);
-                Ok(locations.is_match().then_some(Captures {
-                    inner: CapturesImpl::Wrap {
-                        locations,
-                        explicit_capture_group_0: explicit,
-                    },
-                    named_groups,
-                    input: haystack,
-                }))
-            }
-            RegexImpl::Fancy {
-                prog,
-                n_groups,
-                options,
-                ..
-            } => {
-                let option_flags = option_flags
-                    | if options.find_not_empty {
-                        OPTION_FIND_NOT_EMPTY
-                    } else {
-                        0
-                    };
-                let result = vm::run_rev(prog, input, option_flags, options)?;
-                Ok(result.map(|mut saves| {
-                    saves.truncate(n_groups * 2);
-                    Captures {
-                        inner: CapturesImpl::Fancy { saves },
-                        named_groups,
-                        input: haystack,
-                    }
-                }))
-            }
-        }
+        // Find the span of the last non-overlapping forward match.
+        let Some((start, _end)) = self.find_input_raw_reverse(input, option_flags)? else {
+            return Ok(None);
+        };
+        // Retrieve capture groups via an anchored forward search at the match start.
+        let anchored_input = input
+            .clone()
+            .direction(SearchDirection::Forward)
+            .from_pos(start)
+            .range(start..input.get_range().end)
+            .anchored(true);
+        self.captures_input_with_option_flags(&anchored_input, option_flags)
     }
 
     pub(crate) fn seek_pattern(&self) -> &str {
@@ -2163,34 +2186,6 @@ fn ra_input<'a, S: input::Input + ?Sized>(input: &'a RegexInput<'a, S>) -> RaInp
     let mut ra_input = RaInput::new(input.haystack().as_bytes()).range(input.get_range());
     ra_input.set_start(input.effective_start());
     ra_input
-}
-
-fn reverse_search_start<S: input::Input + ?Sized>(
-    inner: &RaRegex,
-    input: &RegexInput<'_, S>,
-    find_not_empty: bool,
-) -> Result<Option<usize>> {
-    let haystack = input.haystack();
-    let range = input.get_range();
-    let mut pos = range.end;
-    loop {
-        let anchored_input = input
-            .clone()
-            .from_pos(pos)
-            .range(pos..range.end)
-            .anchored(true);
-        let mut delegated_input = ra_input(&anchored_input);
-        delegated_input = delegated_input.anchored(RaAnchored::Yes);
-        if let Some(m) = inner.search(&delegated_input) {
-            if !find_not_empty || m.start() != m.end() {
-                return Ok(Some(m.start()));
-            }
-        }
-        if pos <= input.effective_start() {
-            return Ok(None);
-        }
-        pos = haystack.prev_codepoint_ix(pos);
-    }
 }
 
 impl TryFrom<&str> for Regex {

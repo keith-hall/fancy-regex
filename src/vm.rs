@@ -921,31 +921,12 @@ pub(crate) fn run_spans<S: HaystackInput + ?Sized>(
     })
 }
 
-/// Run the program in reverse, returning the full saves vector for the
-/// match whose start position is greatest within the configured range.
-pub(crate) fn run_rev<S: HaystackInput + ?Sized>(
-    prog: &Prog,
-    input: &RegexInput<'_, S>,
-    option_flags: u32,
-    options: &HardRegexRuntimeOptions,
-) -> Result<Option<Vec<usize>>> {
-    run_rev_with_seed(prog, input, option_flags, options, None, |state| {
-        state.saves.clone()
-    })
-}
-
-/// Run the program in reverse, returning only the overall match span.
-pub(crate) fn run_rev_spans<S: HaystackInput + ?Sized>(
-    prog: &Prog,
-    input: &RegexInput<'_, S>,
-    option_flags: u32,
-    options: &HardRegexRuntimeOptions,
-) -> Result<Option<(usize, usize)>> {
-    run_rev_with_seed(prog, input, option_flags, options, None, |state| {
-        (state.get(0), state.get(1))
-    })
-}
-
+/// Run the VM in reverse with a seed saves vector, returning the full saves
+/// for the last match within the configured range.
+///
+/// `seed` is the captures/saves vector from the outer VM thread that is
+/// pre-populated before matching begins. This allows variable-length
+/// lookbehinds to seed the reverse match with the surrounding capture context.
 pub(crate) fn run_rev_seed<S: HaystackInput + ?Sized>(
     prog: &Prog,
     input: &RegexInput<'_, S>,
@@ -1006,6 +987,12 @@ fn reverse_step<S: HaystackInput + ?Sized>(
     }
 }
 
+/// Run the VM from a starting position, optionally seeding the saves vector
+/// before execution begins.
+///
+/// `seed` is the captures/saves vector from the outer VM thread that is
+/// pre-populated before matching begins. This allows variable-length
+/// lookbehinds to seed the reverse match with the surrounding capture context.
 fn run_with_seed<S: HaystackInput + ?Sized, T>(
     prog: &Prog,
     input: &RegexInput<'_, S>,
