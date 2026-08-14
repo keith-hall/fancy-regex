@@ -28,9 +28,11 @@ Any hard child that is also non-`const_size` causes a
 Concrete patterns that are blocked today (with the `variable-lookbehinds` feature
 enabled):
 
-1. `(?<=(a)\1)x` — backreference inside lookbehind; the backreference is both
-   hard (it is a backref) and variable-size (the matched text length depends on
-   what group 1 captured).
+1. `(?<=(\w+)\1)x` — backreference inside lookbehind to a variable-length capture
+   group; the whole inner expression is hard and variable-size.  Note: a simpler
+   pattern like `(?<=(a)\1)x` where the captured group is constant-size (`(a)`)
+   would already be handled by the constant-size path — it is the variable-length
+   capture group case (e.g. `(\w+)`) that requires the new approach.
 2. `(?<=(?i)café)x` — case-insensitive literal inside lookbehind; Unicode
    case-folding can expand/collapse code-point counts, so `LitCasei` for a
    multi-byte string is hard **and** non-`const_size`.
@@ -97,6 +99,30 @@ therefore:
    the span `[s, ix]`.  The match must consume exactly the bytes in that span
    — i.e., it must be span-anchored (start at `s` **and** end at `ix`).
 4. If any candidate succeeds, the lookbehind succeeds.
+
+#### Early failure and bounding the search
+
+An important optimisation question is: can we abandon a candidate start position
+early — before the inner expression finishes — if we can already tell it cannot
+produce a match that ends exactly at `ix`?
+
+In general this is hard to guarantee because of backtracking inside the inner
+expression (e.g. a repeat could try multiple lengths before giving up).
+However, there is one structural bound that is always available: if the inner
+expression matches *past* `ix` on some branch, that branch can fail immediately
+rather than backtracking further inside the inner expression.  This is already
+enforced by the `AssertAtSavedEnd` instruction — it just fires at the end rather
+than mid-execution.
+
+A tighter bound can be achieved by tracking a `max_size` on each `Info` node
+during analysis (see next section).  With a known `max_size`, the `TryGoBack`
+instruction never tries a start position further back than `ix - max_size`,
+eliminating candidates that cannot possibly reach `ix` even if the inner
+expression matches its maximum extent.
+
+Without `max_size`, the search falls back to scanning all the way to the start of
+the string (or start of the match range), which is correct but potentially
+wasteful for unbounded patterns like `(\w+)\1`.
 
 #### Span-anchored matching requirement
 
