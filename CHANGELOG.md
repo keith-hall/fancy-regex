@@ -8,6 +8,7 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+- Add a `perf-dfa-full` feature (off by default, mirroring the `regex` crate) that lets regex-automata eagerly build fully compiled dense DFAs for small patterns, for workloads that compile few regexes and match them very heavily
 ### Changed
 - Add VM instruction for case insensitive literals when in Unicode mode, to keep the build cost bounded (#268) and ensured the toy example graph output remains readable instead of being super verbose (#269)
 - Compilation performance: identical delegated fragments within one compile now share a single regex-automata engine instead of each building their own. Alternation-heavy patterns (TextMate grammar lookbehinds especially) often repeat the same fragment many times; on such patterns this removes a large share of build time
