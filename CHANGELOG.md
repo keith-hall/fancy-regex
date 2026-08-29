@@ -10,6 +10,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 ### Changed
 - Add VM instruction for case insensitive literals when in Unicode mode, to keep the build cost bounded (#268) and ensured the toy example graph output remains readable instead of being super verbose (#269)
+- Compilation performance: the `regex-automata` dependency no longer enables the `dfa-build` feature (the `dfa` umbrella is replaced by the `dfa-onepass` and `dfa-search` features actually used). With `dfa-build` enabled, `meta::Regex` eagerly determinizes a full dense DFA for every small pattern, which dominated build time of simple class-containing patterns (e.g. `\b(extern)\s+(crate)` compiled ~4x slower than with the `regex` crate, which also ships without `dfa-build`); searches use the lazy DFA instead, with no measurable match-time difference
 ### Fixed
 - The playground didn't show when a literal or backreference was being matched case insensitively in the analysis tree view (#269)
 - Seek patterns could become very large when recursive backrefs and subroutine calls were inlined, without bringing much benefit (#270)
