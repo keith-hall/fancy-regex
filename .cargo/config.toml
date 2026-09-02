@@ -1,0 +1,2 @@
+[alias]
+toy = "run --features pattern-debug --example toy --"

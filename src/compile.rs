@@ -2325,6 +2325,8 @@ mod tests {
         re: &str,
         captures: Option<CaptureGroupRange>,
     ) {
+        #[cfg(not(feature = "pattern-debug"))]
+        let _ = re;
         #[cfg(feature = "pattern-debug")]
         assert_eq!(delegate.pattern, re);
         assert_eq!(captures, delegate.capture_groups);

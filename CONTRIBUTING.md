@@ -26,7 +26,7 @@ to compare to other engines.
 
 The toy example is useful for playing around with different regexes:
 
-    cargo run --features pattern-debug --example toy run '[a-z]' 'input text'
+    cargo toy run '[a-z]' 'input text'
 
 As is the web based playground:
 
