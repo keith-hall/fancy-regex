@@ -42,11 +42,11 @@ use std::collections::HashMap as Map;
 use crate::analyze::Info;
 use crate::seek::build_seek_pattern;
 use crate::to_hir::{expr_to_hir, HirCtx};
-#[cfg(feature = "variable-lookbehinds")]
-use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{
     debug_pattern, CaptureGroupRange, CaseiLiteral, CharClassMatcher, Delegate, Insn, Prog, Seek,
 };
+#[cfg(feature = "variable-lookbehinds")]
+use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::LookAround::*;
 use crate::{
     Absent, BacktrackingControlVerb, BytesMode, CompileError, Error, Expr, LookAround, Result,
