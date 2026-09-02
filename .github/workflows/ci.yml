@@ -76,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo run --example toy trace '\d*' '1122 33'
+      - run: cargo run --features pattern-debug --example toy trace '\d*' '1122 33'
       - run: cargo test --examples
 
   playground-tests:

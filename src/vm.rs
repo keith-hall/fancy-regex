@@ -92,6 +92,18 @@ pub(crate) type CachePoolFn = alloc::boxed::Box<
         + core::panic::RefUnwindSafe,
 >;
 
+#[cfg(feature = "pattern-debug")]
+pub(crate) type DebugPattern = String;
+#[cfg(not(feature = "pattern-debug"))]
+pub(crate) type DebugPattern = ();
+
+#[cfg(feature = "pattern-debug")]
+pub(crate) fn debug_pattern(s: &str) -> DebugPattern {
+    s.to_string()
+}
+#[cfg(not(feature = "pattern-debug"))]
+pub(crate) fn debug_pattern(_: &str) -> DebugPattern {}
+
 use crate::error::RuntimeError;
 use crate::input::{Input as HaystackInput, RegexInput};
 use crate::Assertion;
@@ -315,7 +327,7 @@ pub struct Delegate {
     /// The regex
     pub inner: Regex,
     /// The regex pattern as a string
-    pub pattern: String,
+    pub pattern: DebugPattern,
     /// The range of capture groups. None if there are no capture groups.
     pub capture_groups: Option<CaptureGroupRange>,
 }
@@ -323,16 +335,23 @@ pub struct Delegate {
 impl core::fmt::Debug for Delegate {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         // Ensures it fails to compile if the struct changes
+        #[cfg(feature = "pattern-debug")]
         let Self {
             inner: _,
             pattern,
             capture_groups,
         } = self;
+        #[cfg(not(feature = "pattern-debug"))]
+        let Self {
+            inner: _,
+            pattern: _,
+            capture_groups,
+        } = self;
 
-        f.debug_struct("Delegate")
-            .field("pattern", pattern)
-            .field("capture_groups", capture_groups)
-            .finish()
+        let mut dbg = f.debug_struct("Delegate");
+        #[cfg(feature = "pattern-debug")]
+        dbg.field("pattern", pattern);
+        dbg.field("capture_groups", capture_groups).finish()
     }
 }
 
@@ -342,15 +361,24 @@ pub struct Seek {
     /// The compiled seek pre-filter regex (un-anchored, finds leftmost match).
     pub inner: Regex,
     /// The seek-pattern string (for debug display).
-    pub pattern: String,
+    pub pattern: DebugPattern,
 }
 
 impl core::fmt::Debug for Seek {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         // Ensures it fails to compile if the struct changes
+        #[cfg(feature = "pattern-debug")]
         let Self { inner: _, pattern } = self;
+        #[cfg(not(feature = "pattern-debug"))]
+        let Self {
+            inner: _,
+            pattern: _,
+        } = self;
 
-        f.debug_struct("Seek").field("pattern", pattern).finish()
+        let mut dbg = f.debug_struct("Seek");
+        #[cfg(feature = "pattern-debug")]
+        dbg.field("pattern", pattern);
+        dbg.finish()
     }
 }
 
@@ -358,7 +386,7 @@ impl core::fmt::Debug for Seek {
 /// Delegate matching in reverse to regex-automata
 pub struct ReverseBackwardsDelegate {
     /// The regex pattern as a string which will be matched in reverse, in a backwards direction
-    pub pattern: String,
+    pub pattern: DebugPattern,
     /// The delegate regex to match backwards (wrapped in Arc for efficient cloning)
     pub(crate) dfa: Arc<regex_automata::hybrid::dfa::DFA>,
     /// Cache pool for DFA searches
@@ -388,6 +416,7 @@ impl Clone for ReverseBackwardsDelegate {
 impl core::fmt::Debug for ReverseBackwardsDelegate {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         // Ensures it fails to compile if the struct changes
+        #[cfg(feature = "pattern-debug")]
         let Self {
             pattern,
             dfa: _,
@@ -395,11 +424,19 @@ impl core::fmt::Debug for ReverseBackwardsDelegate {
             capture_group_extraction_inner: _,
             capture_groups,
         } = self;
+        #[cfg(not(feature = "pattern-debug"))]
+        let Self {
+            pattern: _,
+            dfa: _,
+            cache_pool: _,
+            capture_group_extraction_inner: _,
+            capture_groups,
+        } = self;
 
-        f.debug_struct("ReverseBackwardsDelegate")
-            .field("pattern", pattern)
-            .field("capture_groups", capture_groups)
-            .finish()
+        let mut dbg = f.debug_struct("ReverseBackwardsDelegate");
+        #[cfg(feature = "pattern-debug")]
+        dbg.field("pattern", pattern);
+        dbg.field("capture_groups", capture_groups).finish()
     }
 }
 

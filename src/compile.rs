@@ -44,7 +44,9 @@ use crate::seek::build_seek_pattern;
 use crate::to_hir::{expr_to_hir, HirCtx};
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
-use crate::vm::{CaptureGroupRange, CaseiLiteral, CharClassMatcher, Delegate, Insn, Prog, Seek};
+use crate::vm::{
+    debug_pattern, CaptureGroupRange, CaseiLiteral, CharClassMatcher, Delegate, Insn, Prog, Seek,
+};
 use crate::LookAround::*;
 use crate::{
     Absent, BacktrackingControlVerb, BytesMode, CompileError, Error, Expr, LookAround, Result,
@@ -815,7 +817,7 @@ impl<'a> Compiler<'a> {
             .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
                 dfa,
                 cache_pool,
-                pattern: pattern.to_string(),
+                pattern: debug_pattern(pattern),
                 capture_group_extraction_inner: forward_regex,
                 capture_groups: capture_groups.to_option_if_non_empty(),
             }));
@@ -948,7 +950,7 @@ impl<'a> Compiler<'a> {
             let compiled = compile_inner(pattern, &self.options, DelegateUsage::anchored(false))?;
             self.b.add(Insn::Delegate(Delegate {
                 inner: compiled,
-                pattern: pattern.to_string(),
+                pattern: debug_pattern(pattern),
                 capture_groups: None,
             }));
         }
@@ -1276,7 +1278,7 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
                 {
                     c.b.add(Insn::Seek(Seek {
                         inner,
-                        pattern: seek_pattern.clone(),
+                        pattern: debug_pattern(&seek_pattern),
                     }));
                     used_seek = true;
                 }
@@ -1421,7 +1423,7 @@ impl DelegateBuilder {
 
         Ok(Delegate {
             inner: compiled,
-            pattern: self.re.clone(),
+            pattern: debug_pattern(&self.re),
             capture_groups,
         })
     }
@@ -1766,7 +1768,19 @@ mod tests {
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
+        #[cfg(feature = "pattern-debug")]
         assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "ab+");
+        #[cfg(not(feature = "pattern-debug"))]
+        assert_matches!(
+            &prog[1],
+            BackwardsDelegate(ReverseBackwardsDelegate {
+                dfa: _,
+                cache_pool: _,
+                capture_group_extraction_inner: None,
+                capture_groups: None,
+                ..
+            })
+        );
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);
@@ -1780,7 +1794,19 @@ mod tests {
         assert_eq!(prog.len(), 6, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
+        #[cfg(feature = "pattern-debug")]
         assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "ab+");
+        #[cfg(not(feature = "pattern-debug"))]
+        assert_matches!(
+            &prog[1],
+            BackwardsDelegate(ReverseBackwardsDelegate {
+                dfa: _,
+                cache_pool: _,
+                capture_group_extraction_inner: None,
+                capture_groups: None,
+                ..
+            })
+        );
         assert_matches!(prog[2], Insn::Assertion(crate::Assertion::WordBoundary));
         assert_matches!(prog[3], Restore(0));
         assert_matches!(prog[4], Lit(ref l) if l == "x");
@@ -1801,7 +1827,19 @@ mod tests {
         assert_matches!(prog[4], Lit(ref l) if l == "b");
         assert_matches!(prog[5], Split(4, 6));
         assert_matches!(prog[6], Save(4));
+        #[cfg(feature = "pattern-debug")]
         assert_matches!(&prog[7], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "b+");
+        #[cfg(not(feature = "pattern-debug"))]
+        assert_matches!(
+            &prog[7],
+            BackwardsDelegate(ReverseBackwardsDelegate {
+                dfa: _,
+                cache_pool: _,
+                capture_group_extraction_inner: None,
+                capture_groups: None,
+                ..
+            })
+        );
         assert_matches!(prog[8], GoBack(1));
         assert_matches!(
             prog[9],
@@ -1834,7 +1872,19 @@ mod tests {
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(2));
+        #[cfg(feature = "pattern-debug")]
         assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: ref inner, capture_groups: Some(CaptureGroupRange(0, 1)) }) if pattern == "a(b+)" && inner.is_some());
+        #[cfg(not(feature = "pattern-debug"))]
+        assert_matches!(
+            &prog[1],
+            BackwardsDelegate(ReverseBackwardsDelegate {
+                dfa: _,
+                cache_pool: _,
+                capture_group_extraction_inner: ref inner,
+                capture_groups: Some(CaptureGroupRange(0, 1)),
+                ..
+            }) if inner.is_some()
+        );
         assert_matches!(prog[2], Restore(2));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);
@@ -2275,6 +2325,7 @@ mod tests {
         re: &str,
         captures: Option<CaptureGroupRange>,
     ) {
+        #[cfg(feature = "pattern-debug")]
         assert_eq!(delegate.pattern, re);
         assert_eq!(captures, delegate.capture_groups);
     }

@@ -205,6 +205,7 @@ mod tests {
     use crate::Write;
 
     #[test]
+    #[cfg(feature = "pattern-debug")]
     fn test_simple_graph() {
         assert_graph(
             "^a+bc?",
@@ -314,6 +315,7 @@ digraph G {
     }
 
     #[test]
+    #[cfg(feature = "pattern-debug")]
     fn test_compilation_fancy_debug_output() {
         // With seek enabled (default): the SplitUnanchored preamble is replaced by a Seek
         // instruction that pre-filters positions before running the full VM.
@@ -364,6 +366,7 @@ digraph G {
     }
 
     #[test]
+    #[cfg(feature = "pattern-debug")]
     #[cfg(feature = "variable-lookbehinds")]
     fn test_compilation_variable_lookbehind_debug_output() {
         // With seek enabled (default): the SplitUnanchored preamble is replaced by a Seek

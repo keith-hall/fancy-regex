@@ -16,6 +16,9 @@ rust-version = "1.66"
 default = ["unicode", "perf", "std", "variable-lookbehinds"]
 # Enable #[track_caller] in unit tests.
 track_caller = []
+# Store regex pattern strings in VM delegate instructions for debug output.
+# Disable this to reduce memory usage when debug pattern text is not needed.
+pattern-debug = []
 perf = ["regex-automata/perf"]
 unicode = ["regex-automata/unicode", "regex-syntax/unicode"]
 std = ["regex-automata/std", "regex-syntax/std", "bit-set/std"]
