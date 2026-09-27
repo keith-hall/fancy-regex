@@ -131,88 +131,6 @@ fn run_backtrack_limit(c: &mut Criterion) {
     });
 }
 
-#[cfg(feature = "variable-lookbehinds")]
-fn const_size_lookbehind(c: &mut Criterion) {
-    // Benchmark const-size lookbehind (should use simple GoBack)
-    let tree = Expr::parse_tree(r"(?<=ab)x").unwrap();
-    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
-    let p = compile(
-        &a,
-        CompileOptions {
-            contains_subroutines: tree.contains_subroutines,
-            ..CompileOptions::default()
-        },
-    )
-    .unwrap();
-    let input = "abx";
-    c.bench_function("const_size_lookbehind", |b| {
-        b.iter(|| run_default(&p, input, 0).unwrap())
-    });
-}
-
-#[cfg(feature = "variable-lookbehinds")]
-fn variable_size_lookbehind(c: &mut Criterion) {
-    // Benchmark variable-size lookbehind (uses reverse DFA)
-    let tree = Expr::parse_tree(r"(?<=a+b+)x").unwrap();
-    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
-    let p = compile(
-        &a,
-        CompileOptions {
-            contains_subroutines: tree.contains_subroutines,
-            ..CompileOptions::default()
-        },
-    )
-    .unwrap();
-    let input = "aaabbbbx";
-    c.bench_function("variable_size_lookbehind", |b| {
-        b.iter(|| run_default(&p, input, 0).unwrap())
-    });
-}
-
-#[cfg(feature = "variable-lookbehinds")]
-fn variable_size_alt_lookbehind(c: &mut Criterion) {
-    // Benchmark variable-size lookbehind with alternation
-    let tree = Expr::parse_tree(r"(?<=a|bc)x").unwrap();
-    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
-    let p = compile(
-        &a,
-        CompileOptions {
-            contains_subroutines: tree.contains_subroutines,
-            ..CompileOptions::default()
-        },
-    )
-    .unwrap();
-    let input = "bcx";
-    c.bench_function("variable_size_alt_lookbehind", |b| {
-        b.iter(|| run_default(&p, input, 0).unwrap())
-    });
-}
-
-/// The 16-branch JSX tag-start guard from the TypeScript TextMate grammar.
-/// The pattern is open, so the lookbehind is attempted at almost every position.
-#[cfg(feature = "variable-lookbehinds")]
-const LOOKBEHIND_ALT_WIDE: &str = r"(?<!\+\+|--)(?<=[(*,:=>?\[{]|&&|\|\||\?|\*/|^await|[^$._[:alnum:]]await|^return|[^$._[:alnum:]]return|^default|[^$._[:alnum:]]default|^yield|[^$._[:alnum:]]yield|^)\s*<[a-z]+";
-
-#[cfg(feature = "variable-lookbehinds")]
-fn lookbehind_alternation(c: &mut Criterion) {
-    let wide = FancyRegex::new(LOOKBEHIND_ALT_WIDE).unwrap();
-    let wide_hay =
-        "  return <div>\n    {items.map((x) => <li key={x}>{x}</li>)}\n  </div>;\n".repeat(200);
-    c.bench_function("lookbehind_alternation_wide_16", |b| {
-        b.iter(|| wide.find_iter(&wide_hay).count())
-    });
-}
-
-#[cfg(feature = "variable-lookbehinds")]
-criterion_group!(
-    name = lookbehind_benches;
-    config = Criterion::default();
-    targets = const_size_lookbehind,
-    variable_size_lookbehind,
-    variable_size_alt_lookbehind,
-    lookbehind_alternation,
-);
-
 criterion_group!(
     name = benches;
     config = Criterion::default().warm_up_time(Duration::from_secs(10));
@@ -576,20 +494,6 @@ criterion_group!(
     run_concat_repeat_unoptimized,
 );
 
-#[cfg(feature = "variable-lookbehinds")]
-criterion_main!(
-    benches,
-    slow_benches,
-    lookbehind_benches,
-    continue_from_end_of_prev_match_benches,
-    seek_benches,
-    seek_worst_case_benches,
-    seek_recursion_benches,
-    api_benches,
-    optimize_benches
-);
-
-#[cfg(not(feature = "variable-lookbehinds"))]
 criterion_main!(
     benches,
     slow_benches,
